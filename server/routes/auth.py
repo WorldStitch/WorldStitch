@@ -322,7 +322,7 @@ async def login(
     try:
         # Look up user by email
         user = ctx.users.get_user_by_email(req.email)
-        if not user or not user.is_active:
+        if not user or not user.is_active or user.system_role == "suspended":
             _login_limiter.record(email_key)
             audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=user_not_found")
             raise HTTPException(
