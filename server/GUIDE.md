@@ -30,25 +30,25 @@ server/
 ### Method 1: Using uvicorn directly (from server directory)
 
 ```bash
-cd /sessions/wonderful-optimistic-mccarthy/mnt/MythosEngine/server
-python -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload
+cd MythosEngine/server
+python -m uvicorn app:app --host 127.0.0.1 --port 8741 --reload
 ```
 
-### Method 2: Using uvicorn from parent directory
+### Method 2: Using uvicorn from parent directory (recommended)
 
 ```bash
-cd /sessions/wonderful-optimistic-mccarthy/mnt/MythosEngine
-python -m uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
+cd MythosEngine
+python -m uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
 ```
 
 ### Method 3: Direct Python execution
 
 ```bash
-cd /sessions/wonderful-optimistic-mccarthy/mnt/MythosEngine/server
+cd MythosEngine/server
 python app.py
 ```
 
-The server will start on `http://127.0.0.1:8000` by default.
+The server will start on `http://127.0.0.1:8741` by default.
 
 ## Features
 
@@ -72,9 +72,9 @@ GET /health
 ### API Documentation
 
 Once running, access:
-- **Swagger UI**: `http://127.0.0.1:8000/docs`
-- **ReDoc**: `http://127.0.0.1:8000/redoc`
-- **OpenAPI JSON**: `http://127.0.0.1:8000/openapi.json`
+- **Swagger UI**: `http://127.0.0.1:8741/docs`
+- **ReDoc**: `http://127.0.0.1:8741/redoc`
+- **OpenAPI JSON**: `http://127.0.0.1:8741/openapi.json`
 
 ## API Endpoints
 
@@ -112,13 +112,14 @@ All AI endpoints require authentication. Returns `503 Service Unavailable` if AI
 - `GET /dashboard/stats` — Get counts: notes, folders, characters, sessions, vaults
 - `GET /dashboard/recent?limit=10` — Get 10 most recently modified notes
 
-### Users (`/users`) — Admin Only
+### Users (`/users`) — Moderator/Admin
 
-- `GET /users` — List all users
-- `PUT /users/<id>/roles` — Update user roles
-- `POST /users/<id>/disable` — Disable user
-- `POST /users/<id>/enable` — Enable user
-- `POST /users/<id>/reset-password` — Admin password reset
+- `GET /users` — List all users (moderator+)
+- `GET /users/<id>` — Get single user (moderator+)
+- `PUT /users/<id>/roles` — Update user roles (admin only)
+- `POST /users/<id>/disable` — Disable user (admin only)
+- `POST /users/<id>/enable` — Enable user (admin only)
+- `POST /users/<id>/reset-password` — Admin password reset (admin only)
 
 ### Settings (`/settings`)
 
@@ -150,7 +151,7 @@ The server uses FastAPI's `Depends()` mechanism for DI:
 - `get_ctx()` — Retrieves the global `AppContext` from app state
 - `get_current_user()` — Retrieves the authenticated `User` from the Bearer token
 - `get_token_store()` — Retrieves the in-memory token store
-- `require_admin()` — Ensures user has admin role
+- `require_permission(role)` — Ensures user has at least the given platform role (e.g. `"moderator"`, `"admin"`)
 
 Example:
 
@@ -257,22 +258,22 @@ The `ModelRouter` handles routing tasks (ask, summarize, suggest_tags, etc.) to 
 
 ```bash
 # Login
-curl -X POST http://127.0.0.1:8000/auth/login \
+curl -X POST http://127.0.0.1:8741/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"password123"}'
 
 # Get current user
-curl -X GET http://127.0.0.1:8000/auth/me \
+curl -X GET http://127.0.0.1:8741/auth/me \
   -H "Authorization: Bearer <token>"
 
 # Get settings
-curl -X GET http://127.0.0.1:8000/settings \
+curl -X GET http://127.0.0.1:8741/settings \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Using the Swagger UI
 
-Navigate to `http://127.0.0.1:8000/docs` and use the interactive interface.
+Navigate to `http://127.0.0.1:8741/docs` and use the interactive interface.
 
 Click "Authorize" button and enter the token from login response.
 

@@ -1,6 +1,6 @@
 # Permissions Model
 
-Ward DND AI uses a simple, extensible ACL (Access Control List) system designed to grow into full multiuser support.
+MythosEngine uses a layered permission system: a platform-level `system_role` on each user account, and a resource-level ACL (owner + explicit grants) enforced by `PermissionChecker`.
 
 ---
 
@@ -22,47 +22,48 @@ The `PermissionChecker` (`auth/permission_checker.py`) evaluates access using th
 
 ---
 
-## Roles
+## Resource-Level Roles
 
 | Role | Can Read | Can Write | Can Delete |
 |------|----------|-----------|------------|
 | `read` | ✅ | ❌ | ❌ |
 | `write` | ✅ | ✅ | ❌ |
-| `admin` | ✅ | ✅ | ✅ |
+
+Only the resource owner (matched via `owner_id`) can delete a resource.
+
+## Platform-Level Roles (`system_role`)
+
+| Role | Access |
+|------|--------|
+| `owner` | Full control — manage users, billing, instance settings |
+| `admin` | Manage users within the instance |
+| `moderator` | Moderate content; can view user list |
+| `tester` | Access to pre-release features |
+| `user` | Standard access |
+| `suspended` | Login disabled |
 
 ---
 
 ## Usage in Managers
 
 ```python
-from Ward_DND_AI.auth.permission_checker import permissions
+from MythosEngine.auth.permission_checker import permissions
 
 # Raise PermissionError if user cannot write
-permissions.require_write(note, actor_id=ctx.current_user_id)
+permissions.require_write(note, user_id=ctx.current_user_id)
 
 # Check without raising
-if permissions.can_read(vault, user_id):
+if permissions.can_read(vault, user_id=ctx.current_user_id):
     ...
 ```
 
 ---
 
-## Current State (Single-User Mode)
+## Current State
 
-In the current single-user build:
-- A default `local@ward-dnd.local` user is created on first launch
-- `ctx.current_user_id` is set to this user's ID at startup
-- All records created by this user have `owner_id` matching `current_user_id`
-- Permissions are enforced on `NoteManager.update_note()`, `delete_note()`, and `VaultManager.delete_vault()`
+The app is fully multiuser. Users authenticate via JWT bearer tokens. `ctx.current_user_id` is set from the validated token on every request. Resource-level permissions are enforced in managers; platform-level access (`system_role`) is checked in route dependencies via `require_permission()`.
 
----
+## Future Work
 
-## Multiuser Expansion Path
-
-When adding real multiuser support:
-
-1. Replace the default local user creation in `main.py` with a real login flow
-2. Set `ctx.current_user_id` from the authenticated session token
-3. Add group membership lookups to `PermissionChecker._has_role()` to support group-level permissions
-4. Add vault-level default permissions that child resources inherit
-5. Add a database backend that can query by `vault_id` and `owner_id` efficiently
+- Group membership lookups in `PermissionChecker._has_role()` (group-level permissions)
+- Vault-level default permissions inherited by child resources

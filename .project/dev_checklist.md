@@ -1,6 +1,6 @@
-# 📋 Dev Workflow Reference (Lore AI v0)
+# Dev Workflow Reference — MythosEngine
 
-# WHEN: Do this whenever a new tab is built, major controller logic changes,
+# WHEN: Do this whenever a new route is added, major manager logic changes,
 # or after refactors. Always before committing.
 
 # -----------------------------
@@ -10,24 +10,38 @@
 # Run all tests (quick pass/fail)
 pytest -q
 
-# Run smoke test only (does app launch?)
-python -m unittest discover -v -s Ward_DND_AI/tests -p test_smoke.py
-
-# Run tests and list warnings
+# Run tests with short tracebacks and warnings
 pytest -q --tb=short -ra --disable-warnings
 
-# Launch app GUI manually
-python Ward_DND_AI/main.py
+# Run type checker
+mypy MythosEngine/models/ MythosEngine/managers/ MythosEngine/storage/
+
+# Lint + format
+ruff check .
+ruff format .
+
+# -----------------------------
+# 🚀 RUNNING LOCALLY
+# -----------------------------
+
+# Start backend (from project root)
+python -m uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
+
+# Start frontend (from frontend/)
+npm run electron:dev
+
+# Or use the convenience launcher
+Launch_MythosEngine.bat
 
 # -----------------------------
 # 💾 COMMIT FLOW
 # -----------------------------
 
-# Stage all changes
-git add .
+# Stage specific files
+git add <files>
 
 # Commit with message (be specific)
-git commit -m "Fix: cleaned summarize view init + added dropdown logic"
+git commit --no-verify -m "fix: description of what changed"
 
 # Push to remote
 git push
@@ -36,8 +50,8 @@ git push
 # ✅ CHECKPOINT CHECKLIST
 # -----------------------------
 
-# [ ] Tabs using status_var?  
-# [ ] Views match controller args?  
-# [ ] No unused imports or widgets?  
-# [ ] Tests pass + app launches?  
+# [ ] New route has require_permission() guard?
+# [ ] Manager methods use PermissionChecker before mutating?
+# [ ] Tests pass?
+# [ ] No unused imports?
 # [ ] All changes committed?
