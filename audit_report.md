@@ -35,7 +35,7 @@
 
 | Sev | File | Line | Issue |
 |---|---|---|---|
-| **HIGH** | `.github/workflows/ci.yml` | 28 | `pytest Ward_DND_AI/tests/` — path doesn't exist; CI test step silently does nothing |
+| **HIGH** | `.github/workflows/ci.yml` | 28 | `pytest Ward_DND_AI/tests/` — path doesn't exist; CI test step fails on missing directory |
 | **HIGH** | `.github/workflows/ci.yml` | 31 | `mypy Ward_DND_AI/models/ Ward_DND_AI/managers/ ...` — same dead path; mypy type check is skipped |
 | **MEDIUM** | `MythosEngine/context/app_context.py` | 81–88 | Migration comment and variable `ward_dnd.db` (the migration logic itself is useful but the old name lives in code) |
 
@@ -93,7 +93,7 @@
 
 | Sev | File | Lines | Issue |
 |---|---|---|---|
-| **HIGH** | `.github/workflows/ci.yml` | 28, 31 | Tests and type-checks run against `Ward_DND_AI/` path that doesn't exist — CI steps silently pass (no tests run) |
+| **HIGH** | `.github/workflows/ci.yml` | 28, 31 | Tests and type-checks run against `Ward_DND_AI/` path that doesn't exist — pytest fails on the missing test path, and mypy is non-blocking due to `continue-on-error: true` |
 | **MEDIUM** | `MythosEngine/context/app_context.py` | 23 | `from MythosEngine.auth.permission_checker import PermissionChecker` — this file exists and is used, but `permission_checker.py` is a minimal legacy shim; the active logic is in `permissions.py`. Two parallel permission systems. |
 
 ---
