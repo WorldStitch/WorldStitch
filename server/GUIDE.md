@@ -30,21 +30,20 @@ server/
 ### Method 1: Using uvicorn directly (from server directory)
 
 ```bash
-cd MythosEngine/server
+cd server
 python -m uvicorn app:app --host 127.0.0.1 --port 8741 --reload
 ```
 
-### Method 2: Using uvicorn from parent directory (recommended)
+### Method 2: Using uvicorn from repo root (recommended)
 
 ```bash
-cd MythosEngine
 python -m uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
 ```
 
 ### Method 3: Direct Python execution
 
 ```bash
-cd MythosEngine/server
+cd server
 python app.py
 ```
 

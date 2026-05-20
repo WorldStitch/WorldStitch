@@ -15,7 +15,9 @@ permissions: dict    # {user_id: role} overrides — e.g. {"u-abc": "read"}
 
 The `PermissionChecker` (`auth/permission_checker.py`) evaluates access using these rules, checked in order:
 
-1. **System actor** (`user_id == "system"`) — always granted (for background operations)
+1. **System/internal actors** — always granted read/write access (for trusted background operations):
+   - `user_id == "system"` (explicit service actor)
+   - `user_id is None` (internal call with no user context) — **Note:** `None` bypasses ACL checks for `can_read`/`can_write`; only pass `None` from trusted internal call sites.
 2. **Owner** (`user_id == resource.owner_id`) — always granted full access
 3. **Explicit permission** — checks `resource.permissions[user_id]` for a role
 4. **Default** — deny
@@ -29,7 +31,7 @@ The `PermissionChecker` (`auth/permission_checker.py`) evaluates access using th
 | `read` | ✅ | ❌ | ❌ |
 | `write` | ✅ | ✅ | ❌ |
 
-Only the resource owner (matched via `owner_id`) can delete a resource.
+Only the resource owner (matched via `owner_id`) or the system actor (`user_id == "system"`) can delete a resource.
 
 ## Platform-Level Roles (`system_role`)
 
@@ -40,7 +42,9 @@ Only the resource owner (matched via `owner_id`) can delete a resource.
 | `moderator` | Moderate content; can view user list |
 | `tester` | Access to pre-release features |
 | `user` | Standard access |
-| `suspended` | Login disabled |
+| `suspended` | Account suspended (enforced via `is_active` flag) |
+
+> **Note:** The `suspended` role does not itself block login. Account deactivation is enforced by the login endpoint, which rejects users with `is_active == False`.
 
 ---
 

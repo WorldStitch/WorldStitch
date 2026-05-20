@@ -41,7 +41,7 @@ Launch_MythosEngine.bat
 git add <files>
 
 # Commit with message (be specific)
-git commit --no-verify -m "fix: description of what changed"
+git commit -m "fix: description of what changed"
 
 # Push to remote
 git push
