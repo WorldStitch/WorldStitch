@@ -16,6 +16,7 @@ from server.auth_utils import decode_jwt
 _ctx: Optional[AppContext] = None
 
 PLATFORM_ADMIN = {"owner", "admin"}
+MOD_AND_ABOVE = {"owner", "admin", "moderator"}
 
 
 def set_app_context(ctx: AppContext) -> None:
@@ -68,7 +69,6 @@ def get_current_user(
     ctx.storage.set_user_context(
         user.id,
         is_admin=user.system_role in PLATFORM_ADMIN,
-        is_gm="gm" in (user.roles or []),
     )
     ctx.current_user_id = user.id
     return user
@@ -78,10 +78,15 @@ def require_permission(permission: str):
     """Dependency factory for route-level permission checks."""
 
     def dependency(user: User = Depends(get_current_user)) -> User:
-        if permission not in (user.roles or []):
+        if permission == "admin" and user.system_role not in PLATFORM_ADMIN:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing permission: {permission}",
+                detail="Platform admin required",
+            )
+        if permission == "moderator" and user.system_role not in MOD_AND_ABOVE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Moderator or above required",
             )
         return user
 

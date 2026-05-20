@@ -248,7 +248,6 @@ def _set_user_ctx(ctx: AppContext, user: User) -> None:
     ctx.storage.set_user_context(
         user.id,
         is_admin=user.system_role in PLATFORM_ADMIN,
-        is_gm="gm" in (user.roles or []),
     )
 
 

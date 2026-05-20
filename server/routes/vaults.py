@@ -10,7 +10,7 @@ from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 from MythosEngine.models.vault import Vault
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
-from server.vault_access import list_accessible_vaults, resolve_vault
+from server.vault_access import is_vault_admin, list_accessible_vaults, resolve_vault
 
 router = APIRouter()
 
@@ -47,10 +47,11 @@ def _to_response(vault: Vault) -> VaultResponse:
 
 @router.get("/", response_model=List[VaultResponse])
 async def list_vaults(
+    all: bool = Query(False, description="Platform admins only: return all vaults"),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    return [_to_response(vault) for vault in list_accessible_vaults(ctx, user)]
+    return [_to_response(vault) for vault in list_accessible_vaults(ctx, user, all_vaults=all)]
 
 
 @router.get("/{vault_id}", response_model=VaultResponse)

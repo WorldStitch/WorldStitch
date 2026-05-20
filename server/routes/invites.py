@@ -15,7 +15,8 @@ from pydantic import BaseModel
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-from server.deps import get_ctx, require_permission
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user, require_permission
+from server.vault_access import is_vault_admin, resolve_vault
 
 router = APIRouter()
 
@@ -53,10 +54,12 @@ class GenerateInviteResponse(BaseModel):
 class GenerateInviteRequest(BaseModel):
     ttl_days: int = 7
     max_uses: int = 1
+    vault_id: str | None = None
 
 
 class GenerateInviteByHoursRequest(BaseModel):
     expires_hours: int | None = None
+    vault_id: str | None = None
 
 
 # ============================================================================
@@ -104,12 +107,28 @@ async def list_invites(
 async def generate_invite(
     body: GenerateInviteRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    user: User = Depends(get_current_user),
 ):
-    """Generate a new invite code with ttl_days and max_uses. Requires admin role."""
+    """
+    Generate a new invite code.
+    With vault_id: vault owner or vault-admin may generate.
+    Without vault_id (platform invite): platform admin required.
+    """
+    if body.vault_id:
+        vault = resolve_vault(ctx, user, body.vault_id)
+        if not is_vault_admin(vault, user, ctx) and user.system_role not in PLATFORM_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Vault admin or platform admin required to create vault invites",
+            )
+    elif user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform admin required to create platform invites",
+        )
     try:
         invite = ctx.invites.generate_with_expiry(
-            created_by_user_id=admin.id,
+            created_by_user_id=user.id,
             expiry_days=body.ttl_days,
             max_uses=body.max_uses,
         )
@@ -120,6 +139,8 @@ async def generate_invite(
             max_uses=invite.max_uses,
             message=f"Invite code {invite.code} generated successfully",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -131,13 +152,29 @@ async def generate_invite(
 async def generate_invite_by_hours(
     body: GenerateInviteByHoursRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    user: User = Depends(get_current_user),
 ):
-    """Generate a new invite code with an optional expires_hours param. Requires admin role."""
+    """
+    Generate a new invite code with an optional expires_hours param.
+    With vault_id: vault owner or vault-admin may generate.
+    Without vault_id (platform invite): platform admin required.
+    """
+    if body.vault_id:
+        vault = resolve_vault(ctx, user, body.vault_id)
+        if not is_vault_admin(vault, user, ctx) and user.system_role not in PLATFORM_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Vault admin or platform admin required to create vault invites",
+            )
+    elif user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform admin required to create platform invites",
+        )
     try:
         expiry_days = max(1, round(body.expires_hours / 24)) if body.expires_hours else 7
         invite = ctx.invites.generate_with_expiry(
-            created_by_user_id=admin.id,
+            created_by_user_id=user.id,
             expiry_days=expiry_days,
             max_uses=1,
         )
@@ -148,6 +185,8 @@ async def generate_invite_by_hours(
             max_uses=invite.max_uses,
             message=f"Invite code {invite.code} generated successfully",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

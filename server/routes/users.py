@@ -115,10 +115,10 @@ def _get_creator_user(ctx: AppContext) -> Optional[User]:
 @router.get("/", response_model=List[UserListItem])
 async def list_users(
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = require_permission("moderator"),
 ):
     """
-    List all users in the system. Requires admin role.
+    List all users in the system. Requires moderator or above.
     """
     try:
         users = _list_all_users(ctx)
@@ -144,10 +144,10 @@ async def list_users(
 async def get_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = require_permission("moderator"),
 ):
     """
-    Get a single user by ID. Requires admin role.
+    Get a single user by ID. Requires moderator or above.
     """
     user = ctx.users.get_user(user_id)
     if not user:
@@ -207,6 +207,15 @@ async def update_user_roles(
             )
 
         user.roles = normalized_roles
+        # keep system_role in sync with the roles array
+        if "owner" in normalized_roles:
+            user.system_role = "owner"
+        elif "admin" in normalized_roles:
+            user.system_role = "admin"
+        elif "moderator" in normalized_roles:
+            user.system_role = "moderator"
+        else:
+            user.system_role = "user"
         ctx.users.update_user(user)
         return {"message": "Roles updated successfully", "user_id": user.id}
     except HTTPException:

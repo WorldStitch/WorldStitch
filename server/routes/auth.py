@@ -255,7 +255,7 @@ async def setup_admin(
             email=req.email,
             username=req.username,
             password=req.password,
-            roles=["admin", "gm"],
+            roles=["admin"],
         )
         user.system_role = "owner"
         ctx.users.update_user(user)
@@ -263,11 +263,9 @@ async def setup_admin(
         ctx.storage.set_user_context(
             user.id,
             is_admin=True,
-            is_gm=True,
         )
 
-        role = user.roles[0] if user.roles else "admin"
-        token = create_jwt(user.id, user.email, role)
+        token = create_jwt(user.id, user.email, user.system_role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
 
@@ -349,15 +347,13 @@ async def login(
         ctx.storage.set_user_context(
             user.id,
             is_admin=user.system_role in {"owner", "admin"},
-            is_gm="gm" in (user.roles or []),
         )
 
         # Update last_login
         user.last_login = datetime.utcnow()
         ctx.users.update_user(user)
 
-        role = user.roles[0] if user.roles else "player"
-        token = create_jwt(user.id, user.email, role)
+        token = create_jwt(user.id, user.email, user.system_role or "user")
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
 
@@ -463,8 +459,7 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
-    role = user.roles[0] if user.roles else "player"
-    token = create_jwt(user.id, user.email, role)
+    token = create_jwt(user.id, user.email, user.system_role or "user")
     return RefreshResponse(access_token=token, token_type="bearer")
 
 
@@ -497,8 +492,7 @@ async def register(
         # Redeem the invite
         ctx.invites.redeem(req.invite_code, user.id)
 
-        role = user.roles[0] if user.roles else "player"
-        token = create_jwt(user.id, user.email, role)
+        token = create_jwt(user.id, user.email, user.system_role or "user")
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
 
