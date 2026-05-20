@@ -250,9 +250,9 @@ export default function App() {
                 <Route path="/sessions" element={<Sessions user={user} />} />
                 <Route path="/universe" element={<Universe />} />
                 <Route path="/maps" element={<Maps />} />
-                <Route path="/vaults" element={<Vaults />} />
+                <Route path="/vaults" element={<Vaults user={user} />} />
                 <Route path="/settings" element={<Settings user={user} />} />
-                <Route path="/groups" element={<Groups user={user} />} />
+                <Route path="/groups" element={<Navigate to="/vaults" replace />} />
                 {isAdmin && <Route path="/owner/groups" element={<OwnerGroups />} />}
                 {isAdmin && <Route path="/owner/invites" element={<OwnerInvites />} />}
                 {isAdmin && <Route path="/admin" element={<AdminPanel user={user} />} />}

@@ -5,7 +5,6 @@ import {
   BookOpen,
   Scroll,
   User,
-  Users,
   Globe,
   Map,
   Layers,
@@ -30,7 +29,6 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Globe, label: 'Universe', path: '/universe' },
     { icon: Map, label: 'Maps', path: '/maps' },
-    { icon: Users, label: 'Groups', path: '/groups' },
   ];
 
   return (
