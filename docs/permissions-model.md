@@ -42,9 +42,9 @@ Only the resource owner (matched via `owner_id`) or the system actor (`user_id =
 | `moderator` | Moderate content; can view user list |
 | `tester` | Access to pre-release features |
 | `user` | Standard access |
-| `suspended` | Account suspended (enforced via `is_active` flag) |
+| `suspended` | Login disabled |
 
-> **Note:** The `suspended` role does not itself block login. Account deactivation is enforced by the login endpoint, which rejects users with `is_active == False`.
+> **Note:** The login endpoint blocks suspended accounts via both `is_active == False` and `system_role == "suspended"` checks.
 
 ---
 
