@@ -115,7 +115,6 @@ export default function NoteEditor({
   useEffect(() => {
     if (editor) editor.setEditable(isEditing);
   }, [editor, isEditing]);
-
   // Sync content when note changes or editing stops
   useEffect(() => {
     if (!editor || !selectedNote) return;
