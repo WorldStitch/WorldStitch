@@ -1,4 +1,4 @@
-name: Phase 0 CI
+name: CI
 
 on: [push, pull_request]
 
@@ -25,8 +25,17 @@ jobs:
         run: ruff format --check .
 
       - name: Run tests
-        run: pytest Ward_DND_AI/tests/
+        run: pytest MythosEngine/tests/
 
-      - name: Type check (mypy)
-        run: mypy Ward_DND_AI/models/ Ward_DND_AI/managers/ Ward_DND_AI/storage/ Ward_DND_AI/context/
-        continue-on-error: true
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install and build
+        run: cd frontend && npm ci && npm run build

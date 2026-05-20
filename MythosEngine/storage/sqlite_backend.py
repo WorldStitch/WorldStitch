@@ -465,7 +465,7 @@ class SQLiteBackend(StorageBackend):
     def _has_vault_access(self, vault_id: str) -> bool:
         if not vault_id:
             return True
-        if self._is_admin or self._is_gm:
+        if self._is_admin:
             return True
         with self._session() as session:
             record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
@@ -512,7 +512,6 @@ class SQLiteBackend(StorageBackend):
                         continue
                     if (
                         self._is_admin
-                        or self._is_gm
                         or group.owner_id == self._current_user_id
                         or self._current_user_id in (group.members or [])
                     ):
@@ -800,7 +799,7 @@ class SQLiteBackend(StorageBackend):
                     return None
                 if not self._can_access(note.owner_id, note.permissions):
                     return None
-                if not (self._is_admin or self._is_gm) and (getattr(note, "meta", {}) or {}).get("gm_only"):
+                if not self._is_admin and (getattr(note, "meta", {}) or {}).get("gm_only"):
                     return None
                 # Load content from file if available
                 if hasattr(note, "path") and note.path:
@@ -880,7 +879,7 @@ class SQLiteBackend(StorageBackend):
                         continue
                     if not self._can_access(note.owner_id, note.permissions or {}):
                         continue
-                    if not (self._is_admin or self._is_gm) and (getattr(note, "meta", {}) or {}).get("gm_only"):
+                    if not self._is_admin and (getattr(note, "meta", {}) or {}).get("gm_only"):
                         continue
                     if tag and tag.lower() not in [t.lower() for t in (note.tags or [])]:
                         continue
@@ -917,7 +916,7 @@ class SQLiteBackend(StorageBackend):
         accessible_ids: set[str] = set()
         with self._session() as session:
             base_q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
-            if self._is_admin or self._is_gm:
+            if self._is_admin:
                 records = base_q.all()
             else:
                 uid = self._current_user_id or ""
@@ -932,7 +931,7 @@ class SQLiteBackend(StorageBackend):
         if not root.is_dir():
             return []
         all_paths = [str(p.relative_to(self.vault_path)) for p in root.rglob("*.md") if p.is_file()]
-        if self._is_admin or self._is_gm or not self._current_user_id:
+        if self._is_admin or not self._current_user_id:
             result = all_paths
         else:
             # Return only paths that have a DB record the user can access
@@ -1740,7 +1739,7 @@ class SQLiteBackend(StorageBackend):
             q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
             if vault_id:
                 q = q.filter(NoteRecord.vault_id == vault_id)
-            if not (self._is_admin or self._is_gm):
+            if not self._is_admin:
                 uid = self._current_user_id or ""
                 q = q.filter(NoteRecord.owner_id == uid)
             return q.count()

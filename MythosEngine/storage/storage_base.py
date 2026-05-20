@@ -33,16 +33,14 @@ class StorageBackend(ABC):
     # Populated by set_user_context() after login
     _current_user_id: Optional[str] = None
     _is_admin: bool = False
-    _is_gm: bool = False
 
-    def set_user_context(self, user_id: str, is_admin: bool = False, is_gm: bool = False) -> None:
+    def set_user_context(self, user_id: str, is_admin: bool = False) -> None:
         """
         Set the active user for all subsequent queries.
         Must be called once after login before any data access.
         """
         self._current_user_id = user_id
         self._is_admin = is_admin
-        self._is_gm = is_gm
 
     def _can_access(self, owner_id: str, permissions: dict, member_ids: list | None = None) -> bool:
         """
@@ -55,7 +53,7 @@ class StorageBackend(ABC):
           4. Vault membership grants access (pass vault.members as member_ids).
           5. Default: deny.
         """
-        if self._is_admin or self._is_gm:
+        if self._is_admin:
             return True
         uid = self._current_user_id
         if not uid:
