@@ -255,7 +255,7 @@ async def setup_admin(
             email=req.email,
             username=req.username,
             password=req.password,
-            roles=["admin", "gm"],
+            roles=["admin"],
         )
         user.system_role = "owner"
         ctx.users.update_user(user)
@@ -354,7 +354,7 @@ async def login(
         user.last_login = datetime.utcnow()
         ctx.users.update_user(user)
 
-        role = user.roles[0] if user.roles else "player"
+        role = user.roles[0] if user.roles else ""
         token = create_jwt(user.id, user.email, role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
@@ -461,7 +461,7 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
-    role = user.roles[0] if user.roles else "player"
+    role = user.roles[0] if user.roles else ""
     token = create_jwt(user.id, user.email, role)
     return RefreshResponse(access_token=token, token_type="bearer")
 
@@ -489,13 +489,13 @@ async def register(
             email=req.email,
             username=req.username,
             password=req.password,
-            roles=["player"],
+            roles=[],
         )
 
         # Redeem the invite
         ctx.invites.redeem(req.invite_code, user.id)
 
-        role = user.roles[0] if user.roles else "player"
+        role = user.roles[0] if user.roles else ""
         token = create_jwt(user.id, user.email, role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
@@ -509,7 +509,7 @@ async def register(
                 "id": user.id,
                 "username": user.username,
                 "email": user.email,
-                "roles": user.roles or ["player"],
+                "roles": user.roles or [],
                 "system_role": user.system_role,
                 "groups": user.groups,
                 "is_active": user.is_active,
