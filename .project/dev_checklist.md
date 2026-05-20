@@ -11,13 +11,13 @@
 pytest -q
 
 # Run smoke test only (does app launch?)
-python -m unittest discover -v -s Ward_DND_AI/tests -p test_smoke.py
+pytest -v -k test_smoke
 
 # Run tests and list warnings
 pytest -q --tb=short -ra --disable-warnings
 
 # Launch app GUI manually
-python Ward_DND_AI/main.py
+python -m uvicorn server.app:app --host 127.0.0.1 --port 8741
 
 # -----------------------------
 # 💾 COMMIT FLOW

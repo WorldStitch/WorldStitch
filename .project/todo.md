@@ -1,4 +1,4 @@
-# Ward DND AI → World Builder — Master Roadmap
+# MythosEngine — Master Roadmap
 
 ---
 
@@ -19,7 +19,7 @@ Goal: stable, shareable app for a small group of testers.
 - [ ] Admin bootstraps correctly from .env on first launch
 - [ ] User Management panel creates player accounts correctly
 - [ ] Reset password in User Management works
-- [ ] Player accounts see only their own data; admin sees all
+- [ ] Member accounts see only their own data; admin sees all
 - [ ] Login failure shows error message (not crash)
 
 ### Stability
@@ -55,7 +55,7 @@ Goal: real multiuser with groups, roles, sharing, and online capability.
 ### Groups & permissions
 - [ ] Group/party creation and management UI
 - [ ] Vault membership — group members share a vault's content
-- [ ] Role-based access: GM sees everything, player sees what's shared
+- [ ] Role-based access: vault owners see everything, members see what's shared
 - [ ] Per-resource sharing (individual notes/characters with specific users)
 
 ### Storage & data isolation
@@ -97,7 +97,7 @@ Goal: AI is first-class across the whole app.
 - [ ] Multiple AI providers (OpenAI, Anthropic, local Ollama)
 - [ ] Bulk summarize entire vault or folder
 - [ ] Consistency checker — finds contradictions in lore
-- [ ] Shared AI context for groups — GM and players query same lore base
+- [ ] Shared AI context for groups — vault owners and members query the same lore base
 - [ ] Session recap generator from notes
 - [ ] NPC dialogue generator from character sheets
 - [ ] API endpoint — expose AI query as REST for website integration
