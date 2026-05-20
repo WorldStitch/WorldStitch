@@ -49,13 +49,13 @@ Goal: real multiuser with groups, roles, sharing, and online capability.
 - [ ] Real session tokens stored in DB (not just in-memory)
 - [ ] Session expiry and auto-logout
 - [ ] Self-service password change in UI
-- [ ] Invite code system for controlled signups
+- [x] Invite code system for controlled signups
 - [ ] Admin view — full user list, usage stats, account controls
 
 ### Groups & permissions
 - [ ] Group/party creation and management UI
 - [ ] Vault membership — group members share a vault's content
-- [ ] Role-based access: vault owners see everything, members see what's shared
+- [ ] Role-based access: vault admin sees everything, members see what's shared
 - [ ] Per-resource sharing (individual notes/characters with specific users)
 
 ### Storage & data isolation
@@ -71,11 +71,10 @@ Goal: real multiuser with groups, roles, sharing, and online capability.
 
 ---
 
-## 🎨 PHASE 4 — UI/UX Modernization & Rebrand
+## 🎨 PHASE 4 — UI/UX Modernization
 
-Goal: looks and feels like a real product. Rebrand as World Builder.
+Goal: looks and feels like a real product.
 
-- [ ] Rename app to "World Builder" (DND becomes a module, not the core)
 - [ ] New icon, color scheme, typography
 - [ ] Modern sidebar navigation replacing tab bar
 - [ ] Light/dark/custom theme system
@@ -97,7 +96,7 @@ Goal: AI is first-class across the whole app.
 - [ ] Multiple AI providers (OpenAI, Anthropic, local Ollama)
 - [ ] Bulk summarize entire vault or folder
 - [ ] Consistency checker — finds contradictions in lore
-- [ ] Shared AI context for groups — vault owners and members query the same lore base
+- [ ] Shared AI context for groups — vault members query same lore base
 - [ ] Session recap generator from notes
 - [ ] NPC dialogue generator from character sheets
 - [ ] API endpoint — expose AI query as REST for website integration
@@ -179,8 +178,5 @@ Goal: all existing tabs actually work, plus new world-building tools.
 ## 📋 Tech Debt (see TECH_DEBT.md)
 
 - [ ] Add owner_id SQL column to remaining ORM tables
-- [ ] Wire storage router into AppContext instead of hardcoded SQLiteBackend
-- [ ] controller_browse.py references storage.vault_path directly
-- [ ] Version restore uses direct file open instead of storage layer
 - [ ] find_legacy_storage.py, rename_vault_storage.py, tree.py — move or delete
 - [ ] mypy is continue-on-error — fix errors, make it a hard CI gate
