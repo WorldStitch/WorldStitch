@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
-from server.deps import get_ctx, get_current_user
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 
 
 router = APIRouter()
@@ -31,7 +31,7 @@ _LOGS_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    if "admin" not in (user.roles or []):
+    if user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",

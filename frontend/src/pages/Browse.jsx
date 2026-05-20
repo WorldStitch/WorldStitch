@@ -10,6 +10,7 @@ import NoteEditor from '@/components/browse/NoteEditor';
 import TagPanel from '@/components/browse/TagPanel';
 import MetaPanel from '@/components/browse/MetaPanel';
 import PermissionsPanel from '@/components/browse/PermissionsPanel';
+import BacklinksPanel from '@/components/browse/BacklinksPanel';
 import { notes, folders, ai, groups, users, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { useVault } from '@/context/VaultContext';
 import { useRealtime } from '@/context/RealtimeContext';
@@ -469,6 +470,25 @@ export default function Browse({ user }) {
     });
   };
 
+  // Navigate to a linked note by ID (from backlinks panel) or by label (from wiki-link click)
+  const handleNavigateByLink = (entityId, entityType, label) => {
+    if (entityType === 'note' || !entityType) {
+      // entityId may be a UUID or a raw label string from wiki-links
+      const byId = allNotes.find((n) => n.id === entityId);
+      const byTitle = allNotes.find(
+        (n) => n.title.toLowerCase() === (label || entityId || '').toLowerCase(),
+      );
+      const target = byId || byTitle;
+      if (target) {
+        handleSelectNote(target);
+      } else {
+        toast.info(`Note "${label || entityId}" not found`);
+      }
+    } else {
+      toast.info(`Navigate to ${entityType}: ${label || entityId}`);
+    }
+  };
+
   // ════════════════════════════════════════════════════════════════════════
   // RENDER
   // ════════════════════════════════════════════════════════════════════════
@@ -559,6 +579,7 @@ export default function Browse({ user }) {
             canEdit={canEdit}
             editingPresence={editingPresence}
             onCursorChange={(cursor) => selectedNoteId && updateCursor(selectedNoteId, cursor)}
+            onNavigate={(label) => handleNavigateByLink(label, 'note', label)}
           />
 
           {/* RIGHT PANEL — 280px, collapsible */}
@@ -613,6 +634,13 @@ export default function Browse({ user }) {
                       onAddMeta={handleAddMeta}
                       onRemoveMeta={handleRemoveMeta}
                     />
+
+                    <div className="border-t border-txt-muted/10 pt-4">
+                      <BacklinksPanel
+                        noteId={selectedNote.id}
+                        onNavigate={handleNavigateByLink}
+                      />
+                    </div>
 
                     {selectedNote.ai_summary && (
                       <div>

@@ -15,6 +15,9 @@ from server.auth_utils import decode_jwt
 
 _ctx: Optional[AppContext] = None
 
+PLATFORM_ADMIN = {"owner", "admin"}
+MOD_AND_ABOVE = {"owner", "admin", "moderator"}
+
 
 def set_app_context(ctx: AppContext) -> None:
     """Called once at startup to register the AppContext."""
@@ -65,21 +68,25 @@ def get_current_user(
 
     ctx.storage.set_user_context(
         user.id,
-        is_admin="admin" in (user.roles or []),
-        is_gm="gm" in (user.roles or []),
+        is_admin=user.system_role in PLATFORM_ADMIN,
     )
     ctx.current_user_id = user.id
     return user
 
 
 def require_permission(permission: str):
-    """Dependency factory for route-level permission checks."""
+    """Dependency factory for route-level permission checks using system_role."""
 
     def dependency(user: User = Depends(get_current_user)) -> User:
-        if permission not in (user.roles or []):
+        if permission == "admin" and user.system_role not in PLATFORM_ADMIN:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing permission: {permission}",
+                detail="Platform admin required.",
+            )
+        if permission == "moderator" and user.system_role not in MOD_AND_ABOVE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Moderator or above required.",
             )
         return user
 
@@ -87,8 +94,8 @@ def require_permission(permission: str):
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    """Raises 403 if the current user does not have the 'admin' role."""
-    if "admin" not in user.roles:
+    """Raises 403 if the current user is not a platform admin (owner or admin)."""
+    if user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required.",

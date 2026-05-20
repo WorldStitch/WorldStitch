@@ -72,6 +72,7 @@ class UserRecord(Base):
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
     analytics_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    system_role: Mapped[str] = mapped_column(String(20), nullable=False, default="user", server_default="user")
 
 
 class GroupRecord(Base):
@@ -543,13 +544,15 @@ class SQLiteBackend(StorageBackend):
     def save_user(self, user: User) -> None:
         """Save or update a User record."""
         email = getattr(user, "email", "") or ""
+        system_role = getattr(user, "system_role", "user") or "user"
         with self._session() as session:
             record = session.query(UserRecord).filter(UserRecord.id == user.id).first()
             if record:
                 record.email = email
+                record.system_role = system_role
                 record.data = user.model_dump_json()
             else:
-                record = UserRecord(id=user.id, email=email, data=user.model_dump_json())
+                record = UserRecord(id=user.id, email=email, system_role=system_role, data=user.model_dump_json())
                 session.add(record)
             session.commit()
 

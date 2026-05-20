@@ -224,6 +224,14 @@ export const notes = {
 
   updateMeta: (id, meta) =>
     request("PUT", `/notes/${encodeURIComponent(id)}/meta`, { meta }),
+
+  backlinks: (id) => request("GET", `/notes/${encodeURIComponent(id)}/backlinks`),
+
+  createRelationship: (id, targetId, label = null) =>
+    request("POST", `/notes/${encodeURIComponent(id)}/relationships`, {
+      target_id: targetId,
+      label,
+    }),
 };
 
 // ── Folders ──────────────────────────────────────────────────────────────────

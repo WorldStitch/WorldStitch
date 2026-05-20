@@ -1,9 +1,10 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import Typography from '@tiptap/extension-typography';
+import { createWikiLinkExtension } from './WikiLinkExtension';
 import {
   Bold,
   Italic,
@@ -78,10 +79,18 @@ export default function NoteEditor({
   canEdit = true,
   editingPresence = null,
   onCursorChange,
+  onNavigate,
 }) {
   const editingUser =
     editingPresence?.email || editingPresence?.username || editingPresence?.user_id;
   const editingText = editingUser ? `${editingUser} is editing this note.` : null;
+
+  // Keep a mutable ref so the WikiLink extension always sees the current note id
+  // without needing to be recreated when the note changes.
+  const noteIdRef = useRef(selectedNote?.id ?? null);
+  useEffect(() => {
+    noteIdRef.current = selectedNote?.id ?? null;
+  }, [selectedNote?.id]);
 
   const editor = useEditor({
     extensions: [
@@ -92,6 +101,7 @@ export default function NoteEditor({
       }),
       Placeholder.configure({ placeholder: 'Start writing...' }),
       Typography,
+      createWikiLinkExtension({ noteIdRef, onNavigate }),
     ],
     content: '',
     editable: false,
@@ -105,7 +115,6 @@ export default function NoteEditor({
   useEffect(() => {
     if (editor) editor.setEditable(isEditing);
   }, [editor, isEditing]);
-
   // Sync content when note changes or editing stops
   useEffect(() => {
     if (!editor || !selectedNote) return;

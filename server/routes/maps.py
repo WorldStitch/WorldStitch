@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.map import Map
 from MythosEngine.models.user import User
-from server.deps import get_ctx, get_current_user
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.vault_access import resolve_vault
 
 logger = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ async def update_map(
     try:
         m = _get_map_or_404(ctx, user, map_id)
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in PLATFORM_ADMIN
         if m.owner_id != user.id and not is_admin:
             raise HTTPException(status_code=403, detail="Access denied")
 
@@ -267,7 +267,7 @@ async def delete_map(
     try:
         m = _get_map_or_404(ctx, user, map_id)
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in PLATFORM_ADMIN
         if m.owner_id != user.id and not is_admin:
             raise HTTPException(status_code=403, detail="Access denied")
 

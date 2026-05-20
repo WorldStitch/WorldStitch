@@ -34,5 +34,9 @@ class User(CoreModel):
         default_factory=list,
         description="System-level roles, e.g. ['admin', 'player']. Vault/campaign roles live in Group.",
     )
+    system_role: str = Field(
+        default="user",
+        description="Platform-level role: owner | admin | moderator | tester | user | suspended",
+    )
     is_active: bool = Field(default=True, description="False to disable login without deleting the account.")
     last_login: Optional[datetime] = Field(default=None, description="Timestamp of most recent login.")

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-from server.deps import get_ctx, get_current_user
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -137,7 +137,7 @@ async def delete_campaign(
 ):
     """Soft-delete a campaign (sets deleted_at)."""
     campaign = _get_campaign_or_404(ctx, campaign_id)
-    is_admin = "admin" in (user.roles or [])
+    is_admin = user.system_role in PLATFORM_ADMIN
     if campaign.get("created_by_user_id") != user.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
@@ -180,10 +180,9 @@ async def add_campaign_member(
 ):
     """Add a user to a campaign with the given role."""
     _get_campaign_or_404(ctx, campaign_id)
-    is_admin = "admin" in (user.roles or [])
-    is_gm = "gm" in (user.roles or [])
-    if not is_admin and not is_gm:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only GMs and admins can add members")
+    is_admin = user.system_role in PLATFORM_ADMIN
+    if not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only platform admins can add campaign members")
     try:
         return ctx.storage.add_campaign_member(campaign_id, req.user_id, req.role)
     except Exception as exc:

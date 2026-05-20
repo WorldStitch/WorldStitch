@@ -115,10 +115,10 @@ def _get_creator_user(ctx: AppContext) -> Optional[User]:
 @router.get("/", response_model=List[UserListItem])
 async def list_users(
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = require_permission("moderator"),
 ):
     """
-    List all users in the system. Requires admin role.
+    List all users in the system. Requires moderator or above.
     """
     try:
         users = _list_all_users(ctx)
@@ -144,10 +144,10 @@ async def list_users(
 async def get_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = require_permission("moderator"),
 ):
     """
-    Get a single user by ID. Requires admin role.
+    Get a single user by ID. Requires moderator or above.
     """
     user = ctx.users.get_user(user_id)
     if not user:
