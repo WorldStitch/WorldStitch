@@ -19,7 +19,7 @@ Goal: stable, shareable app for a small group of testers.
 - [ ] Admin bootstraps correctly from .env on first launch
 - [ ] User Management panel creates player accounts correctly
 - [ ] Reset password in User Management works
-- [ ] Player accounts see only their own data; admin sees all
+- [ ] Member accounts see only their own data; admin sees all
 - [ ] Login failure shows error message (not crash)
 
 ### Stability

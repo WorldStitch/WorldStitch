@@ -10,6 +10,9 @@
 # Run all tests (quick pass/fail)
 pytest -q
 
+# Run smoke test only (does app launch?)
+pytest -v -k test_smoke
+
 # Run tests with short tracebacks and warnings
 pytest -q --tb=short -ra --disable-warnings
 
