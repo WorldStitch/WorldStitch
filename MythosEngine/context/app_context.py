@@ -78,7 +78,7 @@ class AppContext:
     def __init__(self, config: Config, storage: Optional[StorageBackend] = None):
         self.config = config
 
-        # Migrate old DB name on first run after rebrand (ward_dnd.db → mythos_engine.db)
+        # One-time migration: copy legacy ward_dnd.db to current mythos_engine.db on first run after rebrand
         _project_root = Path(config.VAULT_PATH).resolve().parent
         _db_new = _project_root / "mythos_engine.db"
         _db_old = _project_root / "ward_dnd.db"
@@ -136,21 +136,6 @@ class AppContext:
         """True if the current user has the 'admin' role."""
         user = self.current_user
         return user is not None and "admin" in user.roles
-
-    @property
-    def is_gm(self) -> bool:
-        """True if the current user has the 'gm' role."""
-        user = self.current_user
-        return user is not None and "gm" in user.roles
-
-    @property
-    def is_gm_or_admin(self) -> bool:
-        """True if the current user is a GM or an admin."""
-        user = self.current_user
-        if user is None:
-            return False
-        roles = set(user.roles or [])
-        return bool(roles & {"admin", "gm"})
 
     # ------------------------------------------------------------------
     # AI helpers

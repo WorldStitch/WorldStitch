@@ -11,8 +11,8 @@ export default function AccountSettings({ user }) {
   const [showPassword, setShowPassword] = useState(false);
 
   const getUserRole = (u) => {
-    if (u?.roles && Array.isArray(u.roles)) return u.roles[0] || 'player';
-    return u?.role || 'player';
+    if (u?.roles && Array.isArray(u.roles)) return u.roles[0] || 'member';
+    return u?.role || 'member';
   };
 
   const { register, handleSubmit, formState: { errors }, reset } = useForm({

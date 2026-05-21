@@ -15,7 +15,7 @@ export default function OwnerGroups() {
   const [description, setDescription] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [selectedUserId, setSelectedUserId] = useState('');
-  const [selectedRole, setSelectedRole] = useState('player');
+  const [selectedRole, setSelectedRole] = useState('member');
   const [groupName, setGroupName] = useState('');
   const [groupDescription, setGroupDescription] = useState('');
 
@@ -148,7 +148,7 @@ export default function OwnerGroups() {
                     onChange={(e) => setSelectedRole(e.target.value)}
                     className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none"
                   >
-                    <option value="player">player</option>
+                    <option value="member">member</option>
                     <option value="observer">observer</option>
                     <option value="gm">gm</option>
                   </select>
@@ -163,7 +163,7 @@ export default function OwnerGroups() {
                     <div key={memberId} className="flex items-center gap-3 bg-elevated rounded-xl px-4 py-3">
                       <div className="flex-1">
                         <div className="font-medium text-txt">{user?.username || memberId}</div>
-                        <div className="text-xs text-txt-muted">{selectedGroup.member_roles?.[memberId] || 'player'}</div>
+                        <div className="text-xs text-txt-muted">{selectedGroup.member_roles?.[memberId] || 'member'}</div>
                       </div>
                       <Button variant="danger" size="sm" onClick={() => removeMember.mutate({ groupId: selectedGroup.id, userId: memberId })}>
                         Remove

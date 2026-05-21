@@ -332,7 +332,7 @@ export const groups = {
   create: (data) => request("POST", "/groups", data),
   update: (id, data) => request("PUT", `/groups/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/groups/${encodeURIComponent(id)}`),
-  addMember: (id, user_id, role = "player") =>
+  addMember: (id, user_id, role = "member") =>
     request("POST", `/groups/${encodeURIComponent(id)}/members`, { user_id, role }),
   removeMember: (id, user_id) =>
     request("DELETE", `/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(user_id)}`),
@@ -394,6 +394,19 @@ export const debug = {
   getCrashLog: (filename) => request("GET", `/debug/crash-logs/${encodeURIComponent(filename)}`),
   deleteCrashLog: (filename) => request("DELETE", `/debug/crash-logs/${encodeURIComponent(filename)}`),
   getRuntimeLog: () => request("GET", "/debug/runtime-log"),
+};
+
+// ── Relationships ─────────────────────────────────────────────────────────────
+export const relationships = {
+  list: (vaultId, entityId) =>
+    request(
+      "GET",
+      `/relationships?vault_id=${encodeURIComponent(vaultId)}${entityId ? `&entity_id=${encodeURIComponent(entityId)}` : ""}`
+    ),
+  getTypes: () => request("GET", "/relationships/types"),
+  create: (data) => request("POST", "/relationships", data),
+  update: (id, data) => request("PUT", `/relationships/${encodeURIComponent(id)}`, data),
+  delete: (id) => request("DELETE", `/relationships/${encodeURIComponent(id)}`),
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
