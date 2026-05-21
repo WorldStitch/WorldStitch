@@ -1,4 +1,4 @@
-# docker-compose.yml — MythosEngine multi-user deployment
+﻿# docker-compose.yml — WorldStitch multi-user deployment
 #
 # Quick start
 # -----------
@@ -17,8 +17,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: mythosengine:latest
-    container_name: mythosengine_api
+    image: WorldStitch:latest
+    container_name: WorldStitch_api
     restart: unless-stopped
 
     # ── Ports ─────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ services:
       APP_ENV: "${APP_ENV:-production}"
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
       VAULT_PATH: /data/vault
-      DATABASE_URL: "sqlite:////data/mythos_engine.db"
+      DATABASE_URL: "sqlite:////data/worldstitch.db"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       WORKERS: "${WORKERS:-1}"
       # Config-level overrides (optional)

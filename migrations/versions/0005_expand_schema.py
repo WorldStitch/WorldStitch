@@ -1,4 +1,4 @@
-"""Expand schema from 14 legacy tables to 41-table normalized design.
+﻿"""Expand schema from 14 legacy tables to 41-table normalized design.
 
 Revision ID: 0005
 Revises: 0004
@@ -7,7 +7,7 @@ Create Date: 2026-05-14
 What this migration does
 ------------------------
 Adds 35 new tables that implement the full schema defined in
-MythosEngine/storage/schema.py.  The 14 tables created by migrations 0001-0004
+WorldStitch/storage/schema.py.  The 14 tables created by migrations 0001-0004
 (users, groups, vaults, folders, notes, characters, maps, images, sounds,
 sessions, session_logs, starred, invite_codes, note_relationships) are left
 completely untouched — they remain in place for the existing CRUD layer.

@@ -1,6 +1,6 @@
-import Button from '@/components/Button';
+﻿import Button from '@/components/Button';
 
-const GITHUB_REPO = 'https://github.com/sike-ward/MythosEngine';
+const GITHUB_REPO = 'https://github.com/sike-ward/WorldStitch';
 
 export default function HelpSettings() {
   const open = (url) => window.open(url, '_blank');
@@ -8,10 +8,10 @@ export default function HelpSettings() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-bold text-txt mb-4">About MythosEngine</h3>
+        <h3 className="text-lg font-bold text-txt mb-4">About WorldStitch</h3>
         <div className="space-y-4 text-txt-secondary">
           <p>
-            MythosEngine is a world-building and creative project management tool
+            WorldStitch is a world-building and creative project management tool
             designed for storytellers, creators, and writers.
           </p>
           <p>Version: 1.0.0</p>

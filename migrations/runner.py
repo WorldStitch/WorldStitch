@@ -1,5 +1,5 @@
-"""
-migrations/runner.py — Programmatic Alembic runner for MythosEngine.
+﻿"""
+migrations/runner.py — Programmatic Alembic runner for WorldStitch.
 
 Wraps Alembic's Python API so that SQLiteBackend.__init__ can apply any
 pending schema migrations on startup without requiring a CLI call.

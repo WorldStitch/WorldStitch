@@ -1,4 +1,4 @@
-"""
+﻿"""
 AI API key and usage settings.
 
 GET    /settings/ai                      — user's AI key status + quota
@@ -12,8 +12,8 @@ POST   /admin/users/{user_id}/ai-limit   — admin: set a user's monthly limit
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import get_ctx, get_current_user, require_admin
 
 router = APIRouter(tags=["ai-settings"])

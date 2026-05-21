@@ -1,11 +1,11 @@
-"""
-MythosEngine FastAPI application.
+﻿"""
+WorldStitch FastAPI application.
 
 Creates the FastAPI app, wires up AppContext, and registers all route
 modules.  Uvicorn points at ``server.app:app``.
 
 Start from the project root (the directory containing both
-``MythosEngine/`` and ``server/``):
+``WorldStitch/`` and ``server/``):
 
     uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
 
@@ -29,14 +29,14 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-# Add parent directory so MythosEngine package is importable
+# Add parent directory so WorldStitch package is importable
 _parent = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_parent))
 
 from fastapi.responses import JSONResponse
 
-from MythosEngine.config.config import Config
-from MythosEngine.context.app_context import AppContext
+from WorldStitch.config.config import Config
+from WorldStitch.context.app_context import AppContext
 from server.deps import set_app_context
 from server.limiter import limiter
 from server.middleware.logging import LoggingMiddleware
@@ -72,7 +72,7 @@ async def lifespan(application: FastAPI):
     # Initialise file + in-memory logging before anything else so all
     # startup messages land in the log file.
     try:
-        from MythosEngine.utils.logging_setup import (  # noqa: F401
+        from WorldStitch.utils.logging_setup import (  # noqa: F401
             APP_SESSION_LOG_HANDLER,
             file_handler,
         )
@@ -92,7 +92,7 @@ async def lifespan(application: FastAPI):
     api_key = getattr(cfg, "OPENAI_API_KEY", "")
     if api_key:
         try:
-            from MythosEngine.ai.core.model_router import get_model_backend
+            from WorldStitch.ai.core.model_router import get_model_backend
 
             ctx.ai = get_model_backend(cfg, storage=ctx.storage)
             ctx.ai._index_ready = False
@@ -115,17 +115,17 @@ async def lifespan(application: FastAPI):
 
     application.state.ctx = ctx
     set_app_context(ctx)
-    logger.info("MythosEngine server ready. Vault: %s", getattr(cfg, "VAULT_PATH", "?"))
+    logger.info("WorldStitch server ready. Vault: %s", getattr(cfg, "VAULT_PATH", "?"))
     yield
-    logger.info("MythosEngine server shutting down.")
+    logger.info("WorldStitch server shutting down.")
 
 
 # ── FastAPI instance ──────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="MythosEngine API",
+    title="WorldStitch API",
     version="1.0.0",
-    description="REST API for the MythosEngine D&D campaign management platform.",
+    description="REST API for the WorldStitch D&D campaign management platform.",
     lifespan=lifespan,
 )
 
@@ -217,4 +217,4 @@ app.include_router(admin_analytics.router)
 @app.get("/health", tags=["health"])
 def health():
     """Liveness probe used by the Electron launcher to detect API readiness."""
-    return {"status": "ok", "service": "MythosEngine"}
+    return {"status": "ok", "service": "WorldStitch"}

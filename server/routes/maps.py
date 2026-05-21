@@ -1,4 +1,4 @@
-"""
+﻿"""
 Map endpoints.
 
 GET /maps?vault_id=&type= — paginated list
@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.map import Map
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.map import Map
+from WorldStitch.models.user import User
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.vault_access import resolve_vault
 

@@ -1,4 +1,4 @@
-# Building MythosEngine for Distribution
+﻿# Building WorldStitch for Distribution
 
 Every time you want to send a new build to testers, follow these steps.
 The result is one `.exe` file they double-click to install — no Python or Node required on their end.
@@ -43,7 +43,7 @@ If you have not done the first-time setup, see the README.
 
 ## Step 1 — Freeze the Python server
 
-Open a terminal in the MythosEngine folder (or double-click `Dev_Console.bat`).
+Open a terminal in the WorldStitch folder (or double-click `Dev_Console.bat`).
 
 Run from the **project root**:
 
@@ -91,17 +91,17 @@ This will take **1–3 minutes**.
 When it is done you will see something like:
 
 ```
-  • building        target=NSIS name=MythosEngine file=MythosEngine Setup 1.0.0.exe
+  • building        target=NSIS name=WorldStitch file=WorldStitch Setup 1.0.0.exe
   • done
 ```
 
 For other platforms:
 
 ```bash
-# macOS (produces dist-electron/MythosEngine-x.x.x.dmg)
+# macOS (produces dist-electron/WorldStitch-x.x.x.dmg)
 npm run electron:build:mac
 
-# Linux (produces dist-electron/MythosEngine-x.x.x.AppImage)
+# Linux (produces dist-electron/WorldStitch-x.x.x.AppImage)
 npm run electron:build:linux
 ```
 
@@ -112,7 +112,7 @@ npm run electron:build:linux
 Your installer is at:
 
 ```
-frontend\dist-electron\MythosEngine Setup 1.0.0.exe
+frontend\dist-electron\WorldStitch Setup 1.0.0.exe
 ```
 
 (The version number may differ.) That is the file you send to testers.
@@ -123,9 +123,9 @@ frontend\dist-electron\MythosEngine Setup 1.0.0.exe
 
 Before sending to anyone:
 
-1. Run `MythosEngine Setup 1.0.0.exe` on your own machine
+1. Run `WorldStitch Setup 1.0.0.exe` on your own machine
 2. Click through the install wizard
-3. Launch MythosEngine from the Start Menu or Desktop shortcut
+3. Launch WorldStitch from the Start Menu or Desktop shortcut
 4. The app should open and the API health check should pass (green status)
 
 The Electron main process (`electron/main.cjs`) will:
@@ -137,7 +137,7 @@ The Electron main process (`electron/main.cjs`) will:
 User data (vault, logs, `settings.json`, SQLite DB) is stored in:
 
 ```
-%APPDATA%\MythosEngine\
+%APPDATA%\WorldStitch\
 ```
 
 If the app opens and you can log in, it is good to ship.
@@ -181,7 +181,7 @@ pip install pyinstaller
 Step 1 did not finish successfully. Run it directly in a terminal to see the traceback:
 
 ```bat
-set MYTHOS_DATA_DIR=%APPDATA%\MythosEngine
+set MYTHOS_DATA_DIR=%APPDATA%\WorldStitch
 dist\server\server.exe
 ```
 
@@ -199,11 +199,11 @@ Make sure Step 1 completed successfully before running Step 2.  The path
 `frontend/` directory.
 
 ### App opens but API is unreachable
-Check `%APPDATA%\MythosEngine\logs\app.log` for Python-side errors.
+Check `%APPDATA%\WorldStitch\logs\app.log` for Python-side errors.
 
 ### The installed app works on your machine but crashes for testers
 Check if their machine is Windows 10 or later (64-bit).
-Ask them to send you the log file from: `%APPDATA%\MythosEngine\logs\app.log`
+Ask them to send you the log file from: `%APPDATA%\WorldStitch\logs\app.log`
 
 ---
 
@@ -216,7 +216,7 @@ scripts\build-backend.bat
 cd frontend && npm run build:win
 ```
 
-Output file: `frontend\dist-electron\MythosEngine Setup x.x.x.exe`
+Output file: `frontend\dist-electron\WorldStitch Setup x.x.x.exe`
 
 ---
 
@@ -234,7 +234,7 @@ npm run electron:dev
 
 Or use the convenience launcher:
 ```bat
-Launch_MythosEngine.bat
+Launch_WorldStitch.bat
 ```
 
 ---

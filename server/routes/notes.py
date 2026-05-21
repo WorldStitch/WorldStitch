@@ -1,4 +1,4 @@
-"""
+﻿"""
 Note and folder endpoints.
 
 GET /notes — list notes (uses search_notes under the hood)
@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.realtime import hub
 from server.vault_access import resolve_vault
@@ -258,7 +258,7 @@ def _get_note_or_404(ctx, note_id):
         # Try reading by path (for file-based notes)
         try:
             content = ctx.storage.read_note(note_id)
-            from MythosEngine.models.note import Note as NoteModel
+            from WorldStitch.models.note import Note as NoteModel
 
             note = NoteModel(
                 id=note_id,

@@ -1,4 +1,4 @@
-"""Initial schema — create all MythosEngine tables.
+﻿"""Initial schema — create all WorldStitch tables.
 
 Revision ID: 0001
 Revises: (none — this is the base migration)

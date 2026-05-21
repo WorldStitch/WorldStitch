@@ -1,5 +1,5 @@
-MythosEngine — Private Software License
-Copyright © 2026 MythosEngine. All rights reserved.
+﻿WorldStitch — Private Software License
+Copyright © 2026 WorldStitch. All rights reserved.
 
 This software and its source code are proprietary and confidential.
 Unauthorized copying, distribution, or use is strictly prohibited.

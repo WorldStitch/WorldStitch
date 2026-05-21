@@ -1,1 +1,1 @@
-"""MythosEngine FastAPI server."""
+﻿"""WorldStitch FastAPI server."""

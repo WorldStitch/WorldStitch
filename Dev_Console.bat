@@ -1,5 +1,5 @@
-@echo off
-title MythosEngine Dev Console
+﻿@echo off
+title WorldStitch Dev Console
 cd /d "%~dp0"
 
 echo Activating Python virtual environment...
@@ -11,7 +11,7 @@ if exist ".venv\Scripts\activate.bat" (
 )
 
 echo.
-echo MythosEngine Dev Console
+echo WorldStitch Dev Console
 echo ------------------------
 echo Python: %VIRTUAL_ENV%
 echo.

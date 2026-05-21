@@ -1,4 +1,4 @@
-"""
+﻿"""
 Debug endpoints (admin only).
 
 GET  /debug/crash-logs              — list crash log files
@@ -13,8 +13,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 

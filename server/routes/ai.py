@@ -1,4 +1,4 @@
-"""
+﻿"""
 AI endpoints.
 
 GET  /ai/status          — readiness check (no auth required)
@@ -20,9 +20,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from MythosEngine.ai.cost_tracker import AIUsageRecord, _DEFAULT_PRICING, _PRICING
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.ai.cost_tracker import AIUsageRecord, _DEFAULT_PRICING, _PRICING
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 
 from server.deps import get_ctx, get_current_user
 from server.limiter import limiter
@@ -150,7 +150,7 @@ def _get_ai_for_user(user_id: str, ctx: AppContext):
     if store is not None:
         personal_key = store.get_personal_key(user_id)
         if personal_key:
-            from MythosEngine.ai.core.openai_engine import OpenaiAI
+            from WorldStitch.ai.core.openai_engine import OpenaiAI
 
             user_ai = OpenaiAI(ctx.config)
             user_ai.update_api_key(personal_key)

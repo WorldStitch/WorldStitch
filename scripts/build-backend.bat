@@ -1,7 +1,7 @@
-@echo off
+﻿@echo off
 setlocal EnableDelayedExpansion
 
-REM ── MythosEngine backend freeze script ───────────────────────────────────────
+REM ── WorldStitch backend freeze script ───────────────────────────────────────
 REM Produces dist\server\server.exe (onedir) using PyInstaller.
 REM Run from the project root: scripts\build-backend.bat
 

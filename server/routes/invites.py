@@ -1,4 +1,4 @@
-"""
+﻿"""
 Invite code management endpoints.
 
 GET /invites — list invite codes (platform admin: all; vault owner/admin: own)
@@ -18,8 +18,8 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.vault_access import list_accessible_vaults, is_vault_admin
 

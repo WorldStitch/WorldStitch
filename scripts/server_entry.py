@@ -1,5 +1,5 @@
-"""
-PyInstaller entry point for the MythosEngine FastAPI server.
+﻿"""
+PyInstaller entry point for the WorldStitch FastAPI server.
 
 Build with: scripts\build-backend.bat
 The resulting dist\server\ directory is bundled into the Electron installer
@@ -23,7 +23,7 @@ if getattr(sys, "frozen", False):
 
         # Redirect Config._path to the user-data dir so settings persist
         # across launches.  Must happen before any Config() is instantiated.
-        from MythosEngine.config import config as _cfg_module
+        from WorldStitch.config import config as _cfg_module
 
         _settings_path = _data_dir / "config" / "settings.json"
         _settings_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,8 +1,8 @@
-# MythosEngine FastAPI Server Guide
+﻿# WorldStitch FastAPI Server Guide
 
 ## Overview
 
-This is a FastAPI backend server that wraps the existing MythosEngine Python backend and exposes it as REST endpoints for the Electron/React frontend.
+This is a FastAPI backend server that wraps the existing WorldStitch Python backend and exposes it as REST endpoints for the Electron/React frontend.
 
 The server initializes an `AppContext` on startup, which provides access to all services (config, storage, auth, managers, AI, etc.) in a single service locator pattern.
 
@@ -30,21 +30,21 @@ server/
 ### Method 1: Using uvicorn directly (from server directory)
 
 ```bash
-cd /sessions/wonderful-optimistic-mccarthy/mnt/MythosEngine/server
+cd /sessions/wonderful-optimistic-mccarthy/mnt/WorldStitch/server
 python -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ### Method 2: Using uvicorn from parent directory
 
 ```bash
-cd /sessions/wonderful-optimistic-mccarthy/mnt/MythosEngine
+cd /sessions/wonderful-optimistic-mccarthy/mnt/WorldStitch
 python -m uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ### Method 3: Direct Python execution
 
 ```bash
-cd /sessions/wonderful-optimistic-mccarthy/mnt/MythosEngine/server
+cd /sessions/wonderful-optimistic-mccarthy/mnt/WorldStitch/server
 python app.py
 ```
 
@@ -226,7 +226,7 @@ Example response:
 
 ## Configuration
 
-The server reads configuration from `MythosEngine/config/settings.json` and `.env` files. Settings can be:
+The server reads configuration from `WorldStitch/config/settings.json` and `.env` files. Settings can be:
 - Retrieved via `GET /settings`
 - Updated via `PUT /settings`
 

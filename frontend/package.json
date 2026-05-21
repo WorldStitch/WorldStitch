@@ -1,7 +1,7 @@
-{
-  "name": "mythosengine",
+﻿{
+  "name": "WorldStitch",
   "version": "1.0.0",
-  "description": "MythosEngine — D&D Campaign Management",
+  "description": "WorldStitch — D&D Campaign Management",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
@@ -47,9 +47,9 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.mythosengine.app",
-    "productName": "MythosEngine",
-    "copyright": "Copyright © 2026 MythosEngine",
+    "appId": "com.WorldStitch.app",
+    "productName": "WorldStitch",
+    "copyright": "Copyright © 2026 WorldStitch",
     "directories": {
       "output": "dist-electron",
       "buildResources": "build-resources"
@@ -82,7 +82,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "MythosEngine",
+      "shortcutName": "WorldStitch",
       "installerIcon": "build-resources/icon.ico",
       "uninstallerIcon": "build-resources/icon.ico",
       "license": "build-resources/license.txt"
@@ -101,7 +101,7 @@
       "category": "public.app-category.productivity"
     },
     "dmg": {
-      "title": "MythosEngine ${version}"
+      "title": "WorldStitch ${version}"
     },
     "linux": {
       "target": [

@@ -1,5 +1,5 @@
-"""
-Settings routes for MythosEngine FastAPI server.
+﻿"""
+Settings routes for WorldStitch FastAPI server.
 
 Endpoints
 ---------
@@ -12,8 +12,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import get_ctx, get_current_user
 
 router = APIRouter(prefix="/settings", tags=["settings"])
