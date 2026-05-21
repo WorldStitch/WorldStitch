@@ -3,7 +3,7 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 CONFIG_FILENAME = "settings.json"
 DEFAULT_CONFIG = {
@@ -147,6 +147,11 @@ class Config:
 
     def get(self, key, default=None):
         return self._data.get(key, default)
+
+    @property
+    def API_KEY_ENCRYPTION_SECRET(self) -> Optional[str]:
+        """Env-only secret for Fernet encryption of user API keys.  Never stored in settings.json."""
+        return os.environ.get("API_KEY_ENCRYPTION_SECRET") or None
 
 
 def log_exception(e: Exception, context: str = ""):

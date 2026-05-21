@@ -12,6 +12,7 @@ banks==2.1.2
 bcrypt>=4.0.1
 beautifulsoup4==4.13.4
 certifi==2025.4.26
+cryptography>=3.4.0
 cfgv==3.4.0
 charset-normalizer==3.4.2
 click==8.2.1
