@@ -332,7 +332,7 @@ export const groups = {
   create: (data) => request("POST", "/groups", data),
   update: (id, data) => request("PUT", `/groups/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/groups/${encodeURIComponent(id)}`),
-  addMember: (id, user_id, role = "player") =>
+  addMember: (id, user_id, role = "member") =>
     request("POST", `/groups/${encodeURIComponent(id)}/members`, { user_id, role }),
   removeMember: (id, user_id) =>
     request("DELETE", `/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(user_id)}`),

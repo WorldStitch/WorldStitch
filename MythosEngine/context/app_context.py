@@ -78,7 +78,7 @@ class AppContext:
     def __init__(self, config: Config, storage: Optional[StorageBackend] = None):
         self.config = config
 
-        # Migrate old DB name on first run after rebrand (ward_dnd.db → mythos_engine.db)
+        # One-time migration: copy legacy ward_dnd.db to current mythos_engine.db on first run after rebrand
         _project_root = Path(config.VAULT_PATH).resolve().parent
         _db_new = _project_root / "mythos_engine.db"
         _db_old = _project_root / "ward_dnd.db"
