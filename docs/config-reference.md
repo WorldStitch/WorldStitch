@@ -13,12 +13,38 @@ Copy `.env.example` to `.env` and fill in your values.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `OPENAI_API_KEY` | Yes | — | Your OpenAI API key |
+| `API_KEY_ENCRYPTION_SECRET` | No | — | Fernet key for encrypting user API keys at rest (see below) |
 | `APP_ENV` | No | `development` | Active environment: `development`, `production`, `test` |
 | `VAULT_PATH` | No | `./Obsidian` | Override the vault path from settings.json |
 | `COMPLETION_MODEL` | No | `gpt-4o` | OpenAI chat model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model |
 | `LOG_LEVEL` | No | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `MAX_TOKENS` | No | `4000` | Max tokens per AI response |
+
+### `API_KEY_ENCRYPTION_SECRET`
+
+When set, all per-user OpenAI API keys are encrypted at rest in the database using
+[Fernet](https://cryptography.io/en/latest/fernet/) symmetric encryption (AES-128-CBC + HMAC-SHA256).
+
+If the variable is **not** set, keys are stored in plaintext and a warning is logged at startup.
+Existing plaintext keys continue to work after the secret is added — they are decrypted
+transparently (a Fernet token is detected by the `gAAAAA` prefix; anything else is treated
+as plaintext).
+
+**Generate a key:**
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Add the output to your `.env`:
+
+```
+API_KEY_ENCRYPTION_SECRET=<paste key here>
+```
+
+> **Important:** losing this key makes all stored user API keys unrecoverable. Back it up
+> separately from the database.
 
 Environment variables always take precedence over `settings.json` values.
 
