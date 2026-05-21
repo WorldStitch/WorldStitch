@@ -20,6 +20,7 @@ check_same_thread=False.
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -30,7 +31,7 @@ from typing import Any, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, or_, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, or_, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from MythosEngine.core.event_bus import get_event_bus
@@ -302,9 +303,14 @@ class SQLiteBackend(StorageBackend):
         self.vault_path: Path = Path(vault_path or self.db_path.parent / ".vault").resolve()
         self.vault_path.mkdir(parents=True, exist_ok=True)
 
-        # Create engine with check_same_thread=False for PyQt6 thread safety
-        db_url = f"sqlite:///{self.db_path}"
-        self.engine = create_engine(db_url, connect_args={"check_same_thread": False})
+        # Create engine — prefer DATABASE_URL env var (Postgres in production),
+        # fall back to SQLite for local dev.
+        db_url = os.environ.get("DATABASE_URL", f"sqlite:///{self.db_path}")
+        # Railway (and some other hosts) provide postgres:// — psycopg2 needs postgresql+psycopg2://
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
+        self.engine = create_engine(db_url, connect_args=connect_args, pool_pre_ping=True)
 
         # Create all tables on first run
         Base.metadata.create_all(self.engine)
@@ -317,28 +323,35 @@ class SQLiteBackend(StorageBackend):
         except Exception:
             pass
 
-        # FTS5 full-text search index
+        # Full-text search setup — FTS5 for SQLite, tsvector/GIN for Postgres.
         self._fts_available = False
-        raw_conn = self.engine.raw_connection()
-        try:
-            self._setup_fts(raw_conn)
-            self._setup_campaign_columns(raw_conn)
-            raw_conn.commit()
-            self._fts_available = True
-        except Exception as exc:
-            logger.warning("FTS5 not available: %s — falling back to LIKE search.", exc)
-        finally:
-            raw_conn.close()
+        if not self._is_postgres:
+            raw_conn = self.engine.raw_connection()
+            try:
+                self._setup_fts(raw_conn)
+                self._setup_campaign_columns(raw_conn)
+                raw_conn.commit()
+                self._fts_available = True
+            except Exception as exc:
+                logger.warning("FTS5 not available: %s — falling back to LIKE search.", exc)
+            finally:
+                raw_conn.close()
 
-        # Add missing analytics columns for databases created before this feature.
-        raw_conn = self.engine.raw_connection()
-        try:
-            self._setup_analytics(raw_conn)
-            raw_conn.commit()
-        except Exception:
-            pass
-        finally:
-            raw_conn.close()
+            # Add missing analytics columns for databases created before this feature.
+            raw_conn = self.engine.raw_connection()
+            try:
+                self._setup_analytics(raw_conn)
+                raw_conn.commit()
+            except Exception:
+                pass
+            finally:
+                raw_conn.close()
+        else:
+            try:
+                self._setup_postgres_fts()
+                self._fts_available = True
+            except Exception as exc:
+                logger.warning("Postgres FTS setup failed: %s — falling back to LIKE search.", exc)
 
         # AI cost tracking — records token usage per user/vault/operation.
         from MythosEngine.ai.cost_tracker import CostTracker
@@ -356,6 +369,48 @@ class SQLiteBackend(StorageBackend):
     def _session(self) -> Session:
         """Get a new database session."""
         return Session(self.engine)
+
+    @property
+    def _is_postgres(self) -> bool:
+        return str(self.engine.url).startswith("postgresql")
+
+    def _setup_postgres_fts(self) -> None:
+        """Set up Postgres full-text search using tsvector column and GIN index."""
+        with self.engine.begin() as conn:
+            conn.execute(text("""
+                ALTER TABLE notes ADD COLUMN IF NOT EXISTS search_vector tsvector
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_notes_search_vector
+                ON notes USING GIN(search_vector)
+            """))
+            conn.execute(text("""
+                CREATE OR REPLACE FUNCTION notes_search_vector_update() RETURNS trigger AS $$
+                BEGIN
+                    NEW.search_vector := to_tsvector('english',
+                        COALESCE(NEW.title, '') || ' ' ||
+                        COALESCE(NEW.content, '') || ' ' ||
+                        COALESCE(NEW.tags, '')
+                    );
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+            """))
+            conn.execute(text("""
+                DROP TRIGGER IF EXISTS notes_search_vector_trigger ON notes
+            """))
+            conn.execute(text("""
+                CREATE TRIGGER notes_search_vector_trigger
+                BEFORE INSERT OR UPDATE ON notes
+                FOR EACH ROW EXECUTE FUNCTION notes_search_vector_update()
+            """))
+            conn.execute(text("""
+                UPDATE notes SET search_vector = to_tsvector('english',
+                    COALESCE(title, '') || ' ' ||
+                    COALESCE(content, '') || ' ' ||
+                    COALESCE(tags, '')
+                ) WHERE search_vector IS NULL
+            """))
 
     def _setup_fts(self, conn) -> None:
         """Create the FTS5 virtual table and sync triggers on the raw SQLite connection."""
@@ -1522,11 +1577,15 @@ class SQLiteBackend(StorageBackend):
     ) -> dict:
         """FTS5-powered full-text search with BM25 ranking and snippet highlighting.
 
-        Falls back to LIKE-based search when FTS5 is unavailable.
+        Uses Postgres tsvector/GIN search when running on Postgres, FTS5 on SQLite.
+        Falls back to LIKE-based search when neither is available.
         Returns ``{items, total, skip, limit}``.
         """
         if not self._fts_available:
             return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
+
+        if self._is_postgres:
+            return self._search_notes_postgres(query, vault_id, skip, limit, folder, tags, date_from, date_to)
 
         raw_conn = self.engine.raw_connection()
         try:
@@ -1577,6 +1636,85 @@ class SQLiteBackend(StorageBackend):
                 continue
 
             # Filter by ALL required tags (post-SQL, since tags are stored in JSON)
+            if tags:
+                note_tags_lower = [t.lower() for t in (getattr(note, "tags", []) or [])]
+                if not all(t.lower() in note_tags_lower for t in tags):
+                    continue
+
+            all_items.append(
+                {
+                    "id": note.id,
+                    "title": note.title,
+                    "folder_id": getattr(note, "folder_id", None),
+                    "tags": getattr(note, "tags", []) or [],
+                    "group_id": getattr(note, "group_id", None),
+                    "owner_id": getattr(note, "owner_id", ""),
+                    "is_deleted": getattr(note, "is_deleted", False),
+                    "created_at": note.created_at,
+                    "last_modified": note.last_modified,
+                    "snippet": snippet_text or "",
+                }
+            )
+
+        total = len(all_items)
+        page = all_items[skip : skip + limit]
+        return {"items": page, "total": total, "skip": skip, "limit": limit}
+
+    def _search_notes_postgres(
+        self,
+        query: str,
+        vault_id: str = "",
+        skip: int = 0,
+        limit: int = 20,
+        folder: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> dict:
+        """Postgres tsvector/GIN full-text search with ts_rank and ts_headline."""
+        try:
+            with Session(self.engine) as session:
+                sql_str = """
+                    SELECT n.id,
+                           n.data,
+                           ts_rank(n.search_vector, plainto_tsquery('english', :q)) AS rank,
+                           ts_headline('english', COALESCE(n.content, ''),
+                                       plainto_tsquery('english', :q),
+                                       'MaxWords=20, MinWords=10, StartSel=<mark>, StopSel=</mark>') AS snippet
+                    FROM notes n
+                    WHERE n.is_deleted = false
+                      AND n.search_vector @@ plainto_tsquery('english', :q)
+                """
+                params: dict = {"q": query}
+
+                if vault_id:
+                    sql_str += " AND n.vault_id = :vault_id"
+                    params["vault_id"] = vault_id
+                if folder:
+                    sql_str += " AND (n.folder = :folder OR n.folder LIKE :folder_prefix)"
+                    params["folder"] = folder
+                    params["folder_prefix"] = f"{folder}/%"
+                if date_from:
+                    sql_str += " AND n.created_at >= :date_from"
+                    params["date_from"] = date_from
+                if date_to:
+                    sql_str += " AND n.created_at <= :date_to"
+                    params["date_to"] = date_to
+
+                sql_str += " ORDER BY rank DESC LIMIT 10000"
+                rows = session.execute(text(sql_str), params).fetchall()
+        except Exception as exc:
+            logger.warning("Postgres FTS query failed (%s), falling back to LIKE search.", exc)
+            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
+
+        all_items = []
+        for row in rows:
+            note_id, data_json, rank, snippet_text = row
+            try:
+                note = Note.model_validate_json(data_json)
+            except Exception:
+                continue
+
             if tags:
                 note_tags_lower = [t.lower() for t in (getattr(note, "tags", []) or [])]
                 if not all(t.lower() in note_tags_lower for t in tags):
