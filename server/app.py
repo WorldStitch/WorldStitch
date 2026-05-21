@@ -53,6 +53,7 @@ from server.routes import (
     invites,
     maps,
     notes,
+    relationships,
     sessions,
     settings,
     users,
@@ -209,6 +210,7 @@ app.include_router(groups.router, prefix="/groups", tags=["groups"])
 app.include_router(ws.router, tags=["ws"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
+app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

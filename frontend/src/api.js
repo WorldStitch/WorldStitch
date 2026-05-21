@@ -396,6 +396,19 @@ export const debug = {
   getRuntimeLog: () => request("GET", "/debug/runtime-log"),
 };
 
+// ── Relationships ─────────────────────────────────────────────────────────────
+export const relationships = {
+  list: (vaultId, entityId) =>
+    request(
+      "GET",
+      `/relationships?vault_id=${encodeURIComponent(vaultId)}${entityId ? `&entity_id=${encodeURIComponent(entityId)}` : ""}`
+    ),
+  getTypes: () => request("GET", "/relationships/types"),
+  create: (data) => request("POST", "/relationships", data),
+  update: (id, data) => request("PUT", `/relationships/${encodeURIComponent(id)}`, data),
+  delete: (id) => request("DELETE", `/relationships/${encodeURIComponent(id)}`),
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 export function isRateLimitError(err) {
   return err?.message === "__RATE_LIMIT__";
