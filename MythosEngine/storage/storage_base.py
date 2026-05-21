@@ -11,6 +11,7 @@ from MythosEngine.models.image import Image
 from MythosEngine.models.invite_code import InviteCode
 from MythosEngine.models.map import Map
 from MythosEngine.models.note import Note
+from MythosEngine.models.relationship import Relationship
 from MythosEngine.models.session import Session
 from MythosEngine.models.sound import Sound
 from MythosEngine.models.user import User
@@ -347,6 +348,36 @@ class StorageBackend(ABC):
         Merge meta dict into the stored metadata for note_id.
         Only updates provided keys — does not overwrite the full record.
         """
+        pass
+
+    # --- Relationships ---
+
+    @abstractmethod
+    def create_relationship(self, rel: Relationship) -> Relationship:
+        pass
+
+    @abstractmethod
+    def get_relationship(self, rel_id: str) -> Optional[Relationship]:
+        pass
+
+    @abstractmethod
+    def list_relationships_for_entity(self, entity_id: str, vault_id: str) -> List[Relationship]:
+        """Return all active relationships where source_id OR target_id == entity_id."""
+        pass
+
+    @abstractmethod
+    def list_relationships(self, vault_id: str) -> List[Relationship]:
+        """Return all active relationships for a vault."""
+        pass
+
+    @abstractmethod
+    def delete_relationship(self, rel_id: str) -> bool:
+        """Soft-delete a relationship (is_active=0). Returns True if found."""
+        pass
+
+    @abstractmethod
+    def update_relationship(self, rel_id: str, updates: dict) -> Optional[Relationship]:
+        """Apply updates dict to a relationship and return the updated record."""
         pass
 
     def search(self, query: "SearchQuery") -> "List[SearchResult]":

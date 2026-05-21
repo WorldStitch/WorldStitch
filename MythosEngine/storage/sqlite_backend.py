@@ -30,7 +30,7 @@ from typing import Any, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, or_, select
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, create_engine, or_, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from MythosEngine.core.event_bus import get_event_bus
@@ -43,6 +43,7 @@ from MythosEngine.models.image import Image
 from MythosEngine.models.invite_code import InviteCode
 from MythosEngine.models.map import Map
 from MythosEngine.models.note import Note
+from MythosEngine.models.relationship import Relationship
 from MythosEngine.models.session import Session as SessionModel
 from MythosEngine.models.sound import Sound
 from MythosEngine.models.user import User
@@ -234,6 +235,32 @@ class RelationshipRecord(Base):
     target_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
 
 
+class EdgeRecord(Base):
+    """First-class typed edge between any two entities within a vault."""
+
+    __tablename__ = "relationships"
+    __table_args__ = (
+        Index("idx_rel_source", "source_id", "vault_id"),
+        Index("idx_rel_target", "target_id", "vault_id"),
+        Index("idx_rel_vault", "vault_id", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    relationship_type: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    direction: Mapped[str] = mapped_column(String(30), nullable=False, default="bidirectional", server_default="bidirectional")
+    label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1.0")
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    meta: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    data: Mapped[str] = mapped_column(Text, nullable=False, default="{}")  # full JSON blob
+
+
 class AnalyticsEventRecord(Base):
     """One row per analytics event — stored with JSON event_data payload."""
 
@@ -340,6 +367,16 @@ class SQLiteBackend(StorageBackend):
         finally:
             raw_conn.close()
 
+        # Create relationships table for databases created before this feature.
+        raw_conn = self.engine.raw_connection()
+        try:
+            self._setup_relationships_table(raw_conn)
+            raw_conn.commit()
+        except Exception:
+            pass
+        finally:
+            raw_conn.close()
+
         # AI cost tracking — records token usage per user/vault/operation.
         from MythosEngine.ai.cost_tracker import CostTracker
 
@@ -424,6 +461,36 @@ class SQLiteBackend(StorageBackend):
                 conn.execute(statement)
             except Exception:
                 pass  # column already exists
+
+    def _setup_relationships_table(self, conn) -> None:
+        """Create the relationships table and indexes for legacy databases."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS relationships (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                relationship_type TEXT NOT NULL,
+                direction TEXT NOT NULL DEFAULT 'bidirectional',
+                label TEXT,
+                weight REAL NOT NULL DEFAULT 1.0,
+                owner_id TEXT NOT NULL,
+                vault_id TEXT NOT NULL,
+                meta TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                data TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id, vault_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, vault_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_vault ON relationships(vault_id, is_active)"
+        )
 
     def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
@@ -1855,6 +1922,129 @@ class SQLiteBackend(StorageBackend):
                 except Exception:
                     pass
         return codes
+
+    # ========================================================================
+    # Relationships (typed edge objects)
+    # ========================================================================
+
+    def _edge_to_relationship(self, record: "EdgeRecord") -> Relationship:
+        """Deserialize an EdgeRecord to a Relationship model."""
+        return Relationship.model_validate_json(record.data)
+
+    def create_relationship(self, rel: Relationship) -> Relationship:
+        """Persist a new Relationship edge."""
+        now = datetime.utcnow()
+        rel.created_at = now
+        rel.last_modified = now
+        with self._session() as session:
+            record = EdgeRecord(
+                id=rel.id,
+                source_id=rel.source_id,
+                target_id=rel.target_id,
+                relationship_type=rel.relationship_type,
+                direction=rel.direction,
+                label=rel.label,
+                weight=rel.weight,
+                owner_id=rel.owner_id,
+                vault_id=rel.vault_id,
+                meta=json.dumps(rel.meta or {}),
+                created_at=now,
+                updated_at=now,
+                is_active=True,
+                data=rel.model_dump_json(),
+            )
+            session.add(record)
+            session.commit()
+        return rel
+
+    def get_relationship(self, rel_id: str) -> Optional[Relationship]:
+        """Retrieve a Relationship by ID. Returns None if not found or inactive."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(
+                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
+            ).first()
+            if record:
+                return self._edge_to_relationship(record)
+        return None
+
+    def list_relationships_for_entity(self, entity_id: str, vault_id: str) -> List[Relationship]:
+        """Return all active relationships where source_id OR target_id == entity_id."""
+        results: List[Relationship] = []
+        with self._session() as session:
+            records = session.query(EdgeRecord).filter(
+                or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
+                EdgeRecord.vault_id == vault_id,
+                EdgeRecord.is_active == True,  # noqa: E712
+            ).all()
+            for rec in records:
+                try:
+                    results.append(self._edge_to_relationship(rec))
+                except Exception:
+                    continue
+        return results
+
+    def list_relationships(self, vault_id: str) -> List[Relationship]:
+        """Return all active relationships for a vault."""
+        results: List[Relationship] = []
+        with self._session() as session:
+            records = session.query(EdgeRecord).filter(
+                EdgeRecord.vault_id == vault_id,
+                EdgeRecord.is_active == True,  # noqa: E712
+            ).all()
+            for rec in records:
+                try:
+                    results.append(self._edge_to_relationship(rec))
+                except Exception:
+                    continue
+        return results
+
+    def delete_relationship(self, rel_id: str) -> bool:
+        """Soft-delete a relationship (is_active=0). Returns True if found."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(EdgeRecord.id == rel_id).first()
+            if not record:
+                return False
+            record.is_active = False
+            record.updated_at = datetime.utcnow()
+            session.commit()
+        return True
+
+    def update_relationship(self, rel_id: str, updates: dict) -> Optional[Relationship]:
+        """Apply updates dict to a relationship and return the updated record."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(
+                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
+            ).first()
+            if not record:
+                return None
+            rel = self._edge_to_relationship(record)
+            allowed = {"label", "weight", "relationship_type", "direction", "meta"}
+            for key, val in updates.items():
+                if key in allowed and hasattr(rel, key):
+                    setattr(rel, key, val)
+            rel.last_modified = datetime.utcnow()
+            now = datetime.utcnow()
+            record.relationship_type = rel.relationship_type
+            record.direction = rel.direction
+            record.label = rel.label
+            record.weight = rel.weight
+            record.meta = json.dumps(rel.meta or {})
+            record.updated_at = now
+            record.data = rel.model_dump_json()
+            session.commit()
+            return rel
+
+    def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
+        """Return True if an active relationship with these params already exists."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(
+                EdgeRecord.source_id == source_id,
+                EdgeRecord.target_id == target_id,
+                EdgeRecord.vault_id == vault_id,
+                EdgeRecord.relationship_type == rel_type,
+                EdgeRecord.is_active == True,  # noqa: E712
+            ).first()
+            return record is not None
 
     # ========================================================================
     # Analytics

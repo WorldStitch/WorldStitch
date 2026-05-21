@@ -1865,6 +1865,57 @@ class Presence(Base):
     )
 
 
+class Relationship(Base):
+    """
+    First-class typed edge between any two entities within a vault.
+    relationship_type: canonical type string from the registry or custom label.
+    direction: 'unidirectional' | 'bidirectional'
+    weight: AI context relevance 0.0–1.0.
+    meta: arbitrary JSON metadata blob.
+    """
+
+    __tablename__ = "relationships"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(200), nullable=False)
+    direction: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="bidirectional", server_default=text("'bidirectional'")
+    )
+    label: Mapped[Optional[str]] = mapped_column(Text)
+    weight: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0, server_default=text("1.0")
+    )
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    meta: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default=text("'{}'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1")
+    )
+
+    __table_args__ = (
+        Index("idx_rel_source", "source_id", "vault_id"),
+        Index("idx_rel_target", "target_id", "vault_id"),
+        Index("idx_rel_vault", "vault_id", "is_active"),
+    )
+
+
 class ActivityFeed(Base):
     """
     Append-only event stream for the campaign/group activity feed.
