@@ -36,7 +36,7 @@ class Group(CoreModel):
     members: List[str] = Field(default_factory=list, description="User IDs in this group.")
     member_roles: Dict[str, str] = Field(
         default_factory=dict,
-        description="Maps user_id -> role string (e.g. 'gm', 'player', 'observer').",
+        description="Maps user_id -> role string (e.g. 'owner', 'admin', 'member').",
     )
     vault_ids: List[str] = Field(
         default_factory=list,

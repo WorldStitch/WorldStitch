@@ -9,6 +9,8 @@ every AI call — reset lazily at the start of each calendar month.
 
 from __future__ import annotations
 
+import logging
+import os
 import threading
 from datetime import date
 from typing import Optional
@@ -16,6 +18,42 @@ from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy import Date, Integer, String, Text, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+
+try:
+    from cryptography.fernet import Fernet, InvalidToken as _InvalidToken
+
+    _HAS_FERNET = True
+except ImportError:
+    _HAS_FERNET = False
+
+_log = logging.getLogger(__name__)
+
+
+def _get_fernet() -> "Optional[Fernet]":
+    if not _HAS_FERNET:
+        return None
+    secret = os.environ.get("API_KEY_ENCRYPTION_SECRET", "")
+    if not secret:
+        return None
+    return Fernet(secret.encode() if isinstance(secret, str) else secret)
+
+
+def _encrypt(value: str) -> str:
+    fernet = _get_fernet()
+    if fernet is None:
+        return value
+    return fernet.encrypt(value.encode()).decode()
+
+
+def _decrypt(value: str) -> str:
+    fernet = _get_fernet()
+    if fernet is None:
+        return value
+    try:
+        return fernet.decrypt(value.encode()).decode()
+    except _InvalidToken:
+        # Value was stored before encryption was enabled — return as-is.
+        return value
 
 
 class _ApiKeyBase(DeclarativeBase):
@@ -28,7 +66,7 @@ class UserApiKeyRecord(_ApiKeyBase):
     __tablename__ = "user_api_settings"
 
     user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    # TODO: encrypt at rest
+    # Encrypted at rest via Fernet when API_KEY_ENCRYPTION_SECRET is set.
     openai_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     monthly_request_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     requests_this_month: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -70,7 +108,7 @@ class UserApiKeyStore:
     def save_key(self, user_id: str, api_key: str) -> None:
         with Session(self.engine) as session:
             rec = self._get_or_create(session, user_id)
-            rec.openai_api_key = api_key
+            rec.openai_api_key = _encrypt(api_key)
             session.commit()
 
     def remove_key(self, user_id: str) -> None:
@@ -82,7 +120,9 @@ class UserApiKeyStore:
     def get_personal_key(self, user_id: str) -> Optional[str]:
         with Session(self.engine) as session:
             rec = session.get(UserApiKeyRecord, user_id)
-            return rec.openai_api_key if rec else None
+            if rec is None or rec.openai_api_key is None:
+                return None
+            return _decrypt(rec.openai_api_key)
 
     def check_and_increment(self, user_id: str) -> None:
         """

@@ -86,6 +86,12 @@ async def lifespan(application: FastAPI):
         logger.warning("Could not configure file logging: %s", exc)
 
     cfg = Config()
+
+    if not cfg.API_KEY_ENCRYPTION_SECRET:
+        logger.warning(
+            "WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext"
+        )
+
     ctx = AppContext(cfg)
 
     # Wire up AI engine if an API key is present

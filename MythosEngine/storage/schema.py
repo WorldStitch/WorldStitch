@@ -909,8 +909,8 @@ class Map(Base):
 
 class MapLayer(Base):
     """
-    Ordered rendering layer on a map (e.g. 'Base', 'GM Only', 'Fog of War').
-    is_gm_only=True means players cannot see this layer.
+    Ordered rendering layer on a map (e.g. 'Base', 'Restricted', 'Fog of War').
+    is_restricted=True means members cannot see this layer.
     """
 
     __tablename__ = "map_layers"
@@ -927,8 +927,8 @@ class MapLayer(Base):
     is_visible: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("1")
     )
-    is_gm_only: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+    is_restricted: Mapped[bool] = mapped_column(
+        "is_gm_only", Boolean, nullable=False, default=False, server_default=text("0")
     )
     settings: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'")
@@ -1464,7 +1464,7 @@ class MapPin(Base):
     """
     Point-of-interest marker on a map layer.
     pin_type: 'location' | 'character' | 'event' | 'note' | 'custom'
-    is_gm_only=True hides the pin from players.
+    is_restricted=True hides the pin from members.
     x_position/y_position are normalized [0.0, 1.0] relative to the map image.
     """
 
@@ -1487,8 +1487,8 @@ class MapPin(Base):
     y_position: Mapped[float] = mapped_column(Float, nullable=False)
     icon: Mapped[Optional[str]] = mapped_column(String(200))
     color: Mapped[Optional[str]] = mapped_column(String(20))
-    is_gm_only: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+    is_restricted: Mapped[bool] = mapped_column(
+        "is_gm_only", Boolean, nullable=False, default=False, server_default=text("0")
     )
     linked_note_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("notes.id", ondelete="SET NULL")

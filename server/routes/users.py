@@ -190,7 +190,7 @@ async def update_user_roles(
                 normalized_roles.append(value)
 
         if not normalized_roles:
-            normalized_roles = ["player"]
+            normalized_roles = []
 
         creator = _get_creator_user(ctx)
         creator_id = creator.id if creator else None
