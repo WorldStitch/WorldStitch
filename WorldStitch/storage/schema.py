@@ -909,8 +909,8 @@ class Map(Base):
 
 class MapLayer(Base):
     """
-    Ordered rendering layer on a map (e.g. 'Base', 'GM Only', 'Fog of War').
-    is_gm_only=True means players cannot see this layer.
+    Ordered rendering layer on a map (e.g. 'Base', 'Restricted', 'Fog of War').
+    is_restricted=True means members cannot see this layer.
     """
 
     __tablename__ = "map_layers"
@@ -927,8 +927,8 @@ class MapLayer(Base):
     is_visible: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("1")
     )
-    is_gm_only: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+    is_restricted: Mapped[bool] = mapped_column(
+        "is_gm_only", Boolean, nullable=False, default=False, server_default=text("0")
     )
     settings: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'")
@@ -1464,7 +1464,7 @@ class MapPin(Base):
     """
     Point-of-interest marker on a map layer.
     pin_type: 'location' | 'character' | 'event' | 'note' | 'custom'
-    is_gm_only=True hides the pin from players.
+    is_restricted=True hides the pin from members.
     x_position/y_position are normalized [0.0, 1.0] relative to the map image.
     """
 
@@ -1487,8 +1487,8 @@ class MapPin(Base):
     y_position: Mapped[float] = mapped_column(Float, nullable=False)
     icon: Mapped[Optional[str]] = mapped_column(String(200))
     color: Mapped[Optional[str]] = mapped_column(String(20))
-    is_gm_only: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+    is_restricted: Mapped[bool] = mapped_column(
+        "is_gm_only", Boolean, nullable=False, default=False, server_default=text("0")
     )
     linked_note_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("notes.id", ondelete="SET NULL")
@@ -1862,6 +1862,57 @@ class Presence(Base):
         UniqueConstraint("campaign_id", "user_id", name="uq_presence_campaign_user"),
         Index("ix_presence_campaign_id", "campaign_id"),
         Index("ix_presence_last_heartbeat", "last_heartbeat_at"),
+    )
+
+
+class Relationship(Base):
+    """
+    First-class typed edge between any two entities within a vault.
+    relationship_type: canonical type string from the registry or custom label.
+    direction: 'unidirectional' | 'bidirectional'
+    weight: AI context relevance 0.0–1.0.
+    meta: arbitrary JSON metadata blob.
+    """
+
+    __tablename__ = "relationships"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(200), nullable=False)
+    direction: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="bidirectional", server_default=text("'bidirectional'")
+    )
+    label: Mapped[Optional[str]] = mapped_column(Text)
+    weight: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0, server_default=text("1.0")
+    )
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    meta: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default=text("'{}'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1")
+    )
+
+    __table_args__ = (
+        Index("idx_rel_source", "source_id", "vault_id"),
+        Index("idx_rel_target", "target_id", "vault_id"),
+        Index("idx_rel_vault", "vault_id", "is_active"),
     )
 
 

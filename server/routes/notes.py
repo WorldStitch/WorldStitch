@@ -1,4 +1,4 @@
-﻿"""
+"""
 Note and folder endpoints.
 
 GET /notes — list notes (uses search_notes under the hood)
@@ -249,6 +249,31 @@ def _set_user_ctx(ctx: AppContext, user: User) -> None:
         user.id,
         is_admin=user.system_role in PLATFORM_ADMIN,
     )
+
+
+def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
+    """Fire-and-forget: create 'references' edge for each link_id in note.links."""
+    if not hasattr(ctx.storage, "create_relationship"):
+        return
+    link_ids = getattr(note, "links", None) or []
+    vault_id = getattr(note, "vault_id", "") or ""
+    for link_id in link_ids:
+        try:
+            if ctx.storage.relationship_exists(note.id, link_id, vault_id, "references"):
+                continue
+            from WorldStitch.models.relationship import Relationship
+
+            rel = Relationship(
+                source_id=note.id,
+                target_id=link_id,
+                relationship_type="references",
+                direction="unidirectional",
+                owner_id=actor_id,
+                vault_id=vault_id,
+            )
+            ctx.storage.create_relationship(rel)
+        except Exception:
+            pass
 
 
 def _get_note_or_404(ctx, note_id):
@@ -577,6 +602,7 @@ async def create_note(
         if req.meta:
             note.meta = req.meta
             ctx.notes.update_note(note, actor_id=user.id)
+        _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
         ctx.analytics.track("note.created", user_id=user.id)
         return _note_to_detail(note)
@@ -633,6 +659,7 @@ async def update_note(
                 note.permissions.pop(previous_group_id, None)
 
         ctx.notes.update_note(note, actor_id=user.id)
+        _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))
         return _note_to_detail(note)
     except HTTPException:

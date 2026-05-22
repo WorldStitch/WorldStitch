@@ -6,7 +6,7 @@ import Badge from '@/components/Badge';
 import { users, invites, dashboard, aiSettings } from '@/api';
 
 const ROLE_ADMIN = 'admin';
-const ROLE_PLAYER = 'player';
+const ROLE_MEMBER = 'member';
 
 export default function AdminSettings() {
   const queryClient = useQueryClient();
@@ -114,13 +114,13 @@ export default function AdminSettings() {
   const normalizeRoles = (u) => {
     if (Array.isArray(u.roles)) {
       const roles = u.roles.filter(Boolean);
-      return roles.length ? roles : [ROLE_PLAYER];
+      return roles.length ? roles : [ROLE_MEMBER];
     }
     if (typeof u.role === 'string' && u.role.trim()) return [u.role];
-    return [ROLE_PLAYER];
+    return [ROLE_MEMBER];
   };
 
-  const getUserRole = (u) => normalizeRoles(u)[0] || ROLE_PLAYER;
+  const getUserRole = (u) => normalizeRoles(u)[0] || ROLE_MEMBER;
 
   const hasAdminRole = (u) => normalizeRoles(u).includes(ROLE_ADMIN);
   const isInviteActive = (inv) => inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date());
@@ -268,7 +268,7 @@ export default function AdminSettings() {
                       <td className="py-3 px-4">
                         <Badge
                           label={row.has_personal_key ? 'personal' : 'server'}
-                          variant={row.has_personal_key ? 'active' : 'player'}
+                          variant={row.has_personal_key ? 'active' : 'member'}
                         />
                       </td>
                       <td className="py-3 px-4">

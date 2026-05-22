@@ -1,4 +1,4 @@
-﻿# WorldStitch — External Tester Guide
+# WorldStitch — External Tester Guide
 
 **Build stage:** Alpha · **Platform:** Windows (primary), macOS/Linux (dev only)
 
@@ -8,10 +8,10 @@ Thank you for testing WorldStitch! This guide walks you through setup, a tour of
 
 ## What Is WorldStitch?
 
-WorldStitch is a desktop application for D&D dungeon masters. It lets you:
+WorldStitch is a desktop application for vault owners and world builders. It lets you:
 
-- **Write and organize notes** about your campaign world
-- **Track characters** (PCs and NPCs) with D&D stat blocks
+- **Write and organize notes** about your world or project
+- **Track characters** (player characters and characters) with stat blocks
 - **Log session recaps** and generate AI summaries
 - **Manage maps** with typed markers
 - **Chat with an AI** that can reference your campaign notes
@@ -110,7 +110,7 @@ npm run electron:dev
 ## First-Run Setup
 
 1. **Login screen appears** — use the admin credentials you set in `.env`
-2. **Create a Vault** — click the vault selector in the sidebar → **New Vault**. Give it a name (e.g., "My Campaign"). All content belongs to a vault.
+2. **Create a Vault** — click the vault selector in the sidebar → **New Vault**. Give it a name (e.g., "My Project"). All content belongs to a vault.
 3. You're ready to explore.
 
 > If you see "No vault selected" on the Characters / Sessions / Maps pages, click the **Go to Vaults** button that appears.
@@ -146,12 +146,12 @@ Hierarchical note editor. Create folders and markdown notes, attach tags, and li
 
 ### Characters
 
-Manage PCs and NPCs with full D&D stat blocks.
+Manage player characters and characters with full stat blocks.
 
 **Try:**
 - [ ] Click **New** and create a Player Character — fill in name, race, class, level, and some ability scores
-- [ ] Create an NPC
-- [ ] Use the All / Players / NPCs filter tabs
+- [ ] Create a character
+- [ ] Use the All / Players / Characters filter tabs
 - [ ] Search by character name
 - [ ] Attach a note to a character (in the "Attached Notes" section)
 - [ ] Save changes, then reload — verify data persisted
@@ -161,7 +161,7 @@ Manage PCs and NPCs with full D&D stat blocks.
 
 ### Sessions
 
-Campaign session log. Write raw DM notes and optionally generate an AI recap.
+Session log. Write raw session notes and optionally generate an AI recap.
 
 **Try:**
 - [ ] Click **+ New Session** and fill in a title, date, and participants
@@ -192,7 +192,7 @@ Manage world maps, dungeon layouts, city plans, etc.
 Conversational AI with optional campaign context.
 
 **Try (requires OpenAI key):**
-- [ ] Ask a general question: "What are the main factions in a typical D&D campaign?"
+- [ ] Ask a general question: "What are the main factions in my story?"
 - [ ] Ask something about your notes: "Summarize what I know about [character name]"
 - [ ] Verify streaming works — text should appear word-by-word, not all at once
 - [ ] Check that the conversation history persists across turns
