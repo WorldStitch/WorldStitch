@@ -23,12 +23,12 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
 
-from server.analytics import track as analytics_track
-from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
-from server.deps import get_ctx, get_current_user
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.utils.audit_logger import audit
+from server.analytics import track as analytics_track
+from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
+from server.deps import get_ctx, get_current_user
 
 logger = logging.getLogger(__name__)
 
