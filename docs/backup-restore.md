@@ -1,6 +1,6 @@
 # Backup & Restore
 
-Ward DND AI automatically backs up notes before any update or delete operation. This document explains how backups work and how to restore them.
+MythosEngine automatically backs up notes before any update or delete operation. This document explains how backups work and how to restore them.
 
 ---
 
@@ -64,7 +64,7 @@ These files are plain text and can be opened in any editor.
 To export all your data (notes, models, logs, settings) as a zip archive:
 
 ```bash
-python Ward_DND_AI/scripts/export_data.py --output exports/
+python MythosEngine/scripts/export_data.py --output exports/
 ```
 
 This creates a timestamped zip file containing:
@@ -93,5 +93,5 @@ The app recreates `settings.json` with defaults on next launch. Re-enter your va
 ### Scenario: restoring from a full export
 
 ```bash
-python Ward_DND_AI/scripts/export_data.py --restore exports/ward_dnd_export_20260414.zip --target ./restored_vault/
+python MythosEngine/scripts/export_data.py --restore exports/mythos_export_20260414.zip --target ./restored_vault/
 ```

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Note and folder endpoints.
 
 GET /notes — list notes (uses search_notes under the hood)
@@ -28,17 +28,17 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from WorldStitch.context.app_context import AppContext
-from WorldStitch.models.user import User
 from server.analytics import track as analytics_track
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.realtime import hub
 from server.vault_access import resolve_vault
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _RESOURCE_PERMISSION_RANK = {"read": 1, "write": 2}
@@ -251,6 +251,31 @@ def _set_user_ctx(ctx: AppContext, user: User) -> None:
         user.id,
         is_admin=user.system_role in PLATFORM_ADMIN,
     )
+
+
+def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
+    """Fire-and-forget: create 'references' edge for each link_id in note.links."""
+    if not hasattr(ctx.storage, "create_relationship") or not hasattr(ctx.storage, "relationship_exists"):
+        return
+    link_ids = getattr(note, "links", None) or []
+    vault_id = getattr(note, "vault_id", "") or ""
+    for link_id in link_ids:
+        try:
+            if ctx.storage.relationship_exists(note.id, link_id, vault_id, "references"):
+                continue
+            from WorldStitch.models.relationship import Relationship
+
+            rel = Relationship(
+                source_id=note.id,
+                target_id=link_id,
+                relationship_type="references",
+                direction="unidirectional",
+                owner_id=actor_id,
+                vault_id=vault_id,
+            )
+            ctx.storage.create_relationship(rel)
+        except Exception:
+            logger.exception("Failed to promote note link to relationship", extra={"note_id": note.id, "link_id": link_id})
 
 
 def _get_note_or_404(ctx, note_id):
@@ -584,6 +609,7 @@ async def create_note(
         if req.meta:
             note.meta = req.meta
             ctx.notes.update_note(note, actor_id=user.id)
+        _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.created", user_id=user.id, vault_id=vault_id))
         return _note_to_detail(note)
@@ -640,6 +666,7 @@ async def update_note(
                 note.permissions.pop(previous_group_id, None)
 
         ctx.notes.update_note(note, actor_id=user.id)
+        _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.updated", user_id=user.id, vault_id=note.vault_id))
         return _note_to_detail(note)

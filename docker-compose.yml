@@ -2,7 +2,7 @@
 #
 # Quick start
 # -----------
-#   cp .env.example .env          # fill in OPENAI_API_KEY at minimum
+#   cp .env.example .env          # fill in OPENAI_API_KEY and POSTGRES_PASSWORD at minimum
 #   docker compose up --build -d
 #   docker compose logs -f
 #
@@ -13,6 +13,23 @@
 #   docker compose exec api alembic upgrade head
 
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mythos_engine
+      POSTGRES_USER: mythos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mythos -d mythos_engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: .
@@ -30,7 +47,7 @@ services:
       APP_ENV: "${APP_ENV:-production}"
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
       VAULT_PATH: /data/vault
-      DATABASE_URL: "sqlite:////data/worldstitch.db"
+      DATABASE_URL: "postgresql+psycopg2://mythos:${POSTGRES_PASSWORD:-changeme}@db:5432/mythos_engine"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       WORKERS: "${WORKERS:-1}"
       # Config-level overrides (optional)
@@ -41,7 +58,6 @@ services:
     # All persistent data lives under ./docker-data/ on the host.
     volumes:
       - ./docker-data/vault:/data/vault          # markdown notes & attachments
-      - ./docker-data/db:/data                   # SQLite database file
       - ./docker-data/logs:/app/logs             # application logs
 
     # ── Health check ──────────────────────────────────────────────────────────
@@ -53,9 +69,9 @@ services:
       retries: 3
       start_period: 15s
 
-# ── Named volumes (optional — uncomment to use Docker-managed volumes instead
-#    of bind mounts above; bind mounts are easier to inspect/back up)
-# volumes:
-#   vault_data:
-#   db_data:
-#   log_data:
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

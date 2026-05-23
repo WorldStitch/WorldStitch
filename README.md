@@ -139,6 +139,12 @@ mypy WorldStitch/models/ WorldStitch/managers/ WorldStitch/storage/
 
 ---
 
+## Marketing site
+
+`landing/index.html` is the self-contained marketing site for [worldstitch.app](https://worldstitch.app). It is a single HTML file with all CSS inlined — no build step required. Serve it as a static file or open it directly in a browser.
+
+---
+
 ## License
 
 Private project — all rights reserved.

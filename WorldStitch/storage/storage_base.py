@@ -1,4 +1,4 @@
-﻿from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, List, Optional, Set
 
 if TYPE_CHECKING:
@@ -11,6 +11,7 @@ from WorldStitch.models.image import Image
 from WorldStitch.models.invite_code import InviteCode
 from WorldStitch.models.map import Map
 from WorldStitch.models.note import Note
+from WorldStitch.models.relationship import Relationship
 from WorldStitch.models.session import Session
 from WorldStitch.models.sound import Sound
 from WorldStitch.models.user import User
@@ -33,16 +34,14 @@ class StorageBackend(ABC):
     # Populated by set_user_context() after login
     _current_user_id: Optional[str] = None
     _is_admin: bool = False
-    _is_gm: bool = False
 
-    def set_user_context(self, user_id: str, is_admin: bool = False, is_gm: bool = False) -> None:
+    def set_user_context(self, user_id: str, is_admin: bool = False) -> None:
         """
         Set the active user for all subsequent queries.
         Must be called once after login before any data access.
         """
         self._current_user_id = user_id
         self._is_admin = is_admin
-        self._is_gm = is_gm
 
     def _can_access(self, owner_id: str, permissions: dict, member_ids: list | None = None) -> bool:
         """
@@ -55,7 +54,7 @@ class StorageBackend(ABC):
           4. Vault membership grants access (pass vault.members as member_ids).
           5. Default: deny.
         """
-        if self._is_admin or self._is_gm:
+        if self._is_admin:
             return True
         uid = self._current_user_id
         if not uid:
@@ -349,6 +348,41 @@ class StorageBackend(ABC):
         Merge meta dict into the stored metadata for note_id.
         Only updates provided keys — does not overwrite the full record.
         """
+        pass
+
+    # --- Relationships ---
+
+    @abstractmethod
+    def create_relationship(self, rel: Relationship) -> Relationship:
+        pass
+
+    @abstractmethod
+    def get_relationship(self, rel_id: str) -> Optional[Relationship]:
+        pass
+
+    @abstractmethod
+    def list_relationships_for_entity(self, entity_id: str, vault_id: str) -> List[Relationship]:
+        """Return all active relationships where source_id OR target_id == entity_id."""
+        pass
+
+    @abstractmethod
+    def list_relationships(self, vault_id: str) -> List[Relationship]:
+        """Return all active relationships for a vault."""
+        pass
+
+    @abstractmethod
+    def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
+        """Return True when an active relationship with the same edge already exists."""
+        pass
+
+    @abstractmethod
+    def delete_relationship(self, rel_id: str) -> bool:
+        """Soft-delete a relationship (is_active=0). Returns True if found."""
+        pass
+
+    @abstractmethod
+    def update_relationship(self, rel_id: str, updates: dict) -> Optional[Relationship]:
+        """Apply updates dict to a relationship and return the updated record."""
         pass
 
     def search(self, query: "SearchQuery") -> "List[SearchResult]":

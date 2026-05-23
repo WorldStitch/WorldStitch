@@ -15,7 +15,6 @@ import Vaults from "./pages/Vaults";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
-import Groups from "./pages/Groups";
 import OwnerGroups from "./pages/OwnerGroups";
 import OwnerInvites from "./pages/OwnerInvites";
 import AdminAnalytics from "./pages/AdminAnalytics";

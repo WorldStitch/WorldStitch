@@ -77,7 +77,7 @@ class GroupManager:
         if group.owner_id == user_id:
             return True
         role = (group.member_roles or {}).get(user_id)
-        if user_id in group.members and role in {"gm", permission}:
+        if user_id in group.members and role in {"admin", permission}:
             return True
         # Extend with your permission rules
         return False

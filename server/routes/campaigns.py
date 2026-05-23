@@ -50,7 +50,7 @@ class CreateCampaignRequest(BaseModel):
 
 class CampaignMemberRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
-    role: str = Field("player", pattern="^(gm|player|observer)$")
+    role: str = Field("member", pattern="^(gm|player|observer|member)$")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
