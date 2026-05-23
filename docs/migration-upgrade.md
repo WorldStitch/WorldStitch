@@ -16,7 +16,7 @@ No manual data migration is required for minor updates. The app's `schema_versio
 ### Breaking schema changes
 
 If a future release changes a model's fields in a breaking way:
-1. The release notes will include a migration script in `Ward_DND_AI/scripts/`
+1. The release notes will include a migration script in `MythosEngine/scripts/`
 2. Run the migration script before launching the new version
 3. The script will increment `schema_version` on affected records
 
@@ -34,7 +34,7 @@ Stored as JSON files in `{VAULT_PATH}/.dnd_meta/{model_type}/{id}.json`. Each fi
 
 ### Global data (users, groups)
 
-Stored in `~/.ward_dnd_ai/users.json` and `~/.ward_dnd_ai/groups.json`. These are portable JSON files.
+Stored in `~/.mythos_engine_ai/users.json` and `~/.mythos_engine_ai/groups.json`. These are portable JSON files.
 
 ---
 
@@ -43,7 +43,7 @@ Stored in `~/.ward_dnd_ai/users.json` and `~/.ward_dnd_ai/groups.json`. These ar
 Export all user data to a zip archive:
 
 ```bash
-python Ward_DND_AI/scripts/export_data.py --output exports/
+python MythosEngine/scripts/export_data.py --output exports/
 ```
 
 The export includes:
@@ -56,19 +56,19 @@ The export includes:
 ### Restore from export
 
 ```bash
-python Ward_DND_AI/scripts/export_data.py --restore exports/ward_dnd_export_20260414.zip --target ./my_vault/
+python MythosEngine/scripts/export_data.py --restore exports/mythos_export_20260414.zip --target ./my_vault/
 ```
 
 ---
 
 ## Moving to a New Machine
 
-1. Export your data: `python Ward_DND_AI/scripts/export_data.py --output exports/`
+1. Export your data: `python MythosEngine/scripts/export_data.py --output exports/`
 2. Copy the export zip to the new machine
 3. Clone the repo and install dependencies
-4. Restore: `python Ward_DND_AI/scripts/export_data.py --restore exports/ward_dnd_export.zip --target ./vault/`
+4. Restore: `python MythosEngine/scripts/export_data.py --restore exports/ward_dnd_export.zip --target ./vault/`
 5. Update `VAULT_PATH` in `.env`
-6. Copy `~/.ward_dnd_ai/` from the old machine (contains users/groups)
+6. Copy `~/.mythos_engine_ai/` from the old machine (contains users/groups)
 
 ---
 

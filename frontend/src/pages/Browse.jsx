@@ -11,6 +11,7 @@ import TagPanel from '@/components/browse/TagPanel';
 import MetaPanel from '@/components/browse/MetaPanel';
 import PermissionsPanel from '@/components/browse/PermissionsPanel';
 import BacklinksPanel from '@/components/browse/BacklinksPanel';
+import RelationshipPanel from '@/components/browse/RelationshipPanel';
 import { notes, folders, ai, groups, users, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { useVault } from '@/context/VaultContext';
 import { useRealtime } from '@/context/RealtimeContext';
@@ -639,6 +640,13 @@ export default function Browse({ user }) {
                       <BacklinksPanel
                         noteId={selectedNote.id}
                         onNavigate={handleNavigateByLink}
+                      />
+                    </div>
+
+                    <div className="border-t border-txt-muted/10 pt-4">
+                      <RelationshipPanel
+                        entityId={selectedNote.id}
+                        vaultId={activeVaultId}
                       />
                     </div>
 

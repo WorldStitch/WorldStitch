@@ -38,7 +38,7 @@ class UpdateGroupRequest(BaseModel):
 
 class UpdateMembersRequest(BaseModel):
     user_id: str
-    role: str = Field("player", min_length=2, max_length=32)
+    role: str = Field("member", min_length=2, max_length=32)
 
 
 def _to_response(group: Group) -> GroupResponse:

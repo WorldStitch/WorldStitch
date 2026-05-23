@@ -1,7 +1,8 @@
-﻿from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from WorldStitch.ai.ai_logging import count_tokens
 from WorldStitch.ai.core.index_manager import IndexManager
+from WorldStitch.models.relationship_types import get_inverse_label
 
 
 class ContextAssembler:
@@ -112,7 +113,13 @@ class ContextAssembler:
             included_ids.append(note_id)
             prompt_token_count += tokens
 
-        context_block = preamble + "\n\n".join(context_lines) + "\n\n" + prompt_base
+        # Append typed relationship context for included entities
+        rel_block = self._build_relationship_context(included_ids)
+        notes_section = "\n\n".join(context_lines)
+        if rel_block:
+            notes_section = notes_section + "\n\n" + rel_block if notes_section else rel_block
+
+        context_block = preamble + notes_section + "\n\n" + prompt_base
         total_tokens = self._count_tokens_cached(context_block)
 
         result = {
@@ -126,7 +133,56 @@ class ContextAssembler:
         self._context_cache[cache_key] = result
         return result
 
-    # Add to ContextAssembler class
+    def _build_relationship_context(self, entity_ids: List[str], vault_id: str = "") -> str:
+        """Query typed relationships for entity_ids and return a formatted block.
+
+        Replaces the flat "Linked notes: [id1, id2]" pattern with typed statements:
+        "Relationships: Mira is an ally of Dax (bidirectional), Mira killed Lord Vane
+        (unidirectional → Lord Vane was killed by Mira)"
+        """
+        if not hasattr(self.storage, "list_relationships_for_entity"):
+            return ""
+        if not entity_ids:
+            return ""
+
+        # Collect entity display names for readable output
+        def _label(eid: str) -> str:
+            try:
+                note = self.storage.get_note_by_id(eid)
+                if note:
+                    return getattr(note, "title", None) or eid
+            except Exception:
+                pass
+            return eid
+
+        statements: List[str] = []
+        seen_rel_ids: set = set()
+
+        for entity_id in entity_ids:
+            try:
+                rels = self.storage.list_relationships_for_entity(entity_id, vault_id) or []
+            except Exception:
+                continue
+            for rel in rels:
+                if rel.id in seen_rel_ids:
+                    continue
+                seen_rel_ids.add(rel.id)
+                src_label = _label(rel.source_id)
+                tgt_label = _label(rel.target_id)
+                rel_type = rel.label or rel.relationship_type
+                if rel.direction == "bidirectional":
+                    statements.append(f"{src_label} {rel_type} {tgt_label} (bidirectional)")
+                else:
+                    inv = get_inverse_label(rel.relationship_type)
+                    statements.append(
+                        f"{src_label} {rel_type} {tgt_label}"
+                        f" (unidirectional → {tgt_label} {inv} {src_label})"
+                    )
+
+        if not statements:
+            return ""
+        return "Relationships: " + ", ".join(statements)
+
     @staticmethod
     def clear_cache():
         ContextAssembler._context_cache.clear()

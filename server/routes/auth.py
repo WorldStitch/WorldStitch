@@ -14,7 +14,6 @@ which is unavailable in the headless FastAPI server context. Instead we
 use UserManager directly for credential verification.
 """
 
-import asyncio
 import logging
 import time
 from collections import defaultdict
@@ -26,7 +25,6 @@ from pydantic import BaseModel, EmailStr, field_validator
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.utils.audit_logger import audit
-from server.analytics import track as analytics_track
 from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
 from server.deps import get_ctx, get_current_user
 
@@ -257,7 +255,7 @@ async def setup_admin(
             email=req.email,
             username=req.username,
             password=req.password,
-            roles=["admin", "gm"],
+            roles=["admin"],
         )
         user.system_role = "owner"
         ctx.users.update_user(user)
@@ -324,7 +322,7 @@ async def login(
     try:
         # Look up user by email
         user = ctx.users.get_user_by_email(req.email)
-        if not user or not user.is_active:
+        if not user or not user.is_active or user.system_role == "suspended":
             _login_limiter.record(email_key)
             audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=user_not_found")
             raise HTTPException(
@@ -344,7 +342,7 @@ async def login(
         # Login successful — reset rate limiter and log (Items 59, 60)
         _login_limiter.reset(email_key)
         audit("SUCCESS_LOGIN", "auth", user.id, user_id=user.id, detail=f"ip={client_ip}")
-        asyncio.create_task(analytics_track("user.login", user_id=user.id))
+        ctx.analytics.track("auth.login", user_id=user.id)
 
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
@@ -356,7 +354,7 @@ async def login(
         user.last_login = datetime.utcnow()
         ctx.users.update_user(user)
 
-        role = user.roles[0] if user.roles else "player"
+        role = user.roles[0] if user.roles else ""
         token = create_jwt(user.id, user.email, role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
@@ -394,7 +392,7 @@ async def logout(
     Logout the current user. JWTs are stateless so the client is responsible
     for discarding the token. This endpoint confirms the token was valid.
     """
-    asyncio.create_task(analytics_track("user.logout", user_id=user.id))
+    ctx.analytics.track("auth.logout", user_id=user.id)
     return {"message": "Logged out successfully"}
 
 
@@ -463,7 +461,7 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
-    role = user.roles[0] if user.roles else "player"
+    role = user.roles[0] if user.roles else ""
     token = create_jwt(user.id, user.email, role)
     return RefreshResponse(access_token=token, token_type="bearer")
 
@@ -491,14 +489,13 @@ async def register(
             email=req.email,
             username=req.username,
             password=req.password,
-            roles=["player"],
+            roles=[],
         )
 
         # Redeem the invite
         ctx.invites.redeem(req.invite_code, user.id)
-        asyncio.create_task(analytics_track("user.registered", user_id=user.id))
 
-        role = user.roles[0] if user.roles else "player"
+        role = user.roles[0] if user.roles else ""
         token = create_jwt(user.id, user.email, role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
@@ -512,7 +509,7 @@ async def register(
                 "id": user.id,
                 "username": user.username,
                 "email": user.email,
-                "roles": user.roles or ["player"],
+                "roles": user.roles or [],
                 "system_role": user.system_role,
                 "groups": user.groups,
                 "is_active": user.is_active,
