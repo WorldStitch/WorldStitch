@@ -1,4 +1,4 @@
-"""
+﻿"""
 Note and folder endpoints.
 
 GET /notes — list notes (uses search_notes under the hood)
@@ -275,7 +275,10 @@ def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
             )
             ctx.storage.create_relationship(rel)
         except Exception:
-            logger.exception("Failed to promote note link to relationship", extra={"note_id": note.id, "link_id": link_id})
+            logger.exception(
+                "Failed to promote note link to relationship",
+                extra={"note_id": note.id, "link_id": link_id, "vault_id": vault_id},
+            )
 
 
 def _get_note_or_404(ctx, note_id):
@@ -349,7 +352,7 @@ async def search_notes(
                 date_to=date_to,
             )
             result["mode"] = "fts"
-            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=result.get("total", 0), mode="fts"))
+            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=result.get("total", 0), mode="fts"))
             return result
 
         # ── Semantic mode ─────────────────────────────────────────────────────
@@ -372,7 +375,7 @@ async def search_notes(
 
             total = len(all_results)
             page = all_results[skip : skip + limit]
-            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=total, mode="semantic"))
+            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=total, mode="semantic"))
             return {
                 "items": [_note_to_list_item(n).model_dump() for n in page],
                 "total": total,
@@ -425,7 +428,7 @@ async def search_notes(
             all_items = [m["item"] for m in merged]
             total = len(all_items)
             page = all_items[skip : skip + limit]
-            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=total, mode="hybrid"))
+            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=total, mode="hybrid"))
             return {"items": page, "total": total, "skip": skip, "limit": limit, "mode": "hybrid"}
 
         # ── Unknown mode → fall back to FTS ──────────────────────────────────
@@ -440,7 +443,7 @@ async def search_notes(
             date_to=date_to,
         )
         result["mode"] = mode
-        asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=result.get("total", 0), mode=mode))
+        asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=result.get("total", 0), mode=mode))
         return result
 
     except Exception as e:

@@ -22,6 +22,7 @@ from WorldStitch.models.image import Image
 from WorldStitch.models.invite_code import InviteCode
 from WorldStitch.models.map import Map
 from WorldStitch.models.note import Note
+from WorldStitch.models.relationship import Relationship
 from WorldStitch.models.session import Session
 from WorldStitch.models.sound import Sound
 from WorldStitch.models.user import User
@@ -472,6 +473,68 @@ class HybridStorage(StorageBackend):
             existing = json.loads(meta_path.read_text(encoding="utf-8"))
             existing.update(meta)
             meta_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # Relationships
+    # ------------------------------------------------------------------
+
+    def create_relationship(self, rel: Relationship) -> Relationship:
+        path = self._dnd_meta_path("relationships", rel.id)
+        path.write_text(json.dumps(rel.model_dump(mode="json"), indent=2), encoding="utf-8")
+        return rel
+
+    def get_relationship(self, rel_id: str) -> Optional[Relationship]:
+        path = self._dnd_meta_path("relationships", rel_id)
+        if not path.is_file():
+            return None
+        return Relationship.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    def list_relationships_for_entity(self, entity_id: str, vault_id: str) -> List[Relationship]:
+        return [
+            rel
+            for rel in self.list_relationships(vault_id)
+            if rel.source_id == entity_id or rel.target_id == entity_id
+        ]
+
+    def list_relationships(self, vault_id: str) -> List[Relationship]:
+        rel_dir = self._dnd_meta_dir("relationships")
+        results: List[Relationship] = []
+        for path in rel_dir.glob("*.json"):
+            try:
+                rel = Relationship.model_validate(json.loads(path.read_text(encoding="utf-8")))
+                if not vault_id or rel.vault_id == vault_id:
+                    results.append(rel)
+            except Exception:
+                continue
+        return results
+
+    def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
+        rel_dir = self._dnd_meta_dir("relationships")
+        for path in rel_dir.glob("*.json"):
+            try:
+                rel = Relationship.model_validate(json.loads(path.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+            if vault_id and rel.vault_id != vault_id:
+                continue
+            if rel.source_id == source_id and rel.target_id == target_id and rel.relationship_type == rel_type:
+                return True
+        return False
+
+    def delete_relationship(self, rel_id: str) -> bool:
+        path = self._dnd_meta_path("relationships", rel_id)
+        if not path.is_file():
+            return False
+        path.unlink()
+        return True
+
+    def update_relationship(self, rel_id: str, updates: dict) -> Optional[Relationship]:
+        rel = self.get_relationship(rel_id)
+        if rel is None:
+            return None
+        updated = rel.model_copy(update=updates)
+        self.create_relationship(updated)
+        return updated
 
     # ------------------------------------------------------------------
     # Active Sessions
