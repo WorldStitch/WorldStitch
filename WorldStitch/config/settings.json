@@ -1,5 +1,5 @@
-﻿{
-  "VAULT_PATH": "C:/Users/Evan/Desktop/WorldStitch/Obsidian",
+{
+  "VAULT_PATH": "./Obsidian",
   "VAULT_TYPE": "sqlite",
   "CORE_DATA_PATH": "./WorldStitch/data",
   "OPENAI_API_KEY": "",

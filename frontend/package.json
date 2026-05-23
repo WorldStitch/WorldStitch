@@ -1,5 +1,5 @@
 {
-  "name": "WorldStitch",
+  "name": "worldstitch",
   "version": "1.0.0",
   "description": "WorldStitch — D&D Campaign Management",
   "main": "electron/main.cjs",
@@ -47,7 +47,7 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.WorldStitch.app",
+    "appId": "com.worldstitch.app",
     "productName": "WorldStitch",
     "copyright": "Copyright © 2026 WorldStitch",
     "directories": {
