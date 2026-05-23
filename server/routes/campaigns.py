@@ -1,4 +1,4 @@
-"""
+﻿"""
 Campaign CRUD endpoints.
 
 GET  /campaigns?group_id=               — list campaigns for a group
@@ -17,8 +17,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
@@ -128,13 +128,13 @@ export default function Login({ onLogin, needsSetup = false }) {
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="text-4xl mb-4">⚡</div>
-          <h1 className="text-2xl font-bold text-txt mb-2">MythosEngine</h1>
+          <h1 className="text-2xl font-bold text-txt mb-2">WorldStitch</h1>
         </div>
 
         {/* ── Setup Mode ── */}
         {mode === 'setup' && (
           <>
-            <h2 className="text-xl font-bold text-txt mb-2">Welcome to MythosEngine</h2>
+            <h2 className="text-xl font-bold text-txt mb-2">Welcome to WorldStitch</h2>
             <p className="text-txt-secondary text-sm mb-6">Create your admin account to get started.</p>
             <ApiErrorBox msg={setupError} />
             <form onSubmit={handleSetup} className="space-y-4">
@@ -238,7 +238,7 @@ export default function Login({ onLogin, needsSetup = false }) {
         {mode === 'register' && (
           <>
             <h2 className="text-xl font-bold text-txt mb-2">Create account</h2>
-            <p className="text-txt-secondary text-sm mb-6">Join the worlds of MythosEngine</p>
+            <p className="text-txt-secondary text-sm mb-6">Join the worlds of WorldStitch</p>
             <form onSubmit={handleRegister} className="space-y-4">
               <Input
                 label="Invite Code"

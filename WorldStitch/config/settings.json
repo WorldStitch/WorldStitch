@@ -1,0 +1,26 @@
+{
+  "VAULT_PATH": "./Obsidian",
+  "VAULT_TYPE": "sqlite",
+  "CORE_DATA_PATH": "./WorldStitch/data",
+  "OPENAI_API_KEY": "",
+  "EMBEDDING_MODEL": "text-embedding-3-small",
+  "COMPLETION_MODEL": "gpt-3.5-turbo",
+  "MAX_TOKENS": 4000,
+  "LOG_FILE": "logs/app.log",
+  "LOG_LEVEL": "INFO",
+  "AUTO_REFRESH_INTERVAL": 300,
+  "ENABLE_EXPERIMENTAL": false,
+  "AI_BACKENDS": {
+    "ask": "openai",
+    "summarize": "openai",
+    "search_context": "loreai",
+    "suggest_tags": "openai",
+    "propose_links": "openai"
+  },
+  "THEME": "forest",
+  "FONT_SIZE": "large",
+  "SHOW_TOOLTIPS": true,
+  "STARTUP_TAB": "Dashboard",
+  "COMPACT_MODE": false,
+  "APP_NAME": "WorldStitch"
+}

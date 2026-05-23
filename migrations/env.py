@@ -1,15 +1,15 @@
-"""
-migrations/env.py — Alembic migration environment for MythosEngine.
+﻿"""
+migrations/env.py — Alembic migration environment for WorldStitch.
 
 How it works
 ------------
 * Target metadata is pulled from the canonical 41-table schema defined in
-  MythosEngine/storage/schema.py.  The legacy sqlite_backend.py ORM models
+  WorldStitch/storage/schema.py.  The legacy sqlite_backend.py ORM models
   are kept for the existing CRUD layer and will be retired in a follow-up PR.
 
 * The database URL is resolved in this order:
     1. DATABASE_URL environment variable  (preferred for Docker / CI)
-    2. sqlalchemy.url from alembic.ini    (fallback, defaults to sqlite:///mythos_engine.db)
+    2. sqlalchemy.url from alembic.ini    (fallback, defaults to sqlite:///worldstitch.db)
 
 * Both online (real DB connection) and offline (SQL script output) modes are
   supported.
@@ -33,7 +33,7 @@ from alembic import context
 # Pull in ORM metadata so autogenerate can diff against the live schema
 # ---------------------------------------------------------------------------
 # sys.path already includes the project root (prepend_sys_path = . in alembic.ini)
-from MythosEngine.storage.schema import Base  # noqa: E402
+from WorldStitch.storage.schema import Base  # noqa: E402
 
 target_metadata = Base.metadata
 

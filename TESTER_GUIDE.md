@@ -1,14 +1,14 @@
-# MythosEngine — External Tester Guide
+# WorldStitch — External Tester Guide
 
 **Build stage:** Alpha · **Platform:** Windows (primary), macOS/Linux (dev only)
 
-Thank you for testing MythosEngine! This guide walks you through setup, a tour of every feature, and concrete things to try (and break).
+Thank you for testing WorldStitch! This guide walks you through setup, a tour of every feature, and concrete things to try (and break).
 
 ---
 
-## What Is MythosEngine?
+## What Is WorldStitch?
 
-MythosEngine is a desktop application for vault owners and world builders. It lets you:
+WorldStitch is a desktop application for vault owners and world builders. It lets you:
 
 - **Write and organize notes** about your world or project
 - **Track characters** (player characters and characters) with stat blocks
@@ -37,8 +37,8 @@ The app runs as an Electron window. A small Python/FastAPI server runs in the ba
 ### 1 — Clone the repo
 
 ```powershell
-git clone https://github.com/sike-ward/MythosEngine.git
-cd MythosEngine
+git clone https://github.com/sike-ward/WorldStitch.git
+cd WorldStitch
 ```
 
 ### 2 — Create a Python virtual environment
@@ -87,7 +87,7 @@ cd ..
 
 ### Option A — Double-click launcher (easiest)
 
-Run `Launch_MythosEngine.bat` from the project root. It:
+Run `Launch_WorldStitch.bat` from the project root. It:
 1. Verifies Python venv and Node.js
 2. Starts the FastAPI backend in a minimized window
 3. Opens the Electron app
@@ -245,7 +245,7 @@ Groups let you assign roles to sets of users within a vault.
 
 ## Reporting Bugs
 
-Please report issues at: **https://github.com/sike-ward/MythosEngine/issues**
+Please report issues at: **https://github.com/sike-ward/WorldStitch/issues**
 
 When filing a bug, include:
 
@@ -265,7 +265,7 @@ The backend writes logs to `logs/app.log` in the project root. If the app crashe
 | Symptom | Fix |
 |---------|-----|
 | "Python not found" at launch | Install Python 3.11+ and ensure it's on `PATH`, or re-run `python -m venv .venv` |
-| App opens but shows loading spinner forever | Check that uvicorn started — look at the minimized "MythosEngine-API" terminal window |
+| App opens but shows loading spinner forever | Check that uvicorn started — look at the minimized "WorldStitch-API" terminal window |
 | Login fails with "Invalid credentials" | Double-check `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env` |
 | AI features return errors | Verify `OPENAI_API_KEY` in `.env` is valid and has available credits |
 | "No vault selected" on Characters/Maps/Sessions | Go to `/vaults` and create or select a vault |

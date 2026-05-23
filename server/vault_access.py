@@ -1,13 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Iterable, List, Optional
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
-from MythosEngine.models.vault import Vault
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
+from WorldStitch.models.vault import Vault
 from server.deps import PLATFORM_ADMIN
 
 

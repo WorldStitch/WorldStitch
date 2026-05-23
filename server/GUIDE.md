@@ -1,8 +1,8 @@
-# MythosEngine FastAPI Server Guide
+# WorldStitch FastAPI Server Guide
 
 ## Overview
 
-This is a FastAPI backend server that wraps the existing MythosEngine Python backend and exposes it as REST endpoints for the Electron/React frontend.
+This is a FastAPI backend server that wraps the existing WorldStitch Python backend and exposes it as REST endpoints for the Electron/React frontend.
 
 The server initializes an `AppContext` on startup, which provides access to all services (config, storage, auth, managers, AI, etc.) in a single service locator pattern.
 
@@ -226,7 +226,7 @@ Example response:
 
 ## Configuration
 
-The server reads configuration from `MythosEngine/config/settings.json` and `.env` files. Settings can be:
+The server reads configuration from `WorldStitch/config/settings.json` and `.env` files. Settings can be:
 - Retrieved via `GET /settings`
 - Updated via `PUT /settings`
 

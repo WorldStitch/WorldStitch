@@ -1,5 +1,5 @@
-/**
- * MythosEngine API Client
+﻿/**
+ * WorldStitch API Client
  * Talks to the FastAPI backend on localhost:8741.
  */
 
@@ -151,7 +151,7 @@ export const auth = {
         body: JSON.stringify({ email, password }),
       });
     } catch {
-      throw new Error("Cannot connect to MythosEngine server — is it running?");
+      throw new Error("Cannot connect to WorldStitch server — is it running?");
     }
     if (res.status === 401) throw new Error("Invalid email or password");
     if (res.status === 403) throw new Error("Account is disabled");

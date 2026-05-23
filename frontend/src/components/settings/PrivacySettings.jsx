@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { analytics } from "@/api";
@@ -28,7 +28,7 @@ export default function PrivacySettings() {
         <h2 className="text-base font-semibold text-txt mb-1">Privacy &amp; Analytics</h2>
         <p className="text-sm text-txt-muted">
           When enabled, anonymous usage events (logins, note creates, AI requests) are recorded to
-          help improve MythosEngine. No note content or message bodies are ever stored.
+          help improve WorldStitch. No note content or message bodies are ever stored.
         </p>
       </div>
 

@@ -1,5 +1,5 @@
-"""
-Dashboard routes for MythosEngine FastAPI server.
+﻿"""
+Dashboard routes for WorldStitch FastAPI server.
 
 Endpoints
 ---------
@@ -9,8 +9,8 @@ GET /dashboard/recent — most-recently-modified notes
 
 from fastapi import APIRouter, Depends, Query
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import get_ctx, get_current_user
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])

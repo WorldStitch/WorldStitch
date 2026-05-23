@@ -1,5 +1,5 @@
-@echo off
-echo Pulling latest MythosEngine updates from GitHub...
+﻿@echo off
+echo Pulling latest WorldStitch updates from GitHub...
 cd /d "%~dp0"
 git checkout main
 git pull origin main

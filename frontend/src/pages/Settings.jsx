@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
@@ -99,7 +99,7 @@ export default function Settings({ user }) {
 
   return (
     <div className="p-10 space-y-6 h-full">
-      <SectionHeader title="⚙️ Settings" subtitle="Configure your MythosEngine experience." />
+      <SectionHeader title="⚙️ Settings" subtitle="Configure your WorldStitch experience." />
 
       <div className="flex gap-6 flex-1 overflow-hidden">
         {/* Left Sidebar */}

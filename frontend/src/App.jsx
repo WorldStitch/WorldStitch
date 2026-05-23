@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import Sidebar from "./components/Sidebar";
@@ -32,7 +32,7 @@ function BackendStartupScreen({ status }) {
     <div className="h-screen w-screen bg-base flex items-center justify-center p-8">
       <div className="text-center max-w-sm space-y-5">
         <div className="text-5xl">⚡</div>
-        <h1 className="text-2xl font-bold text-txt">MythosEngine</h1>
+        <h1 className="text-2xl font-bold text-txt">WorldStitch</h1>
 
         {!isError && (
           <>
@@ -204,7 +204,7 @@ export default function App() {
       <div className="h-screen bg-base flex items-center justify-center">
         <div className="text-center">
           <div className="text-3xl mb-3">⚡</div>
-          <div className="text-txt-muted text-sm">Loading MythosEngine...</div>
+          <div className="text-txt-muted text-sm">Loading WorldStitch...</div>
         </div>
       </div>
     );

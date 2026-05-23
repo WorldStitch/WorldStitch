@@ -1,4 +1,4 @@
-import clsx from 'clsx';
+﻿import clsx from 'clsx';
 import {
   Home,
   Sparkles,
@@ -36,7 +36,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
       {/* Logo Section */}
       <div className="px-4 py-6 border-b border-border-subtle">
         <h2 className="text-lg font-bold text-txt flex items-center gap-2">
-          ⚡ MythosEngine
+          ⚡ WorldStitch
         </h2>
         <p className="text-xs text-txt-muted mt-2">Your world. Your story.</p>
         <div className="mt-4 space-y-2">

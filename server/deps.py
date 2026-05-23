@@ -1,5 +1,5 @@
-"""
-FastAPI dependency providers for MythosEngine server.
+﻿"""
+FastAPI dependency providers for WorldStitch server.
 
 All route handlers receive AppContext and the current User via these
 FastAPI dependencies, keeping routes thin and testable.
@@ -9,8 +9,8 @@ from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, status
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.auth_utils import decode_jwt
 
 _ctx: Optional[AppContext] = None

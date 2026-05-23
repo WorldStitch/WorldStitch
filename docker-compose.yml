@@ -1,4 +1,4 @@
-# docker-compose.yml — MythosEngine multi-user deployment
+# docker-compose.yml — WorldStitch multi-user deployment
 #
 # Quick start
 # -----------
@@ -34,8 +34,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: mythosengine:latest
-    container_name: mythosengine_api
+    image: worldstitch:latest
+    container_name: worldstitch_api
     restart: unless-stopped
 
     # ── Ports ─────────────────────────────────────────────────────────────────

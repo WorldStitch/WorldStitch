@@ -1,4 +1,4 @@
-"""
+﻿"""
 Admin analytics endpoints.
 
 All endpoints require the 'admin' role and query the analytics_events table.
@@ -19,8 +19,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import get_ctx, require_admin
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin-analytics"])

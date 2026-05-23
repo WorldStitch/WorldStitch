@@ -1,4 +1,4 @@
-"""
+﻿"""
 Character CRUD endpoints.
 
 GET  /characters?vault_id=&type=  — paginated list {items, total}
@@ -16,9 +16,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.character import Character
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.character import Character
+from WorldStitch.models.user import User
 from server.deps import get_ctx, get_current_user
 from server.vault_access import resolve_vault
 

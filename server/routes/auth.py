@@ -1,4 +1,4 @@
-"""
+﻿"""
 Authentication endpoints.
 
 GET /auth/status — check if setup is needed (no users exist)
@@ -22,9 +22,9 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
-from MythosEngine.utils.audit_logger import audit
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
+from WorldStitch.utils.audit_logger import audit
 from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
 from server.deps import get_ctx, get_current_user
 
@@ -207,7 +207,7 @@ def _count_users(ctx: AppContext) -> int:
         if hasattr(storage, "engine"):
             from sqlalchemy.orm import Session as SASession
 
-            from MythosEngine.storage.sqlite_backend import UserRecord
+            from WorldStitch.storage.sqlite_backend import UserRecord
 
             with SASession(storage.engine) as session:
                 return session.query(UserRecord).count()

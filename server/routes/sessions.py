@@ -1,4 +1,4 @@
-"""
+﻿"""
 Session Log endpoints — D&D campaign session tracking.
 
 Routes support two storage backends selected by which ID param is supplied:
@@ -21,8 +21,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 from server.deps import get_ctx, get_current_user
 from server.vault_access import resolve_vault
 

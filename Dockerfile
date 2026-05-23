@@ -1,8 +1,8 @@
 # ============================================================================
-# MythosEngine — server-only Docker image
+# WorldStitch — server-only Docker image
 # ============================================================================
 #
-# Build:  docker build -t mythosengine .
+# Build:  docker build -t worldstitch .
 # Run:    docker compose up
 #
 # The image intentionally excludes PyQt6 and all other desktop-only packages.

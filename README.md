@@ -1,4 +1,4 @@
-# MythosEngine
+﻿# WorldStitch
 
 A creative worldbuilding platform for novels, games, films, TTRPGs, and any fiction that needs a living world. Manage characters, notes, maps, timelines, factions, locations, and AI-assisted lore — all in one place.
 
@@ -26,8 +26,8 @@ A creative worldbuilding platform for novels, games, films, TTRPGs, and any fict
 ### First-time setup
 
 ```bash
-git clone https://github.com/sike-ward/MythosEngine.git
-cd MythosEngine
+git clone https://github.com/sike-ward/WorldStitch.git
+cd WorldStitch
 
 # Python backend
 python -m venv .venv
@@ -50,7 +50,7 @@ cp .env.example .env
 | `APP_ENV` | `development` (default), `production`, or `test` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING` (default: `INFO`) |
 
-All other settings live in `MythosEngine/config/settings.json`.
+All other settings live in `WorldStitch/config/settings.json`.
 
 ---
 
@@ -69,7 +69,7 @@ npm run electron:dev
 Or use the convenience launcher:
 
 ```bat
-Launch_MythosEngine.bat
+Launch_WorldStitch.bat
 ```
 
 ---
@@ -85,7 +85,7 @@ scripts\build-backend.bat
 cd frontend && npm run build:win
 ```
 
-Output: `frontend\dist-electron\MythosEngine Setup x.x.x.exe`
+Output: `frontend\dist-electron\WorldStitch Setup x.x.x.exe`
 
 ---
 
@@ -104,11 +104,11 @@ Output: `frontend\dist-electron\MythosEngine Setup x.x.x.exe`
 ## Project structure
 
 ```
-MythosEngine/
+WorldStitch/
 ├── server/           # FastAPI routes and business logic
 ├── frontend/         # Electron + React (Vite) UI
 ├── migrations/       # Alembic database migrations
-├── MythosEngine/     # Legacy Python layer (storage, managers, models)
+├── WorldStitch/     # Legacy Python layer (storage, managers, models)
 │   ├── auth/         # Auth manager, session manager, permission checker
 │   ├── config/       # Config loader
 │   ├── context/      # AppContext — central service locator
@@ -131,10 +131,10 @@ ruff check .
 ruff format .
 
 # Tests
-pytest MythosEngine/tests/
+pytest WorldStitch/tests/
 
 # Type check
-mypy MythosEngine/models/ MythosEngine/managers/ MythosEngine/storage/
+mypy WorldStitch/models/ WorldStitch/managers/ WorldStitch/storage/
 ```
 
 ---

@@ -1,13 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from MythosEngine.context.app_context import AppContext
-from MythosEngine.models.group import Group
-from MythosEngine.models.user import User
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.group import Group
+from WorldStitch.models.user import User
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user, require_admin
 
 router = APIRouter()

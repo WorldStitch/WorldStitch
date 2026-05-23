@@ -1,5 +1,5 @@
-/**
- * Theme management for MythosEngine.
+﻿/**
+ * Theme management for WorldStitch.
  *
  * Themes are applied by setting `data-theme` on <html>.
  * Each theme maps to a set of CSS custom properties in index.css.
@@ -56,7 +56,7 @@ export function applyTheme(themeId) {
 
   // Store preference
   try {
-    localStorage.setItem("mythosengine-theme", themeId);
+    localStorage.setItem("WorldStitch-theme", themeId);
   } catch {
     // localStorage may be unavailable
   }
@@ -74,7 +74,7 @@ export function applyTheme(themeId) {
  */
 export function getStoredTheme() {
   try {
-    return localStorage.getItem("mythosengine-theme") || "dark";
+    return localStorage.getItem("WorldStitch-theme") || "dark";
   } catch {
     return "dark";
   }
