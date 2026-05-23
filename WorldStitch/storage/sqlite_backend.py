@@ -31,6 +31,7 @@ from typing import Any, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, create_engine, or_, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -73,7 +74,7 @@ class UserRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
-    analytics_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    analytics_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
     system_role: Mapped[str] = mapped_column(String(20), nullable=False, default="user", server_default="user")
 
 
