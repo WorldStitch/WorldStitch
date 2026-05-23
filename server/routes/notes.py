@@ -275,7 +275,10 @@ def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
             )
             ctx.storage.create_relationship(rel)
         except Exception:
-            logger.exception("Failed to promote note link to relationship", extra={"note_id": note.id, "link_id": link_id})
+            logger.exception(
+                "Failed to promote note link to relationship",
+                extra={"note_id": note.id, "link_id": link_id, "vault_id": vault_id},
+            )
 
 
 def _get_note_or_404(ctx, note_id):

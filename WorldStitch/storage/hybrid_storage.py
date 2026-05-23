@@ -509,12 +509,17 @@ class HybridStorage(StorageBackend):
         return results
 
     def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
-        return any(
-            rel.source_id == source_id
-            and rel.target_id == target_id
-            and rel.relationship_type == rel_type
-            for rel in self.list_relationships(vault_id)
-        )
+        rel_dir = self._dnd_meta_dir("relationships")
+        for path in rel_dir.glob("*.json"):
+            try:
+                rel = Relationship.model_validate(json.loads(path.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+            if vault_id and rel.vault_id != vault_id:
+                continue
+            if rel.source_id == source_id and rel.target_id == target_id and rel.relationship_type == rel_type:
+                return True
+        return False
 
     def delete_relationship(self, rel_id: str) -> bool:
         path = self._dnd_meta_path("relationships", rel_id)
