@@ -1,5 +1,5 @@
-NPC:
-  description: "D&D non-player character"
+Character:
+  description: "Non-player character"
   content: |
     # NPC Name
 

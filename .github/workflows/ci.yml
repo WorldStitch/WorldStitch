@@ -1,6 +1,9 @@
-name: Phase 0 CI
+name: CI
 
 on: [push, pull_request]
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -30,3 +33,16 @@ jobs:
       - name: Type check (mypy)
         run: mypy WorldStitch/models/ WorldStitch/managers/ WorldStitch/storage/ WorldStitch/context/
         continue-on-error: true
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install and build
+        run: cd frontend && npm ci && npm run build

@@ -1,4 +1,4 @@
-﻿"""
+"""
 AppContext — the single service locator for the entire WorldStitch application.
 
 Every controller and view should receive an AppContext instance rather than
@@ -141,21 +141,6 @@ class AppContext:
         """True if the current user has the 'admin' role."""
         user = self.current_user
         return user is not None and "admin" in user.roles
-
-    @property
-    def is_gm(self) -> bool:
-        """True if the current user has the 'gm' role."""
-        user = self.current_user
-        return user is not None and "gm" in user.roles
-
-    @property
-    def is_gm_or_admin(self) -> bool:
-        """True if the current user is a GM or an admin."""
-        user = self.current_user
-        if user is None:
-            return False
-        roles = set(user.roles or [])
-        return bool(roles & {"admin", "gm"})
 
     # ------------------------------------------------------------------
     # AI helpers

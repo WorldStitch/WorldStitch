@@ -1,4 +1,4 @@
-﻿"""
+"""
 SQLite Storage Backend for WorldStitch.
 
 A fully normalized SQLite implementation using SQLAlchemy 2.0 with declarative
@@ -20,6 +20,7 @@ check_same_thread=False.
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -30,7 +31,7 @@ from typing import Any, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, or_, select
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, create_engine, or_, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from WorldStitch.core.event_bus import get_event_bus
@@ -43,6 +44,7 @@ from WorldStitch.models.image import Image
 from WorldStitch.models.invite_code import InviteCode
 from WorldStitch.models.map import Map
 from WorldStitch.models.note import Note
+from WorldStitch.models.relationship import Relationship
 from WorldStitch.models.session import Session as SessionModel
 from WorldStitch.models.sound import Sound
 from WorldStitch.models.user import User
@@ -234,6 +236,32 @@ class RelationshipRecord(Base):
     target_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
 
 
+class EdgeRecord(Base):
+    """First-class typed edge between any two entities within a vault."""
+
+    __tablename__ = "relationships"
+    __table_args__ = (
+        Index("idx_rel_source", "source_id", "vault_id"),
+        Index("idx_rel_target", "target_id", "vault_id"),
+        Index("idx_rel_vault", "vault_id", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    relationship_type: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    direction: Mapped[str] = mapped_column(String(30), nullable=False, default="bidirectional", server_default="bidirectional")
+    label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1.0")
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    meta: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    data: Mapped[str] = mapped_column(Text, nullable=False, default="{}")  # full JSON blob
+
+
 class AnalyticsEventRecord(Base):
     """One row per analytics event — stored with JSON event_data payload."""
 
@@ -302,9 +330,14 @@ class SQLiteBackend(StorageBackend):
         self.vault_path: Path = Path(vault_path or self.db_path.parent / ".vault").resolve()
         self.vault_path.mkdir(parents=True, exist_ok=True)
 
-        # Create engine with check_same_thread=False for PyQt6 thread safety
-        db_url = f"sqlite:///{self.db_path}"
-        self.engine = create_engine(db_url, connect_args={"check_same_thread": False})
+        # Create engine — prefer DATABASE_URL env var (Postgres in production),
+        # fall back to SQLite for local dev.
+        db_url = os.environ.get("DATABASE_URL", f"sqlite:///{self.db_path}")
+        # Railway (and some other hosts) provide postgres:// — psycopg2 needs postgresql+psycopg2://
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
+        self.engine = create_engine(db_url, connect_args=connect_args, pool_pre_ping=True)
 
         # Create all tables on first run
         Base.metadata.create_all(self.engine)
@@ -317,23 +350,40 @@ class SQLiteBackend(StorageBackend):
         except Exception:
             pass
 
-        # FTS5 full-text search index
+        # Full-text search setup — FTS5 for SQLite, tsvector/GIN for Postgres.
         self._fts_available = False
-        raw_conn = self.engine.raw_connection()
-        try:
-            self._setup_fts(raw_conn)
-            self._setup_campaign_columns(raw_conn)
-            raw_conn.commit()
-            self._fts_available = True
-        except Exception as exc:
-            logger.warning("FTS5 not available: %s — falling back to LIKE search.", exc)
-        finally:
-            raw_conn.close()
+        if not self._is_postgres:
+            raw_conn = self.engine.raw_connection()
+            try:
+                self._setup_fts(raw_conn)
+                self._setup_campaign_columns(raw_conn)
+                raw_conn.commit()
+                self._fts_available = True
+            except Exception as exc:
+                logger.warning("FTS5 not available: %s — falling back to LIKE search.", exc)
+            finally:
+                raw_conn.close()
 
-        # Add missing analytics columns for databases created before this feature.
+            # Add missing analytics columns for databases created before this feature.
+            raw_conn = self.engine.raw_connection()
+            try:
+                self._setup_analytics(raw_conn)
+                raw_conn.commit()
+            except Exception:
+                pass
+            finally:
+                raw_conn.close()
+        else:
+            try:
+                self._setup_postgres_fts()
+                self._fts_available = True
+            except Exception as exc:
+                logger.warning("Postgres FTS setup failed: %s — falling back to LIKE search.", exc)
+
+        # Create relationships table for databases created before this feature.
         raw_conn = self.engine.raw_connection()
         try:
-            self._setup_analytics(raw_conn)
+            self._setup_relationships_table(raw_conn)
             raw_conn.commit()
         except Exception:
             pass
@@ -356,6 +406,48 @@ class SQLiteBackend(StorageBackend):
     def _session(self) -> Session:
         """Get a new database session."""
         return Session(self.engine)
+
+    @property
+    def _is_postgres(self) -> bool:
+        return str(self.engine.url).startswith("postgresql")
+
+    def _setup_postgres_fts(self) -> None:
+        """Set up Postgres full-text search using tsvector column and GIN index."""
+        with self.engine.begin() as conn:
+            conn.execute(text("""
+                ALTER TABLE notes ADD COLUMN IF NOT EXISTS search_vector tsvector
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_notes_search_vector
+                ON notes USING GIN(search_vector)
+            """))
+            conn.execute(text("""
+                CREATE OR REPLACE FUNCTION notes_search_vector_update() RETURNS trigger AS $$
+                BEGIN
+                    NEW.search_vector := to_tsvector('english',
+                        COALESCE(NEW.title, '') || ' ' ||
+                        COALESCE(NEW.content, '') || ' ' ||
+                        COALESCE(NEW.tags, '')
+                    );
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+            """))
+            conn.execute(text("""
+                DROP TRIGGER IF EXISTS notes_search_vector_trigger ON notes
+            """))
+            conn.execute(text("""
+                CREATE TRIGGER notes_search_vector_trigger
+                BEFORE INSERT OR UPDATE ON notes
+                FOR EACH ROW EXECUTE FUNCTION notes_search_vector_update()
+            """))
+            conn.execute(text("""
+                UPDATE notes SET search_vector = to_tsvector('english',
+                    COALESCE(title, '') || ' ' ||
+                    COALESCE(content, '') || ' ' ||
+                    COALESCE(tags, '')
+                ) WHERE search_vector IS NULL
+            """))
 
     def _setup_fts(self, conn) -> None:
         """Create the FTS5 virtual table and sync triggers on the raw SQLite connection."""
@@ -425,6 +517,36 @@ class SQLiteBackend(StorageBackend):
             except Exception:
                 pass  # column already exists
 
+    def _setup_relationships_table(self, conn) -> None:
+        """Create the relationships table and indexes for legacy databases."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS relationships (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                relationship_type TEXT NOT NULL,
+                direction TEXT NOT NULL DEFAULT 'bidirectional',
+                label TEXT,
+                weight REAL NOT NULL DEFAULT 1.0,
+                owner_id TEXT NOT NULL,
+                vault_id TEXT NOT NULL,
+                meta TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                data TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id, vault_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, vault_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_vault ON relationships(vault_id, is_active)"
+        )
+
     def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
         d = self.vault_path / ".dnd_meta" / subfolder
@@ -465,7 +587,7 @@ class SQLiteBackend(StorageBackend):
     def _has_vault_access(self, vault_id: str) -> bool:
         if not vault_id:
             return True
-        if self._is_admin or self._is_gm:
+        if self._is_admin:
             return True
         with self._session() as session:
             record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
@@ -512,7 +634,6 @@ class SQLiteBackend(StorageBackend):
                         continue
                     if (
                         self._is_admin
-                        or self._is_gm
                         or group.owner_id == self._current_user_id
                         or self._current_user_id in (group.members or [])
                     ):
@@ -800,7 +921,7 @@ class SQLiteBackend(StorageBackend):
                     return None
                 if not self._can_access(note.owner_id, note.permissions):
                     return None
-                if not (self._is_admin or self._is_gm) and (getattr(note, "meta", {}) or {}).get("gm_only"):
+                if not self._is_admin and (getattr(note, "meta", {}) or {}).get("gm_only"):
                     return None
                 # Load content from file if available
                 if hasattr(note, "path") and note.path:
@@ -880,7 +1001,7 @@ class SQLiteBackend(StorageBackend):
                         continue
                     if not self._can_access(note.owner_id, note.permissions or {}):
                         continue
-                    if not (self._is_admin or self._is_gm) and (getattr(note, "meta", {}) or {}).get("gm_only"):
+                    if not self._is_admin and (getattr(note, "meta", {}) or {}).get("gm_only"):
                         continue
                     if tag and tag.lower() not in [t.lower() for t in (note.tags or [])]:
                         continue
@@ -917,7 +1038,7 @@ class SQLiteBackend(StorageBackend):
         accessible_ids: set[str] = set()
         with self._session() as session:
             base_q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
-            if self._is_admin or self._is_gm:
+            if self._is_admin:
                 records = base_q.all()
             else:
                 uid = self._current_user_id or ""
@@ -932,7 +1053,7 @@ class SQLiteBackend(StorageBackend):
         if not root.is_dir():
             return []
         all_paths = [str(p.relative_to(self.vault_path)) for p in root.rglob("*.md") if p.is_file()]
-        if self._is_admin or self._is_gm or not self._current_user_id:
+        if self._is_admin or not self._current_user_id:
             result = all_paths
         else:
             # Return only paths that have a DB record the user can access
@@ -1522,11 +1643,15 @@ class SQLiteBackend(StorageBackend):
     ) -> dict:
         """FTS5-powered full-text search with BM25 ranking and snippet highlighting.
 
-        Falls back to LIKE-based search when FTS5 is unavailable.
+        Uses Postgres tsvector/GIN search when running on Postgres, FTS5 on SQLite.
+        Falls back to LIKE-based search when neither is available.
         Returns ``{items, total, skip, limit}``.
         """
         if not self._fts_available:
             return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
+
+        if self._is_postgres:
+            return self._search_notes_postgres(query, vault_id, skip, limit, folder, tags, date_from, date_to)
 
         raw_conn = self.engine.raw_connection()
         try:
@@ -1577,6 +1702,85 @@ class SQLiteBackend(StorageBackend):
                 continue
 
             # Filter by ALL required tags (post-SQL, since tags are stored in JSON)
+            if tags:
+                note_tags_lower = [t.lower() for t in (getattr(note, "tags", []) or [])]
+                if not all(t.lower() in note_tags_lower for t in tags):
+                    continue
+
+            all_items.append(
+                {
+                    "id": note.id,
+                    "title": note.title,
+                    "folder_id": getattr(note, "folder_id", None),
+                    "tags": getattr(note, "tags", []) or [],
+                    "group_id": getattr(note, "group_id", None),
+                    "owner_id": getattr(note, "owner_id", ""),
+                    "is_deleted": getattr(note, "is_deleted", False),
+                    "created_at": note.created_at,
+                    "last_modified": note.last_modified,
+                    "snippet": snippet_text or "",
+                }
+            )
+
+        total = len(all_items)
+        page = all_items[skip : skip + limit]
+        return {"items": page, "total": total, "skip": skip, "limit": limit}
+
+    def _search_notes_postgres(
+        self,
+        query: str,
+        vault_id: str = "",
+        skip: int = 0,
+        limit: int = 20,
+        folder: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> dict:
+        """Postgres tsvector/GIN full-text search with ts_rank and ts_headline."""
+        try:
+            with Session(self.engine) as session:
+                sql_str = """
+                    SELECT n.id,
+                           n.data,
+                           ts_rank(n.search_vector, plainto_tsquery('english', :q)) AS rank,
+                           ts_headline('english', COALESCE(n.content, ''),
+                                       plainto_tsquery('english', :q),
+                                       'MaxWords=20, MinWords=10, StartSel=<mark>, StopSel=</mark>') AS snippet
+                    FROM notes n
+                    WHERE n.is_deleted = false
+                      AND n.search_vector @@ plainto_tsquery('english', :q)
+                """
+                params: dict = {"q": query}
+
+                if vault_id:
+                    sql_str += " AND n.vault_id = :vault_id"
+                    params["vault_id"] = vault_id
+                if folder:
+                    sql_str += " AND (n.folder = :folder OR n.folder LIKE :folder_prefix)"
+                    params["folder"] = folder
+                    params["folder_prefix"] = f"{folder}/%"
+                if date_from:
+                    sql_str += " AND n.created_at >= :date_from"
+                    params["date_from"] = date_from
+                if date_to:
+                    sql_str += " AND n.created_at <= :date_to"
+                    params["date_to"] = date_to
+
+                sql_str += " ORDER BY rank DESC LIMIT 10000"
+                rows = session.execute(text(sql_str), params).fetchall()
+        except Exception as exc:
+            logger.warning("Postgres FTS query failed (%s), falling back to LIKE search.", exc)
+            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
+
+        all_items = []
+        for row in rows:
+            note_id, data_json, rank, snippet_text = row
+            try:
+                note = Note.model_validate_json(data_json)
+            except Exception:
+                continue
+
             if tags:
                 note_tags_lower = [t.lower() for t in (getattr(note, "tags", []) or [])]
                 if not all(t.lower() in note_tags_lower for t in tags):
@@ -1740,7 +1944,7 @@ class SQLiteBackend(StorageBackend):
             q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
             if vault_id:
                 q = q.filter(NoteRecord.vault_id == vault_id)
-            if not (self._is_admin or self._is_gm):
+            if not self._is_admin:
                 uid = self._current_user_id or ""
                 q = q.filter(NoteRecord.owner_id == uid)
             return q.count()
@@ -1856,6 +2060,129 @@ class SQLiteBackend(StorageBackend):
                 except Exception:
                     pass
         return codes
+
+    # ========================================================================
+    # Relationships (typed edge objects)
+    # ========================================================================
+
+    def _edge_to_relationship(self, record: "EdgeRecord") -> Relationship:
+        """Deserialize an EdgeRecord to a Relationship model."""
+        return Relationship.model_validate_json(record.data)
+
+    def create_relationship(self, rel: Relationship) -> Relationship:
+        """Persist a new Relationship edge."""
+        now = datetime.utcnow()
+        rel.created_at = now
+        rel.last_modified = now
+        with self._session() as session:
+            record = EdgeRecord(
+                id=rel.id,
+                source_id=rel.source_id,
+                target_id=rel.target_id,
+                relationship_type=rel.relationship_type,
+                direction=rel.direction,
+                label=rel.label,
+                weight=rel.weight,
+                owner_id=rel.owner_id,
+                vault_id=rel.vault_id,
+                meta=json.dumps(rel.meta or {}),
+                created_at=now,
+                updated_at=now,
+                is_active=True,
+                data=rel.model_dump_json(),
+            )
+            session.add(record)
+            session.commit()
+        return rel
+
+    def get_relationship(self, rel_id: str) -> Optional[Relationship]:
+        """Retrieve a Relationship by ID. Returns None if not found or inactive."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(
+                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
+            ).first()
+            if record:
+                return self._edge_to_relationship(record)
+        return None
+
+    def list_relationships_for_entity(self, entity_id: str, vault_id: str) -> List[Relationship]:
+        """Return all active relationships where source_id OR target_id == entity_id."""
+        results: List[Relationship] = []
+        with self._session() as session:
+            records = session.query(EdgeRecord).filter(
+                or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
+                EdgeRecord.vault_id == vault_id,
+                EdgeRecord.is_active == True,  # noqa: E712
+            ).all()
+            for rec in records:
+                try:
+                    results.append(self._edge_to_relationship(rec))
+                except Exception:
+                    continue
+        return results
+
+    def list_relationships(self, vault_id: str) -> List[Relationship]:
+        """Return all active relationships for a vault."""
+        results: List[Relationship] = []
+        with self._session() as session:
+            records = session.query(EdgeRecord).filter(
+                EdgeRecord.vault_id == vault_id,
+                EdgeRecord.is_active == True,  # noqa: E712
+            ).all()
+            for rec in records:
+                try:
+                    results.append(self._edge_to_relationship(rec))
+                except Exception:
+                    continue
+        return results
+
+    def delete_relationship(self, rel_id: str) -> bool:
+        """Soft-delete a relationship (is_active=0). Returns True if found."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(EdgeRecord.id == rel_id).first()
+            if not record:
+                return False
+            record.is_active = False
+            record.updated_at = datetime.utcnow()
+            session.commit()
+        return True
+
+    def update_relationship(self, rel_id: str, updates: dict) -> Optional[Relationship]:
+        """Apply updates dict to a relationship and return the updated record."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(
+                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
+            ).first()
+            if not record:
+                return None
+            rel = self._edge_to_relationship(record)
+            allowed = {"label", "weight", "relationship_type", "direction", "meta"}
+            for key, val in updates.items():
+                if key in allowed and hasattr(rel, key):
+                    setattr(rel, key, val)
+            rel.last_modified = datetime.utcnow()
+            now = datetime.utcnow()
+            record.relationship_type = rel.relationship_type
+            record.direction = rel.direction
+            record.label = rel.label
+            record.weight = rel.weight
+            record.meta = json.dumps(rel.meta or {})
+            record.updated_at = now
+            record.data = rel.model_dump_json()
+            session.commit()
+            return rel
+
+    def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
+        """Return True if an active relationship with these params already exists."""
+        with self._session() as session:
+            record = session.query(EdgeRecord).filter(
+                EdgeRecord.source_id == source_id,
+                EdgeRecord.target_id == target_id,
+                EdgeRecord.vault_id == vault_id,
+                EdgeRecord.relationship_type == rel_type,
+                EdgeRecord.is_active == True,  # noqa: E712
+            ).first()
+            return record is not None
 
     # ========================================================================
     # Analytics
