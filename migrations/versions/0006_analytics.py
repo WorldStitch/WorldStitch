@@ -67,7 +67,7 @@ def upgrade() -> None:
                     user_id TEXT NOT NULL DEFAULT '',
                     event_type TEXT NOT NULL,
                     event_data TEXT,
-                    created_at DATETIME
+                    created_at TIMESTAMP
                 )
             """)
         )
