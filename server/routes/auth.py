@@ -92,7 +92,7 @@ def validate_password_strength(password: str) -> str:
 
 def _jwt_role(user: User) -> str:
     """Return a stable JWT role claim even when a user has no explicit roles."""
-    return user.roles[0] if user.roles else "player"
+    return user.roles[0] if user.roles else "member"
 
 
 router = APIRouter()
