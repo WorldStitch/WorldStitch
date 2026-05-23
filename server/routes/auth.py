@@ -90,6 +90,11 @@ def validate_password_strength(password: str) -> str:
     return password
 
 
+def _jwt_role(user: User) -> str:
+    """Return a stable JWT role claim even when a user has no explicit roles."""
+    return user.roles[0] if user.roles else "player"
+
+
 router = APIRouter()
 
 
@@ -267,7 +272,7 @@ async def setup_admin(
             is_admin=True,
         )
 
-        role = user.roles[0] if user.roles else "admin"
+        role = _jwt_role(user)
         token = create_jwt(user.id, user.email, role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
@@ -356,7 +361,7 @@ async def login(
         user.last_login = datetime.utcnow()
         ctx.users.update_user(user)
 
-        role = user.roles[0] if user.roles else ""
+        role = _jwt_role(user)
         token = create_jwt(user.id, user.email, role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
@@ -463,7 +468,7 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
-    role = user.roles[0] if user.roles else ""
+    role = _jwt_role(user)
     token = create_jwt(user.id, user.email, role)
     return RefreshResponse(access_token=token, token_type="bearer")
 
@@ -498,7 +503,7 @@ async def register(
         ctx.invites.redeem(req.invite_code, user.id)
         asyncio.create_task(analytics_track("user.registered", user_id=user.id))
 
-        role = user.roles[0] if user.roles else ""
+        role = _jwt_role(user)
         token = create_jwt(user.id, user.email, role)
         refresh = create_refresh_token(user.id)
         exp = datetime.utcnow() + timedelta(hours=1)
