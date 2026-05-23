@@ -152,6 +152,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:8741",
         "http://127.0.0.1:8741",
+        "https://app.worldstitch.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -228,3 +229,18 @@ app.include_router(relationships.router, prefix="/relationships", tags=["relatio
 def health():
     """Liveness probe used by the Electron launcher to detect API readiness."""
     return {"status": "ok", "service": "WorldStitch"}
+
+
+# ── Serve React frontend ──────────────────────────────────────────────────────
+from pathlib import Path as _Path
+_frontend_dist = _Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _frontend_dist.exists():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse as _FileResponse
+
+    app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="frontend-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        index = _frontend_dist / "index.html"
+        return _FileResponse(str(index))

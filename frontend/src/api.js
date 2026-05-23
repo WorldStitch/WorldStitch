@@ -6,7 +6,7 @@
 const BASE =
   typeof window !== "undefined" && window.electronAPI
     ? "http://127.0.0.1:8741"
-    : "/api";
+    : (import.meta.env.VITE_API_URL || "");
 
 export function getApiBase() {
   return BASE;
