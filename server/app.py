@@ -39,6 +39,7 @@ from WorldStitch.config.config import Config
 from WorldStitch.context.app_context import AppContext
 from server.deps import set_app_context
 from server.limiter import limiter
+from server.middleware.analytics import AnalyticsMiddleware
 from server.middleware.logging import LoggingMiddleware
 from server.routes import (
     admin_analytics,
@@ -140,6 +141,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+app.add_middleware(AnalyticsMiddleware)
 app.add_middleware(LoggingMiddleware)
 
 # Allow the Vite dev server (port 5173) and production Electron renderer

@@ -10,6 +10,7 @@ POST /ai/propose-links   — propose internal wiki links for a note
 GET  /ai/usage           — current-month token usage for the logged-in user
 """
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Optional
@@ -24,6 +25,7 @@ from WorldStitch.ai.cost_tracker import AIUsageRecord, _DEFAULT_PRICING, _PRICIN
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
+from server.analytics import track as analytics_track
 from server.deps import get_ctx, get_current_user
 from server.limiter import limiter
 
@@ -221,6 +223,7 @@ async def ask(
         _apply_preferred_model(ctx)
         ai = _get_ai_for_user(str(user.id), ctx)
         full_prompt = _build_prompt_with_history(req.prompt, req.history)
+        asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
         response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
         cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
