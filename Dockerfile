@@ -36,7 +36,7 @@ COPY . .
 
 # ── Build React frontend ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
-    && cd /app/frontend && npm ci --omit=dev --ignore-scripts && npx vite build \
+    && cd /app/frontend && npm ci && npx vite build \
     && apt-get purge -y nodejs npm && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /app/frontend/node_modules
 
 # ── Runtime directories (overridden by volume mounts in docker-compose) ───────
