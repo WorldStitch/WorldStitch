@@ -23,8 +23,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
-    rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-    return any(row[1] == column for row in rows)
+    if conn.dialect.name == "postgresql":
+        result = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :table AND column_name = :col"
+            ),
+            {"table": table, "col": column},
+        )
+        return result.fetchone() is not None
+    else:
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        return any(row[1] == column for row in rows)
 
 
 def upgrade() -> None:
