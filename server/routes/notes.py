@@ -23,6 +23,7 @@ We use search_notes("") or get_note_by_id() for Note objects, and the
 NoteManager / FolderManager for all CRUD.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -30,6 +31,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.analytics import track as analytics_track
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.realtime import hub
 from server.vault_access import resolve_vault
@@ -347,6 +349,7 @@ async def search_notes(
                 date_to=date_to,
             )
             result["mode"] = "fts"
+            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=result.get("total", 0), mode="fts"))
             return result
 
         # ── Semantic mode ─────────────────────────────────────────────────────
@@ -369,6 +372,7 @@ async def search_notes(
 
             total = len(all_results)
             page = all_results[skip : skip + limit]
+            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=total, mode="semantic"))
             return {
                 "items": [_note_to_list_item(n).model_dump() for n in page],
                 "total": total,
@@ -421,6 +425,7 @@ async def search_notes(
             all_items = [m["item"] for m in merged]
             total = len(all_items)
             page = all_items[skip : skip + limit]
+            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=total, mode="hybrid"))
             return {"items": page, "total": total, "skip": skip, "limit": limit, "mode": "hybrid"}
 
         # ── Unknown mode → fall back to FTS ──────────────────────────────────
@@ -435,6 +440,7 @@ async def search_notes(
             date_to=date_to,
         )
         result["mode"] = mode
+        asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, result_count=result.get("total", 0), mode=mode))
         return result
 
     except Exception as e:
@@ -570,6 +576,7 @@ async def get_note(
     try:
         _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, note_id)
+        asyncio.create_task(analytics_track("note.viewed", user_id=user.id, vault_id=getattr(note, "vault_id", None)))
         return _note_to_detail(note)
     except HTTPException:
         raise
@@ -604,7 +611,7 @@ async def create_note(
             ctx.notes.update_note(note, actor_id=user.id)
         _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
-        ctx.analytics.track("note.created", user_id=user.id)
+        asyncio.create_task(analytics_track("note.created", user_id=user.id, vault_id=vault_id))
         return _note_to_detail(note)
     except Exception as e:
         raise HTTPException(
@@ -661,6 +668,7 @@ async def update_note(
         ctx.notes.update_note(note, actor_id=user.id)
         _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))
+        asyncio.create_task(analytics_track("note.updated", user_id=user.id, vault_id=note.vault_id))
         return _note_to_detail(note)
     except HTTPException:
         raise
@@ -690,7 +698,7 @@ async def delete_note(
             )
 
         ctx.storage.soft_delete_note(note_id)
-        ctx.analytics.track("note.deleted", user_id=user.id)
+        asyncio.create_task(analytics_track("note.deleted", user_id=user.id, vault_id=getattr(note, "vault_id", None)))
         return {"deleted": True, "path": note_id}
     except HTTPException:
         raise
@@ -918,6 +926,7 @@ async def create_note_relationship(
         _get_note_or_404(ctx, note_id)
         if hasattr(ctx.storage, "upsert_relationship"):
             ctx.storage.upsert_relationship(note_id, req.target_id)
+        asyncio.create_task(analytics_track("relationship.created", user_id=user.id, source_id=note_id, target_id=req.target_id))
         return {"created": True, "source_id": note_id, "target_id": req.target_id}
     except HTTPException:
         raise

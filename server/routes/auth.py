@@ -1,4 +1,4 @@
-﻿"""
+"""
 Authentication endpoints.
 
 GET /auth/status — check if setup is needed (no users exist)
@@ -14,6 +14,7 @@ which is unavailable in the headless FastAPI server context. Instead we
 use UserManager directly for credential verification.
 """
 
+import asyncio
 import logging
 import time
 from collections import defaultdict
@@ -25,6 +26,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.utils.audit_logger import audit
+from server.analytics import track as analytics_track
 from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
 from server.deps import get_ctx, get_current_user
 
@@ -342,7 +344,7 @@ async def login(
         # Login successful — reset rate limiter and log (Items 59, 60)
         _login_limiter.reset(email_key)
         audit("SUCCESS_LOGIN", "auth", user.id, user_id=user.id, detail=f"ip={client_ip}")
-        ctx.analytics.track("auth.login", user_id=user.id)
+        asyncio.create_task(analytics_track("user.login", user_id=user.id))
 
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
@@ -392,7 +394,7 @@ async def logout(
     Logout the current user. JWTs are stateless so the client is responsible
     for discarding the token. This endpoint confirms the token was valid.
     """
-    ctx.analytics.track("auth.logout", user_id=user.id)
+    asyncio.create_task(analytics_track("user.logout", user_id=user.id))
     return {"message": "Logged out successfully"}
 
 
@@ -494,6 +496,7 @@ async def register(
 
         # Redeem the invite
         ctx.invites.redeem(req.invite_code, user.id)
+        asyncio.create_task(analytics_track("user.registered", user_id=user.id))
 
         role = user.roles[0] if user.roles else ""
         token = create_jwt(user.id, user.email, role)

@@ -11,6 +11,7 @@ The function swallows all exceptions so analytics never impacts request latency.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -29,11 +30,11 @@ async def track(
         from server.deps import get_ctx
 
         ctx = get_ctx()
-        data: dict = dict(properties)
+        data: dict[str, Any] = dict(properties)
         if vault_id:
             data["vault_id"] = vault_id
         if session_id:
             data["session_id"] = session_id
-        ctx.storage.save_analytics_event(user_id or "", event_type, data)
+        await asyncio.to_thread(ctx.storage.save_analytics_event, user_id or "", event_type, data)
     except Exception:
         logger.debug("analytics.track silently failed: %s / %s", user_id, event_type)

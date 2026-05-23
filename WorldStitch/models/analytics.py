@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -15,5 +15,5 @@ class AnalyticsEvent(BaseModel):
     user_id: Optional[str] = None
     vault_id: Optional[str] = None
     session_id: Optional[str] = None
-    properties: dict = {}
+    properties: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
