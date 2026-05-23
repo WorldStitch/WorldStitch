@@ -1,5 +1,5 @@
-﻿{
-  "name": "WorldStitch",
+{
+  "name": "worldstitch",
   "version": "1.0.0",
   "description": "WorldStitch — D&D Campaign Management",
   "main": "electron/main.cjs",

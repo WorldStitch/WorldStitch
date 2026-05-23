@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 # entrypoint.sh — WorldStitch server startup
 #
 # 1. Runs Alembic migrations so the schema is always up to date.

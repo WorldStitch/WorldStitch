@@ -1,4 +1,4 @@
-﻿# docker-compose.yml — WorldStitch multi-user deployment
+# docker-compose.yml — WorldStitch multi-user deployment
 #
 # Quick start
 # -----------
@@ -17,8 +17,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: WorldStitch:latest
-    container_name: WorldStitch_api
+    image: worldstitch:latest
+    container_name: worldstitch_api
     restart: unless-stopped
 
     # ── Ports ─────────────────────────────────────────────────────────────────
