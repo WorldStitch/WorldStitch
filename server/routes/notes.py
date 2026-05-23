@@ -27,16 +27,16 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from WorldStitch.context.app_context import AppContext
-from WorldStitch.models.user import User
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.realtime import hub
 from server.vault_access import resolve_vault
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _RESOURCE_PERMISSION_RANK = {"read": 1, "write": 2}
@@ -253,7 +253,7 @@ def _set_user_ctx(ctx: AppContext, user: User) -> None:
 
 def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
     """Fire-and-forget: create 'references' edge for each link_id in note.links."""
-    if not hasattr(ctx.storage, "create_relationship"):
+    if not hasattr(ctx.storage, "create_relationship") or not hasattr(ctx.storage, "relationship_exists"):
         return
     link_ids = getattr(note, "links", None) or []
     vault_id = getattr(note, "vault_id", "") or ""
@@ -273,7 +273,7 @@ def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
             )
             ctx.storage.create_relationship(rel)
         except Exception:
-            pass
+            logger.exception("Failed to promote note link to relationship", extra={"note_id": note.id, "link_id": link_id})
 
 
 def _get_note_or_404(ctx, note_id):

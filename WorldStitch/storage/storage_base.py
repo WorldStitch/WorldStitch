@@ -371,6 +371,11 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
+    def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
+        """Return True when an active relationship with the same edge already exists."""
+        pass
+
+    @abstractmethod
     def delete_relationship(self, rel_id: str) -> bool:
         """Soft-delete a relationship (is_active=0). Returns True if found."""
         pass
