@@ -232,15 +232,11 @@ def health():
 
 
 # ── Serve React frontend ──────────────────────────────────────────────────────
+# Use StaticFiles(html=True) instead of a catch-all GET route.
+# A mount is checked AFTER all FastAPI routes, so API endpoints are never
+# shadowed and non-GET methods (POST /vaults/, etc.) work correctly.
 from pathlib import Path as _Path
 _frontend_dist = _Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if _frontend_dist.exists():
     from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import FileResponse as _FileResponse
-
-    app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="frontend-assets")
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_spa(full_path: str):
-        index = _frontend_dist / "index.html"
-        return _FileResponse(str(index))
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
