@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ChevronRight, ChevronLeft } from 'lucide-react';
-import SectionHeader from '@/components/SectionHeader';
+import { ChevronRight, ChevronLeft, FilePlus, FolderPlus, Upload, Download } from 'lucide-react';
 import Card from '@/components/Card';
 import FolderTree from '@/components/browse/FolderTree';
 import NoteEditor from '@/components/browse/NoteEditor';
@@ -58,6 +57,10 @@ export default function Browse({ user }) {
   const [showMetaEditor, setShowMetaEditor] = useState(false);
   const [metaKey, setMetaKey] = useState('');
   const [metaValue, setMetaValue] = useState('');
+
+  // ── Toolbar modals ───────────────────────────────────────────────────────
+  const [showNewNoteToolbar, setShowNewNoteToolbar] = useState(false);
+  const [showNewFolderToolbar, setShowNewFolderToolbar] = useState(false);
 
   // ── AI state ─────────────────────────────────────────────────────────────
   const [proposedLinks, setProposedLinks] = useState([]);
@@ -304,6 +307,58 @@ export default function Browse({ user }) {
     createFolderMutation.mutate(name.trim());
   };
 
+  const handleNewNoteToolbar = (title) => {
+    if (!title?.trim()) return;
+    handleCreateNote(title.trim(), activeFolder);
+    setShowNewNoteToolbar(false);
+  };
+  const handleNewFolderToolbar = (name) => {
+    if (!name?.trim()) return;
+    handleCreateFolder(name.trim());
+    setShowNewFolderToolbar(false);
+  };
+  const handleExportVault = async () => {
+    try {
+      const { vaults: vaultsApi } = await import('@/api');
+      const blob = await vaultsApi.exportZip(activeVaultId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vault-${activeVaultId}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Vault exported');
+    } catch (err) {
+      toast.error('Export failed: ' + err.message);
+    }
+  };
+  const handleImport = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.md,.txt';
+    input.multiple = true;
+    input.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      let imported = 0;
+      for (const file of files) {
+        try {
+          const content = await file.text();
+          const title = file.name.replace(/\.(md|txt)$/, '');
+          await notes.create(title, content, activeFolder, [], {}, activeVaultId);
+          imported++;
+        } catch (err) {
+          toast.error(`Failed to import ${file.name}`);
+        }
+      }
+      if (imported > 0) {
+        queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
+        toast.success(`Imported ${imported} note${imported !== 1 ? 's' : ''}`);
+      }
+    };
+    input.click();
+  };
+
   const handleDeleteFolder = (folderId) => {
     const folder = allFolders.find((f) => f.id === folderId);
     if (!confirm(`Delete folder "${folder?.name}"? Notes inside will become unfiled.`)) return;
@@ -496,8 +551,85 @@ export default function Browse({ user }) {
 
   return (
     <div className="p-6 flex flex-col h-full gap-4 min-w-0">
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <SectionHeader title="📖 Browse" subtitle="Explore and manage your vault." />
+      {/* ── Header with actions ────────────────────────────────────────── */}
+      <div className="flex items-center justify-between flex-shrink-0">
+        <div>
+          <h1 className="text-2xl font-bold text-txt">📖 Browse</h1>
+          <p className="text-sm text-txt-secondary mt-1">Explore and manage your vault.</p>
+        </div>
+        {activeVaultId && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowNewNoteToolbar(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent/90 transition"
+            >
+              <FilePlus size={15} />
+              New Note
+            </button>
+            <button
+              onClick={() => setShowNewFolderToolbar(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
+            >
+              <FolderPlus size={15} />
+              New Folder
+            </button>
+            <button
+              onClick={handleImport}
+              className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
+              title="Import markdown file"
+            >
+              <Upload size={15} />
+              Import
+            </button>
+            <button
+              onClick={handleExportVault}
+              className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
+              title="Export vault as ZIP"
+            >
+              <Download size={15} />
+              Export
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* New Note modal */}
+      {showNewNoteToolbar && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setShowNewNoteToolbar(false); }}>
+          <div className="bg-surface rounded-2xl border border-border-subtle w-full max-w-sm shadow-xl p-6 space-y-4">
+            <h2 className="text-lg font-bold text-txt">New Note</h2>
+            <input
+              autoFocus
+              placeholder="Note title..."
+              className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleNewNoteToolbar(e.target.value); if (e.key === 'Escape') setShowNewNoteToolbar(false); }}
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowNewNoteToolbar(false)} className="px-4 py-2 text-sm text-txt-muted hover:text-txt transition">Cancel</button>
+              <button onClick={(e) => handleNewNoteToolbar(e.target.closest('.space-y-4').querySelector('input').value)} className="px-4 py-2 text-sm bg-accent text-white rounded-lg font-semibold hover:bg-accent/90 transition">Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Folder modal */}
+      {showNewFolderToolbar && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setShowNewFolderToolbar(false); }}>
+          <div className="bg-surface rounded-2xl border border-border-subtle w-full max-w-sm shadow-xl p-6 space-y-4">
+            <h2 className="text-lg font-bold text-txt">New Folder</h2>
+            <input
+              autoFocus
+              placeholder="Folder name..."
+              className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleNewFolderToolbar(e.target.value); if (e.key === 'Escape') setShowNewFolderToolbar(false); }}
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowNewFolderToolbar(false)} className="px-4 py-2 text-sm text-txt-muted hover:text-txt transition">Cancel</button>
+              <button onClick={(e) => handleNewFolderToolbar(e.target.closest('.space-y-4').querySelector('input').value)} className="px-4 py-2 text-sm bg-accent text-white rounded-lg font-semibold hover:bg-accent/90 transition">Create</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!activeVaultId && (
         <Card className="p-4">
