@@ -189,7 +189,7 @@ export const notes = {
     if (tag) params.set("tag", tag);
     if (vault_id) params.set("vault_id", vault_id);
     const qs = params.toString();
-    const res = await request("GET", `/notes${qs ? `?${qs}` : ""}`);
+    const res = await request("GET", `/notes/${qs ? `?${qs}` : ""}`);
     // The backend returns a paginated envelope {items, total, skip, limit}.
     // Unwrap to a plain array so callers can use it directly.
     return Array.isArray(res) ? res : (res?.items ?? []);
@@ -280,7 +280,7 @@ export const aiSettings = {
 
 // ── Users (admin) ────────────────────────────────────────────────────────────
 export const users = {
-  list: () => request("GET", "/users"),
+  list: () => request("GET", "/users/"),
   get: (id) => request("GET", `/users/${id}`),
   updateRole: (id, roles) => request("PUT", `/users/${id}/roles`, { roles }),
   disable: (id) => request("POST", `/users/${id}/disable`),
@@ -291,14 +291,14 @@ export const users = {
 
 // ── Invites (admin) ──────────────────────────────────────────────────────────
 export const invites = {
-  list: () => request("GET", "/invites"),
+  list: () => request("GET", "/invites/"),
   generate: ({ ttl_days = 7, max_uses = 1 } = {}) => request("POST", "/invites/", { ttl_days, max_uses }),
   revoke: (id) => request("DELETE", `/invites/${id}`),
 };
 
 export const vaults = {
-  list: () => request("GET", "/vaults"),
-  listAll: () => request("GET", "/vaults?all=true"),
+  list: () => request("GET", "/vaults/"),
+  listAll: () => request("GET", "/vaults/?all=true"),
   get: (id) => request("GET", `/vaults/${encodeURIComponent(id)}`),
   create: (data) => request("POST", "/vaults/", data),
   update: (id, data) => request("PUT", `/vaults/${encodeURIComponent(id)}`, data),
@@ -327,7 +327,7 @@ export const vaults = {
 };
 
 export const groups = {
-  list: (vault_id = "") => request("GET", `/groups${vault_id ? `?vault_id=${encodeURIComponent(vault_id)}` : ""}`),
+  list: (vault_id = "") => request("GET", `/groups/${vault_id ? `?vault_id=${encodeURIComponent(vault_id)}` : ""}`),
   get: (id) => request("GET", `/groups/${encodeURIComponent(id)}`),
   create: (data) => request("POST", "/groups/", data),
   update: (id, data) => request("PUT", `/groups/${encodeURIComponent(id)}`, data),
@@ -342,7 +342,7 @@ export const groups = {
 export const sessions = {
   list: (vaultId, skip = 0, limit = 50) => {
     const params = new URLSearchParams({ vault_id: vaultId, skip, limit });
-    return request("GET", `/sessions?${params.toString()}`);
+    return request("GET", `/sessions/?${params.toString()}`);
   },
   get: (id) => request("GET", `/sessions/${encodeURIComponent(id)}`),
   create: (data) => request("POST", "/sessions/", data),
@@ -356,7 +356,7 @@ export const characters = {
   list: (vaultId = "default", type = null) => {
     const params = new URLSearchParams({ vault_id: vaultId });
     if (type) params.set("type", type);
-    return request("GET", `/characters?${params}`);
+    return request("GET", `/characters/?${params}`);
   },
   get: (id) => request("GET", `/characters/${id}`),
   create: (data) => request("POST", "/characters/", data),
@@ -369,7 +369,7 @@ export const maps = {
   list: (vault_id = "default", type = null) => {
     const params = new URLSearchParams({ vault_id });
     if (type) params.set("type", type);
-    return request("GET", `/maps?${params.toString()}`);
+    return request("GET", `/maps/?${params.toString()}`);
   },
   get: (id) => request("GET", `/maps/${encodeURIComponent(id)}`),
   create: (data) => request("POST", "/maps/", data),
@@ -401,7 +401,7 @@ export const relationships = {
   list: (vaultId, entityId) =>
     request(
       "GET",
-      `/relationships?vault_id=${encodeURIComponent(vaultId)}${entityId ? `&entity_id=${encodeURIComponent(entityId)}` : ""}`
+      `/relationships/?vault_id=${encodeURIComponent(vaultId)}${entityId ? `&entity_id=${encodeURIComponent(entityId)}` : ""}`
     ),
   getTypes: () => request("GET", "/relationships/types"),
   create: (data) => request("POST", "/relationships", data),
