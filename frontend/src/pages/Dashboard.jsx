@@ -62,7 +62,7 @@ export default function Dashboard({ user }) {
     <div className="p-10 space-y-10">
       <SectionHeader
         title="Dashboard"
-        subtitle={`Welcome back, ${user?.username || 'Adventurer'} — here's your campaign at a glance.`}
+        subtitle={`Welcome back, ${user?.username || 'there'} — here's your world at a glance.`}
       />
 
       {/* Stats Row */}

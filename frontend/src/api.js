@@ -209,7 +209,7 @@ export const notes = {
   },
 
   create: (title, content = "", folder_id = null, tags = [], meta = {}, vault_id = null) =>
-    request("POST", "/notes", { title, content, folder_id, tags, meta, vault_id }),
+    request("POST", "/notes/", { title, content, folder_id, tags, meta, vault_id }),
   update: (id, data) =>
     request("PUT", `/notes/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/notes/${encodeURIComponent(id)}`),
@@ -238,7 +238,7 @@ export const notes = {
 export const folders = {
   list: (vault_id = "") => request("GET", `/notes/folders${vault_id ? `?vault_id=${encodeURIComponent(vault_id)}` : ""}`),
   create: (name, parent_id = null, vault_id = null) =>
-    request("POST", "/notes/folders", { name, parent_id, vault_id }),
+    request("POST", "/notes/folders/", { name, parent_id, vault_id }),
   update: (id, data) =>
     request("PUT", `/notes/folders/${encodeURIComponent(id)}`, data),
   delete: (id) =>
@@ -292,7 +292,7 @@ export const users = {
 // ── Invites (admin) ──────────────────────────────────────────────────────────
 export const invites = {
   list: () => request("GET", "/invites"),
-  generate: ({ ttl_days = 7, max_uses = 1 } = {}) => request("POST", "/invites", { ttl_days, max_uses }),
+  generate: ({ ttl_days = 7, max_uses = 1 } = {}) => request("POST", "/invites/", { ttl_days, max_uses }),
   revoke: (id) => request("DELETE", `/invites/${id}`),
 };
 
@@ -300,7 +300,7 @@ export const vaults = {
   list: () => request("GET", "/vaults"),
   listAll: () => request("GET", "/vaults?all=true"),
   get: (id) => request("GET", `/vaults/${encodeURIComponent(id)}`),
-  create: (data) => request("POST", "/vaults", data),
+  create: (data) => request("POST", "/vaults/", data),
   update: (id, data) => request("PUT", `/vaults/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}`),
   exportZip: async (id) => {
@@ -329,7 +329,7 @@ export const vaults = {
 export const groups = {
   list: (vault_id = "") => request("GET", `/groups${vault_id ? `?vault_id=${encodeURIComponent(vault_id)}` : ""}`),
   get: (id) => request("GET", `/groups/${encodeURIComponent(id)}`),
-  create: (data) => request("POST", "/groups", data),
+  create: (data) => request("POST", "/groups/", data),
   update: (id, data) => request("PUT", `/groups/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/groups/${encodeURIComponent(id)}`),
   addMember: (id, user_id, role = "member") =>
@@ -345,7 +345,7 @@ export const sessions = {
     return request("GET", `/sessions?${params.toString()}`);
   },
   get: (id) => request("GET", `/sessions/${encodeURIComponent(id)}`),
-  create: (data) => request("POST", "/sessions", data),
+  create: (data) => request("POST", "/sessions/", data),
   update: (id, data) => request("PUT", `/sessions/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/sessions/${encodeURIComponent(id)}`),
   generateRecap: (id) => request("POST", `/sessions/${encodeURIComponent(id)}/recap`),
@@ -359,7 +359,7 @@ export const characters = {
     return request("GET", `/characters?${params}`);
   },
   get: (id) => request("GET", `/characters/${id}`),
-  create: (data) => request("POST", "/characters", data),
+  create: (data) => request("POST", "/characters/", data),
   update: (id, data) => request("PUT", `/characters/${id}`, data),
   delete: (id) => request("DELETE", `/characters/${id}`),
 };
@@ -372,7 +372,7 @@ export const maps = {
     return request("GET", `/maps?${params.toString()}`);
   },
   get: (id) => request("GET", `/maps/${encodeURIComponent(id)}`),
-  create: (data) => request("POST", "/maps", data),
+  create: (data) => request("POST", "/maps/", data),
   update: (id, data) => request("PUT", `/maps/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/maps/${encodeURIComponent(id)}`),
 };

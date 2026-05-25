@@ -58,7 +58,7 @@ export default function Create() {
     setLoading(true);
     setOutput('');
     try {
-      const response = await ai.ask(`Generate a D&D ${category}: ${prompt}`);
+      const response = await ai.ask(`Generate a ${category} for my world. Keep it vivid and detailed.\n\n${prompt}`);
       setOutput(response.response);
     } catch (err) {
       toast.error('Generation failed: ' + err.message);
@@ -75,7 +75,7 @@ export default function Create() {
     setLoading(true);
     setOutput('');
 
-    const parts = ['Create a detailed D&D NPC with the following details:'];
+    const parts = ['Create a detailed, memorable character with the following details:'];
     if (npcName) parts.push(`Name: ${npcName}`);
     if (npcRace) parts.push(`Race: ${npcRace}`);
     if (npcClass) parts.push(`Class/Occupation: ${npcClass}`);
@@ -83,7 +83,7 @@ export default function Create() {
     if (npcTraits) parts.push(`Personality Traits: ${npcTraits}`);
     if (npcBackstory) parts.push(`Backstory Notes: ${npcBackstory}`);
     parts.push('');
-    parts.push('Include: appearance, personality, motivations, secrets, combat abilities (if any), roleplaying tips, and a memorable quote.');
+    parts.push('Include: appearance, personality, motivations, secrets, relationships, and a memorable quote.');
 
     try {
       const response = await ai.ask(parts.join('\n'));
@@ -102,12 +102,12 @@ export default function Create() {
     setLoading(true);
     setOutput('');
 
-    const parts = [`Design a ${questDifficulty} difficulty D&D quest of type: ${questType}`];
+    const parts = [`Design a ${questDifficulty} difficulty story arc or quest of type: ${questType}`];
     if (questSetting) parts.push(`Setting: ${questSetting}`);
     if (questHook) parts.push(`Hook/Premise: ${questHook}`);
     if (questTwist) parts.push(`Twist/Complication: ${questTwist}`);
     parts.push('');
-    parts.push('Include: quest title, hook, objectives, key locations, NPCs involved, encounters (with suggested CR), rewards, and possible complications or twists.');
+    parts.push('Include: title, hook, objectives, key locations, characters involved, obstacles or conflicts, rewards, and possible complications or twists.');
 
     try {
       const response = await ai.ask(parts.join('\n'));
@@ -167,12 +167,12 @@ export default function Create() {
                 >
                   <option value="character">Character</option>
                   <option value="location">Location</option>
-                  <option value="item">Item</option>
-                  <option value="spell">Spell</option>
-                  <option value="quest">Quest Hook</option>
-                  <option value="encounter">Encounter</option>
-                  <option value="treasure">Treasure</option>
-                  <option value="tavern">Tavern / Shop</option>
+                  <option value="item">Artifact / Item</option>
+                  <option value="faction">Faction / Organization</option>
+                  <option value="plot hook">Plot Hook</option>
+                  <option value="event">Historical Event</option>
+                  <option value="creature">Creature / Monster</option>
+                  <option value="settlement">Town / Settlement</option>
                 </select>
               </div>
               <Button variant="primary" onClick={handleGenerate} disabled={loading || !prompt.trim()} className="w-full">
@@ -221,8 +221,8 @@ export default function Create() {
                     <option value="fetch">Fetch / Retrieve</option>
                     <option value="escort">Escort / Protect</option>
                     <option value="investigate">Investigate / Mystery</option>
-                    <option value="dungeon">Dungeon Crawl</option>
-                    <option value="hunt">Hunt / Slay</option>
+                    <option value="exploration">Exploration</option>
+                    <option value="hunt">Hunt / Track</option>
                     <option value="diplomacy">Diplomacy / Negotiation</option>
                     <option value="heist">Heist / Infiltration</option>
                     <option value="survival">Survival</option>
@@ -232,10 +232,10 @@ export default function Create() {
                 <div>
                   <label className="block text-txt-muted text-sm mb-1.5 font-medium">Difficulty</label>
                   <select value={questDifficulty} onChange={(e) => setQuestDifficulty(e.target.value)} className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition">
-                    <option value="easy">Easy (Tier 1)</option>
-                    <option value="medium">Medium (Tier 2)</option>
-                    <option value="hard">Hard (Tier 3)</option>
-                    <option value="deadly">Deadly (Tier 4)</option>
+                    <option value="easy">Low Stakes</option>
+                    <option value="medium">Moderate Stakes</option>
+                    <option value="hard">High Stakes</option>
+                    <option value="deadly">World-Changing</option>
                   </select>
                 </div>
               </div>
