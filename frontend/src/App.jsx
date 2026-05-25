@@ -19,6 +19,7 @@ import OwnerGroups from "./pages/OwnerGroups";
 import OwnerInvites from "./pages/OwnerInvites";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import AdminPanel from "./pages/AdminPanel";
+import Graph from "./pages/Graph";
 import { auth, setToken, getToken, setRefreshToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -244,6 +245,7 @@ export default function App() {
                 <Route path="/" element={<Dashboard user={user} />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/browse" element={<Browse user={user} />} />
+                <Route path="/graph" element={<Graph user={user} />} />
                 <Route path="/characters" element={<Characters />} />
                 <Route path="/create" element={<Create />} />
                 <Route path="/sessions" element={<Sessions user={user} />} />
