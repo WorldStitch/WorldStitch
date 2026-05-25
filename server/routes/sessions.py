@@ -83,7 +83,7 @@ def _get_legacy_session_or_404(ctx: AppContext, user: User, session_id: str) -> 
 # ============================================================================
 
 
-@router.get("")
+@router.get("/")
 async def list_sessions(
     campaign_id: Optional[str] = Query(None, description="Campaign ID — uses play_sessions table (preferred)"),
     vault_id: Optional[str] = Query(None, description="Deprecated: uses legacy session_logs table"),
@@ -121,7 +121,7 @@ async def get_session(
     return _get_legacy_session_or_404(ctx, user, session_id)
 
 
-@router.post("", status_code=201)
+@router.post("/", status_code=201)
 async def create_session(
     body: SessionLogCreate,
     ctx: AppContext = Depends(get_ctx),
