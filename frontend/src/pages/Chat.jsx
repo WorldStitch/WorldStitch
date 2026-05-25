@@ -6,12 +6,7 @@ import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { TextArea } from '@/components/Input';
-import { ai, notes, settings, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
-
-const BASE_URL =
-  typeof window !== 'undefined' && window.electronAPI
-    ? 'http://127.0.0.1:8741'
-    : '/api';
+import { ai, notes, settings, getApiBase, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 
 const COST_PER_TOKEN = 0.000003;
 
@@ -99,7 +94,7 @@ export default function Chat() {
     try {
       const { getToken } = await import('@/api');
       const token = getToken();
-      const res = await fetch(`${BASE_URL}/ai/ask/stream`, {
+      const res = await fetch(`${getApiBase()}/ai/ask/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -238,8 +233,8 @@ export default function Chat() {
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
               <div className="text-5xl mb-4">✦</div>
-              <p className="text-txt-secondary text-lg font-medium">Ask anything about your campaign</p>
-              <p className="text-txt-muted text-sm mt-1">Lore, NPCs, quests, rules — your AI guide awaits.</p>
+              <p className="text-txt-secondary text-lg font-medium">Ask anything about your world</p>
+              <p className="text-txt-muted text-sm mt-1">Characters, lore, locations, history — your AI knows your vault.</p>
             </div>
           </div>
         ) : (
