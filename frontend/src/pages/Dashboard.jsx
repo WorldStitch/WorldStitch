@@ -8,6 +8,7 @@ import Button from '@/components/Button';
 import { SkeletonLine, SkeletonStatCard } from '@/components/Skeleton';
 import { dashboard } from '@/api';
 import { useVault } from '@/context/VaultContext';
+import { useVaultTerms } from '@/hooks/useVaultTerms';
 
 // Normalise the modified date field — backend may return either name
 function getNoteDate(note) {
@@ -18,6 +19,7 @@ export default function Dashboard({ user }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { activeVaultId } = useVault();
+  const terms = useVaultTerms();
 
   // Invalidate recent notes on mount and on window focus
   useEffect(() => {
@@ -73,12 +75,12 @@ export default function Dashboard({ user }) {
           Array.from({ length: 6 }).map((_, i) => <SkeletonStatCard key={i} />)
         ) : (
           <>
-            <StatCard icon="📝" label="Notes" value={stats?.notes || 0} color="#8b5cf6" />
-            <StatCard icon="📁" label="Folders" value={stats?.folders || 0} color="#10b981" />
-            <StatCard icon="👤" label="Characters" value={stats?.characters || 0} color="#f59e0b" />
+            <StatCard icon="📝" label={terms.notes} value={stats?.notes || 0} color="#8b5cf6" />
+            <StatCard icon="📁" label={terms.folders} value={stats?.folders || 0} color="#10b981" />
+            <StatCard icon="👤" label={terms.characters} value={stats?.characters || 0} color="#f59e0b" />
             <StatCard icon="⚔️" label="Quests" value={stats?.quests || 0} color="#ef4444" />
             <StatCard icon="🌌" label="Timeline" value={stats?.timeline_events || 0} color="#60a5fa" />
-            <StatCard icon="🎲" label="Sessions" value={stats?.sessions || 0} color="#a78bfa" />
+            <StatCard icon="🎲" label={terms.sessions} value={stats?.sessions || 0} color="#a78bfa" />
           </>
         )}
       </div>
@@ -88,7 +90,7 @@ export default function Dashboard({ user }) {
         {/* Recent Notes */}
         <div className="col-span-3">
           <Card className="p-6 h-full">
-            <h3 className="text-lg font-bold text-txt mb-4">Recent Notes</h3>
+            <h3 className="text-lg font-bold text-txt mb-4">Recent {terms.notes}</h3>
             <div className="space-y-1">
               {recentLoading ? (
                 <div className="space-y-2">
@@ -132,7 +134,7 @@ export default function Dashboard({ user }) {
             <h3 className="text-lg font-bold text-txt mb-4">Quick Actions</h3>
             <div className="space-y-3 flex flex-col h-full justify-center">
               <Button variant="primary" className="w-full" onClick={() => navigate('/create')}>
-                New Note
+                New {terms.note}
               </Button>
               <Button variant="secondary" className="w-full" onClick={() => navigate('/browse')}>
                 Browse Vault

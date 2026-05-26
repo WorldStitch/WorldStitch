@@ -9,11 +9,13 @@ import Input, { TextArea } from '@/components/Input';
 import { SkeletonListItem } from '@/components/Skeleton';
 import { sessions } from '@/api';
 import { useVault } from '@/context/VaultContext';
+import { useVaultTerms } from '@/hooks/useVaultTerms';
 
 // ─── SessionDetail ────────────────────────────────────────────────────────────
 
 function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted }) {
   const queryClient = useQueryClient();
+  const terms = useVaultTerms();
 
   const [title, setTitle] = useState('');
   const [sessionDate, setSessionDate] = useState('');
@@ -127,13 +129,13 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
       <div className="grid grid-cols-2 gap-4">
         <Input
-          label="Characters Involved"
+          label={`${terms.participants} (comma-separated)`}
           placeholder="Aria, Brom, Cael..."
           value={participants}
           onChange={(e) => setParticipants(e.target.value)}
         />
         <Input
-          label="Milestone Points"
+          label={terms.milestone}
           type="number"
           min="0"
           placeholder="Story milestones reached"
@@ -143,7 +145,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       </div>
 
       <TextArea
-        label="Discoveries & Rewards"
+        label={terms.discoveries}
         placeholder="Items found, secrets uncovered, plot threads opened..."
         value={lootNotes}
         onChange={(e) => setLootNotes(e.target.value)}
@@ -151,7 +153,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       />
 
       <TextArea
-        label="Session Notes"
+        label={terms.sessionNotes}
         placeholder="Write your session notes here — what happened, key moments, decisions made..."
         value={rawNotes}
         onChange={(e) => setRawNotes(e.target.value)}
@@ -161,14 +163,14 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       {/* AI Summary section */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-txt-muted text-sm font-medium">AI Summary</label>
+          <label className="text-txt-muted text-sm font-medium">{terms.aiSummary}</label>
           <Button
             variant="secondary"
             size="sm"
             onClick={handleGenerateRecap}
             disabled={isNew || recapLoading || !rawNotes.trim()}
           >
-            {recapLoading ? 'Generating...' : '✨ Generate Summary'}
+            {recapLoading ? 'Generating...' : `✨ Generate ${terms.aiSummary}`}
           </Button>
         </div>
         {aiRecap ? (
@@ -178,8 +180,8 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
         ) : (
           <div className="bg-elevated rounded-xl px-4 py-4 text-txt-muted text-sm text-center">
             {isNew
-              ? 'Save the session first, then generate a summary from your notes.'
-              : 'No summary yet. Add session notes and click Generate Summary.'}
+              ? `Save the ${terms.session} first, then generate a ${terms.aiSummary} from ${terms.sessionNotes}.`
+              : `No ${terms.aiSummary} yet. Add ${terms.sessionNotes} and click Generate ${terms.aiSummary}.`}
           </div>
         )}
       </div>
@@ -191,7 +193,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
           onClick={handleSave}
           disabled={saveMutation.isPending}
         >
-          {saveMutation.isPending ? 'Saving...' : isNew ? 'Create Session' : 'Save'}
+          {saveMutation.isPending ? 'Saving...' : isNew ? `Create ${terms.session}` : 'Save'}
         </Button>
         {!isNew && (
           <Button
@@ -216,6 +218,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
 export default function Sessions({ user }) {
   const { activeVaultId } = useVault();
+  const terms = useVaultTerms();
   const navigate = useNavigate();
   const vaultId = activeVaultId || '';
   const [selectedId, setSelectedId] = useState(null);
@@ -265,7 +268,9 @@ export default function Sessions({ user }) {
       <div className="h-full flex flex-col items-center justify-center gap-3 text-txt-muted">
         <Layers size={48} className="opacity-20" />
         <p className="text-sm font-medium">No vault selected</p>
-        <p className="text-xs text-center max-w-xs">Select or create a vault to log sessions.</p>
+        <p className="text-xs text-center max-w-xs">
+          Select or create a vault to log {terms.sessions.toLowerCase()}.
+        </p>
         <button
           onClick={() => navigate('/vaults')}
           className="mt-1 text-xs bg-accent text-white px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors"
@@ -281,7 +286,7 @@ export default function Sessions({ user }) {
       {/* Page header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle flex-shrink-0">
         <div>
-          <h1 className="text-2xl font-bold text-txt">Sessions</h1>
+          <h1 className="text-2xl font-bold text-txt">{terms.sessions}</h1>
           <p className="text-sm text-txt-secondary mt-0.5">Story logs and world events.</p>
         </div>
         {activeVaultId && (
@@ -290,7 +295,7 @@ export default function Sessions({ user }) {
             className="flex items-center gap-1.5 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent/90 transition"
           >
             <Plus size={15} />
-            New Session
+            New {terms.session}
           </button>
         )}
       </div>
@@ -301,7 +306,7 @@ export default function Sessions({ user }) {
         <div className="w-80 flex-shrink-0 flex flex-col bg-surface border-r border-border-subtle">
           <div className="px-4 pt-4 pb-3 border-b border-border-subtle">
             <input
-              placeholder="Search sessions…"
+              placeholder={`Search ${terms.sessions.toLowerCase()}…`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none placeholder:text-txt-muted"
@@ -325,7 +330,9 @@ export default function Sessions({ user }) {
               <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
                 <div className="text-4xl">📜</div>
                 <p className="text-txt-muted text-sm">
-                  {search ? 'No sessions match your search.' : 'No sessions yet. Create your first one!'}
+                  {search
+                    ? `No ${terms.sessions.toLowerCase()} match your search.`
+                    : `No ${terms.sessions.toLowerCase()} yet. Create your first one!`}
                 </p>
               </div>
             ) : (
@@ -346,10 +353,10 @@ export default function Sessions({ user }) {
                     <div className="flex gap-3 mt-0.5 text-xs text-txt-muted">
                       <span>{s.session_date || 'No date'}</span>
                       {pCount > 0 && (
-                        <span>{pCount} character{pCount !== 1 ? 's' : ''}</span>
+                        <span>👥 {pCount}</span>
                       )}
                       {s.xp_gained > 0 && (
-                        <span>⭐ {s.xp_gained} pts</span>
+                        <span>⭐ {s.xp_gained}</span>
                       )}
                     </div>
                   </button>
@@ -374,7 +381,7 @@ export default function Sessions({ user }) {
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-3">
               <div className="text-5xl">📜</div>
-              <p className="text-txt-muted">Select a session or create a new one.</p>
+              <p className="text-txt-muted">Select a {terms.session.toLowerCase()} or create a new one.</p>
             </div>
           )}
         </div>

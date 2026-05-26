@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import Card from '@/components/Card';
 import NoteList from './NoteList';
 import { SkeletonLine } from '@/components/Skeleton';
+import { useVaultTerms } from '@/hooks/useVaultTerms';
 
 function InlineInput({ placeholder, onConfirm, onCancel, autoFocus = true }) {
   const [value, setValue] = useState('');
@@ -59,6 +60,7 @@ export default function FolderTree({
   onCreateNote,
   onCreateFolder,
 }) {
+  const terms = useVaultTerms();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [inlineNoteFolderId, setInlineNoteFolderId] = useState(null);
@@ -154,8 +156,8 @@ export default function FolderTree({
             {allNotes.length === 0 && allFolders.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
                 <div className="text-3xl">📁</div>
-                <p className="text-txt-muted text-sm">No notes yet</p>
-                <p className="text-txt-muted text-xs">Click New Note to get started</p>
+                <p className="text-txt-muted text-sm">No {terms.notes.toLowerCase()} yet</p>
+                <p className="text-txt-muted text-xs">Click New {terms.note} to get started</p>
               </div>
             ) : (
               <>
@@ -168,13 +170,13 @@ export default function FolderTree({
                       : 'text-txt hover:bg-hover'
                   }`}
                 >
-                  📋 All Notes ({allNotes.length})
+                  📋 All {terms.notes} ({allNotes.length})
                 </button>
 
                 {/* Folders header with + */}
                 <div className="flex items-center px-3 pt-2 pb-1">
                   <span className="text-[10px] uppercase tracking-widest text-txt-muted font-bold flex-1">
-                    Folders
+                    {terms.folders}
                   </span>
                   <button
                     onClick={() => setShowNewFolderInput(true)}
