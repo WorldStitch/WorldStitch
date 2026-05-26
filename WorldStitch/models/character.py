@@ -25,6 +25,7 @@ class Character(CoreModel):
     """
 
     vault_id: str = Field(..., description="Vault/campaign this character belongs to.")
+    campaign_id: Optional[str] = Field(default=None, description="Campaign ID (preferred over vault_id).")
     name: str = Field(..., min_length=1, max_length=128, description="Character name.")
     description: Optional[str] = Field(default=None, description="Bio, summary, or background.")
     group_id: Optional[str] = Field(default=None, description="Group/party with access to this character.")

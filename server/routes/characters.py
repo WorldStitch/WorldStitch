@@ -163,6 +163,7 @@ async def create_character(
         char = Character(
             id=str(uuid.uuid4()),
             vault_id=effective_id,  # kept for backward compat on the model
+            campaign_id=effective_id,
             owner_id=user.id,
             name=req.name,
             description=req.backstory or None,
@@ -172,11 +173,6 @@ async def create_character(
             meta={"race": req.race, "class": req.char_class, "level": req.level},
             ai_memory=req.ai_memory or None,
         )
-        # Store campaign_id on the model if the field exists
-        try:
-            char.campaign_id = effective_id  # type: ignore[attr-defined]
-        except AttributeError:
-            pass
         ctx.storage.save_character(char)
         ctx.analytics.track("character.created", user_id=user.id, data={"char_type": req.char_type})
         return _to_response(char)
