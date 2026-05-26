@@ -3,8 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
-import { AlertCircle, Layers } from 'lucide-react';
-import SectionHeader from '@/components/SectionHeader';
+import { AlertCircle, Layers, Plus } from 'lucide-react';
 import Button from '@/components/Button';
 import Input, { TextArea } from '@/components/Input';
 import { SkeletonListItem } from '@/components/Skeleton';
@@ -95,7 +94,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
   const handleGenerateRecap = async () => {
     if (!rawNotes.trim()) {
-      toast.error('Add some raw notes before generating a recap');
+      toast.error('Add some session notes before generating a summary');
       return;
     }
     setRecapLoading(true);
@@ -103,7 +102,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       const result = await sessions.generateRecap(sessionId);
       setAiRecap(result.ai_recap);
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] });
-      toast.success('Recap generated!');
+      toast.success('Summary generated!');
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -131,7 +130,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       <div className="grid grid-cols-2 gap-4">
         <Input
           label={`${terms.participants} (comma-separated)`}
-          placeholder="Aria, Brom, Cael"
+          placeholder="Aria, Brom, Cael..."
           value={participants}
           onChange={(e) => setParticipants(e.target.value)}
         />
@@ -139,6 +138,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
           label={terms.milestone}
           type="number"
           min="0"
+          placeholder="Story milestones reached"
           value={xpGained}
           onChange={(e) => setXpGained(e.target.value)}
         />
@@ -146,7 +146,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
       <TextArea
         label={terms.discoveries}
-        placeholder="Gold, magic items, key items found this session..."
+        placeholder="Items found, secrets uncovered, plot threads opened..."
         value={lootNotes}
         onChange={(e) => setLootNotes(e.target.value)}
         rows={3}
@@ -154,13 +154,13 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
       <TextArea
         label={terms.sessionNotes}
-        placeholder="Write your raw session notes here. These will be used to generate the AI recap."
+        placeholder="Write your session notes here — what happened, key moments, decisions made..."
         value={rawNotes}
         onChange={(e) => setRawNotes(e.target.value)}
         rows={8}
       />
 
-      {/* AI Recap section */}
+      {/* AI Summary section */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="text-txt-muted text-sm font-medium">{terms.aiSummary}</label>
@@ -268,7 +268,9 @@ export default function Sessions({ user }) {
       <div className="h-full flex flex-col items-center justify-center gap-3 text-txt-muted">
         <Layers size={48} className="opacity-20" />
         <p className="text-sm font-medium">No vault selected</p>
-        <p className="text-xs text-center max-w-xs">Select or create a vault to log sessions.</p>
+        <p className="text-xs text-center max-w-xs">
+          Select or create a vault to log {terms.sessions.toLowerCase()}.
+        </p>
         <button
           onClick={() => navigate('/vaults')}
           className="mt-1 text-xs bg-accent text-white px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors"
@@ -280,86 +282,109 @@ export default function Sessions({ user }) {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left panel — session list */}
-      <div className="w-80 flex-shrink-0 flex flex-col bg-surface border-r border-border-subtle">
-        <div className="px-4 pt-5 pb-3 border-b border-border-subtle space-y-3">
-          <SectionHeader title={`📜 ${terms.sessions}`} subtitle={`Campaign ${terms.sessions.toLowerCase()}`} />
-          <Input
-            placeholder="Search sessions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <Button variant="primary" className="w-full" onClick={handleNewSession}>
-            {`+ New ${terms.session}`}
-          </Button>
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Page header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle flex-shrink-0">
+        <div>
+          <h1 className="text-2xl font-bold text-txt">{terms.sessions}</h1>
+          <p className="text-sm text-txt-secondary mt-0.5">Story logs and world events.</p>
         </div>
-
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          {isLoading ? (
-            <div className="space-y-2 pt-1">
-              {Array.from({ length: 4 }).map((_, i) => <SkeletonListItem key={i} />)}
-            </div>
-          ) : isError ? (
-            <div className="flex flex-col items-center gap-2 py-6 text-center">
-              <AlertCircle size={20} className="text-red-400 opacity-70" />
-              <p className="text-txt-muted text-xs">Failed to load sessions.</p>
-              <button onClick={() => refetch()} className="text-xs text-accent hover:underline">
-                Retry
-              </button>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
-              <div className="text-4xl">📜</div>
-              <p className="text-txt-muted text-sm">
-                {search ? `No ${terms.sessions.toLowerCase()} match your search.` : `No ${terms.sessions.toLowerCase()} yet. Create your first one!`}
-              </p>
-            </div>
-          ) : (
-            filtered.map((s) => {
-              const isActive = !isNew && selectedId === s.id;
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => handleSelect(s.id)}
-                  className={`w-full text-left rounded-xl px-3 py-3 transition-all ${
-                    isActive
-                      ? 'bg-accent/10 border border-accent/30'
-                      : 'hover:bg-hover'
-                  }`}
-                >
-                  <p className="font-semibold text-txt text-sm truncate">{s.title}</p>
-                  <div className="flex gap-3 mt-0.5 text-xs text-txt-muted">
-                    <span>{s.session_date || 'No date'}</span>
-                    {participantCount(s.participants) > 0 && (
-                      <span>👥 {participantCount(s.participants)}</span>
-                    )}
-                  </div>
-                </button>
-              );
-            })
-          )}
-        </div>
+        {activeVaultId && (
+          <button
+            onClick={handleNewSession}
+            className="flex items-center gap-1.5 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent/90 transition"
+          >
+            <Plus size={15} />
+            New {terms.session}
+          </button>
+        )}
       </div>
 
-      {/* Right panel — session detail */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-base">
-        {selectedId || isNew ? (
-          <SessionDetail
-            key={isNew ? 'new' : selectedId}
-            sessionId={selectedId}
-            isNew={isNew}
-            vaultId={vaultId}
-            ownerId={user?.id}
-            onSaved={handleSaved}
-            onDeleted={handleDeleted}
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center space-y-3">
-            <div className="text-5xl">📜</div>
-            <p className="text-txt-muted">Select a session or create a new one.</p>
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left panel — session list */}
+        <div className="w-80 flex-shrink-0 flex flex-col bg-surface border-r border-border-subtle">
+          <div className="px-4 pt-4 pb-3 border-b border-border-subtle">
+            <input
+              placeholder={`Search ${terms.sessions.toLowerCase()}…`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none placeholder:text-txt-muted"
+            />
           </div>
-        )}
+
+          <div className="flex-1 overflow-y-auto p-3 space-y-1">
+            {isLoading ? (
+              <div className="space-y-2 pt-1">
+                {Array.from({ length: 4 }).map((_, i) => <SkeletonListItem key={i} />)}
+              </div>
+            ) : isError ? (
+              <div className="flex flex-col items-center gap-2 py-6 text-center">
+                <AlertCircle size={20} className="text-red-400 opacity-70" />
+                <p className="text-txt-muted text-xs">Failed to load sessions.</p>
+                <button onClick={() => refetch()} className="text-xs text-accent hover:underline">
+                  Retry
+                </button>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
+                <div className="text-4xl">📜</div>
+                <p className="text-txt-muted text-sm">
+                  {search
+                    ? `No ${terms.sessions.toLowerCase()} match your search.`
+                    : `No ${terms.sessions.toLowerCase()} yet. Create your first one!`}
+                </p>
+              </div>
+            ) : (
+              filtered.map((s) => {
+                const isActive = !isNew && selectedId === s.id;
+                const pCount = participantCount(s.participants);
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => handleSelect(s.id)}
+                    className={`w-full text-left rounded-xl px-3 py-3 transition-all ${
+                      isActive
+                        ? 'bg-accent/10 border border-accent/30'
+                        : 'hover:bg-hover'
+                    }`}
+                  >
+                    <p className="font-semibold text-txt text-sm truncate">{s.title}</p>
+                    <div className="flex gap-3 mt-0.5 text-xs text-txt-muted">
+                      <span>{s.session_date || 'No date'}</span>
+                      {pCount > 0 && (
+                        <span>👥 {pCount}</span>
+                      )}
+                      {s.xp_gained > 0 && (
+                        <span>⭐ {s.xp_gained}</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Right panel — session detail */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-base">
+          {selectedId || isNew ? (
+            <SessionDetail
+              key={isNew ? 'new' : selectedId}
+              sessionId={selectedId}
+              isNew={isNew}
+              vaultId={vaultId}
+              ownerId={user?.id}
+              onSaved={handleSaved}
+              onDeleted={handleDeleted}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center space-y-3">
+              <div className="text-5xl">📜</div>
+              <p className="text-txt-muted">Select a {terms.session.toLowerCase()} or create a new one.</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

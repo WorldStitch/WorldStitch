@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus, FileText } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import Card from '@/components/Card';
 import NoteList from './NoteList';
 import { SkeletonLine } from '@/components/Skeleton';
@@ -62,14 +62,8 @@ export default function FolderTree({
 }) {
   const terms = useVaultTerms();
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [showNewNoteInput, setShowNewNoteInput] = useState(false);
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [inlineNoteFolderId, setInlineNoteFolderId] = useState(null);
-
-  const handleNewNote = (title) => {
-    onCreateNote(title, activeFolder);
-    setShowNewNoteInput(false);
-  };
 
   const handleNewFolder = (name) => {
     onCreateFolder(name);
@@ -83,25 +77,6 @@ export default function FolderTree({
 
   return (
     <Card className="w-60 flex-shrink-0 flex flex-col overflow-hidden p-0">
-      {/* New Note button */}
-      <div className="p-2 border-b border-txt-muted/10">
-        {showNewNoteInput ? (
-          <InlineInput
-            placeholder="Note title..."
-            onConfirm={handleNewNote}
-            onCancel={() => setShowNewNoteInput(false)}
-          />
-        ) : (
-          <button
-            onClick={() => setShowNewNoteInput(true)}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition text-sm font-semibold"
-          >
-            <FileText size={14} />
-            New {terms.note}
-          </button>
-        )}
-      </div>
-
       {/* Search bar */}
       <div className="p-3 border-b border-txt-muted/10">
         <input

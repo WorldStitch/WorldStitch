@@ -238,7 +238,7 @@ export const notes = {
 export const folders = {
   list: (vault_id = "") => request("GET", `/notes/folders${vault_id ? `?vault_id=${encodeURIComponent(vault_id)}` : ""}`),
   create: (name, parent_id = null, vault_id = null) =>
-    request("POST", "/notes/folders/", { name, parent_id, vault_id }),
+    request("POST", "/notes/folders", { name, parent_id, vault_id }),
   update: (id, data) =>
     request("PUT", `/notes/folders/${encodeURIComponent(id)}`, data),
   delete: (id) =>
@@ -258,8 +258,8 @@ export const ai = {
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 export const dashboard = {
-  stats: () => request("GET", "/dashboard/stats"),
-  recent: () => request("GET", "/dashboard/recent"),
+  stats: (vaultId) => request("GET", `/dashboard/stats${vaultId ? `?vault_id=${encodeURIComponent(vaultId)}` : ''}`),
+  recent: (vaultId) => request("GET", `/dashboard/recent${vaultId ? `?vault_id=${encodeURIComponent(vaultId)}` : ''}`),
 };
 
 // ── Settings ─────────────────────────────────────────────────────────────────

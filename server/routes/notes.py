@@ -946,6 +946,7 @@ async def create_note_relationship(
 
 
 @router.post("/folders", response_model=FolderResponse)
+@router.post("/folders/", response_model=FolderResponse, include_in_schema=False)
 async def create_folder(
     req: CreateFolderRequest,
     ctx: AppContext = Depends(get_ctx),

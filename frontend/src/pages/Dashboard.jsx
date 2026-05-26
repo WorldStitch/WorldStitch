@@ -7,6 +7,7 @@ import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { SkeletonLine, SkeletonStatCard } from '@/components/Skeleton';
 import { dashboard } from '@/api';
+import { useVault } from '@/context/VaultContext';
 import { useVaultTerms } from '@/hooks/useVaultTerms';
 
 // Normalise the modified date field — backend may return either name
@@ -17,24 +18,25 @@ function getNoteDate(note) {
 export default function Dashboard({ user }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { activeVaultId } = useVault();
   const terms = useVaultTerms();
 
   // Invalidate recent notes on mount and on window focus
   useEffect(() => {
-    queryClient.invalidateQueries({ queryKey: ['dashboard-recent'] });
-    const onFocus = () => queryClient.invalidateQueries({ queryKey: ['dashboard-recent'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard-recent', activeVaultId] });
+    const onFocus = () => queryClient.invalidateQueries({ queryKey: ['dashboard-recent', activeVaultId] });
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [queryClient]);
+  }, [queryClient, activeVaultId]);
 
   const { data: stats, isLoading: statsLoading, isError: statsError } = useQuery({
-    queryKey: ['dashboard-stats'],
-    queryFn: dashboard.stats,
+    queryKey: ['dashboard-stats', activeVaultId],
+    queryFn: () => dashboard.stats(activeVaultId),
   });
 
   const { data: recent = [], isLoading: recentLoading, isError: recentError } = useQuery({
-    queryKey: ['dashboard-recent'],
-    queryFn: dashboard.recent,
+    queryKey: ['dashboard-recent', activeVaultId],
+    queryFn: () => dashboard.recent(activeVaultId),
     staleTime: 30000,
   });
 

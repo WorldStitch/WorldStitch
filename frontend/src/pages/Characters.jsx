@@ -10,31 +10,30 @@ import { SkeletonListItem } from '@/components/Skeleton';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STAT_NAMES = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
-const DEFAULT_STATS = { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 };
 const EMPTY_FORM = {
   name: '',
   char_type: 'npc',
   race: '',
   char_class: '',
-  level: 1,
-  stats: { ...DEFAULT_STATS },
+  attributes: [],
   backstory: '',
   ai_memory: '',
   note_ids: [],
   vault_id: '',
 };
 
-function statModifier(value) {
-  const mod = Math.floor((value - 10) / 2);
-  return mod >= 0 ? `+${mod}` : `${mod}`;
-}
-
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function CharCard({ char, isSelected, onClick }) {
   const terms = useVaultTerms();
+  const typeLabels = {
+    player: terms.charTypePc,
+    npc: terms.charTypeNpc,
+    antagonist: terms.charTypeAntagonist,
+    background: terms.charTypeBackground,
+  };
   const subtitle = [char.race, char.char_class].filter(Boolean).join(' · ');
+  const isAccent = char.char_type === 'player' || char.char_type === 'antagonist';
   return (
     <button
       onClick={onClick}
@@ -48,50 +47,18 @@ function CharCard({ char, isSelected, onClick }) {
         <span className="font-semibold text-txt truncate">{char.name}</span>
         <span
           className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
-            char.char_type === 'player'
+            isAccent
               ? 'bg-accent-soft text-accent'
               : 'bg-surface-raised text-txt-muted'
           }`}
         >
-          {char.char_type === 'player' ? terms.charTypePc : terms.charTypeNpc}
+          {typeLabels[char.char_type] ?? char.char_type}
         </span>
       </div>
-      {(subtitle || char.level > 1) && (
-        <div className="text-xs text-txt-muted mt-0.5 truncate">
-          {subtitle}
-          {char.level > 1 ? ` · Lv ${char.level}` : ''}
-        </div>
+      {subtitle && (
+        <div className="text-xs text-txt-muted mt-0.5 truncate">{subtitle}</div>
       )}
     </button>
-  );
-}
-
-function StatBlock({ stats, onChange }) {
-  return (
-    <div className="grid grid-cols-6 gap-2">
-      {STAT_NAMES.map((stat) => {
-        const val = Number(stats?.[stat] ?? 10);
-        return (
-          <div
-            key={stat}
-            className="flex flex-col items-center border border-border-subtle rounded-lg py-2 px-1 bg-surface"
-          >
-            <span className="text-[10px] font-bold text-txt-muted uppercase tracking-wider">
-              {stat}
-            </span>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={val}
-              onChange={(e) => onChange(stat, Number(e.target.value))}
-              className="w-full text-center text-base font-bold bg-transparent text-txt border-none outline-none mt-0.5"
-            />
-            <span className="text-xs text-txt-muted font-medium">{statModifier(val)}</span>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -179,12 +146,11 @@ export default function Characters() {
         char_type: selectedChar.char_type ?? 'npc',
         race: selectedChar.race ?? '',
         char_class: selectedChar.char_class ?? '',
-        level: selectedChar.level ?? 1,
-        stats: { ...DEFAULT_STATS, ...(selectedChar.stats ?? {}) },
+        attributes: selectedChar.attributes ?? [],
         backstory: selectedChar.backstory ?? '',
         ai_memory: selectedChar.ai_memory ?? '',
         note_ids: selectedChar.note_ids ?? [],
-         vault_id: selectedChar.vault_id ?? activeVaultId,
+        vault_id: selectedChar.vault_id ?? activeVaultId,
       });
       setDirty(false);
     }
@@ -233,15 +199,10 @@ export default function Characters() {
     setDirty(true);
   };
 
-  const setStat = (stat, val) => {
-    setForm((f) => ({ ...f, stats: { ...f.stats, [stat]: val } }));
-    setDirty(true);
-  };
-
-  const handleNewChar = () => {
+  const handleNew = () => {
     setIsCreating(true);
     setSelectedId(null);
-    setForm({ ...EMPTY_FORM, stats: { ...DEFAULT_STATS }, vault_id: activeVaultId });
+    setForm({ ...EMPTY_FORM, vault_id: activeVaultId });
     setDirty(false);
   };
 
@@ -266,6 +227,18 @@ export default function Characters() {
     setField('note_ids', form.note_ids.filter((id) => id !== noteId));
   };
 
+  const addAttribute = () =>
+    setField('attributes', [...(form.attributes || []), { key: '', value: '' }]);
+
+  const updateAttribute = (i, field, val) => {
+    const attrs = [...(form.attributes || [])];
+    attrs[i] = { ...attrs[i], [field]: val };
+    setField('attributes', attrs);
+  };
+
+  const removeAttribute = (i) =>
+    setField('attributes', (form.attributes || []).filter((_, idx) => idx !== i));
+
   const filtered = allChars.filter(
     (c) => !search || c.name.toLowerCase().includes(search.toLowerCase())
   );
@@ -287,7 +260,7 @@ export default function Characters() {
               {terms.characters}
             </h1>
             <button
-              onClick={handleNewChar}
+              onClick={handleNew}
               className="flex items-center gap-1 text-sm bg-accent text-white rounded-lg px-3 py-1.5 hover:bg-accent/90 transition-colors"
             >
               <Plus size={14} />
@@ -313,15 +286,15 @@ export default function Characters() {
           {/* Filter tabs */}
           <div className="flex gap-1">
             {[
-              { key: 'all', label: 'All' },
-              { key: 'player', label: terms.charTypePc },
-              { key: 'npc', label: terms.charTypeNpc },
-            ].map(({ key, label }) => (
+              { value: 'all', label: 'All' },
+              { value: 'player', label: terms.charTypePc },
+              { value: 'npc', label: terms.charTypeNpc },
+            ].map(({ value, label }) => (
               <button
-                key={key}
-                onClick={() => setFilter(key)}
+                key={value}
+                onClick={() => setFilter(value)}
                 className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors ${
-                  filter === key
+                  filter === value
                     ? 'bg-accent text-white'
                     : 'bg-base text-txt-muted hover:text-txt'
                 }`}
@@ -411,7 +384,7 @@ export default function Characters() {
                 />
               </div>
 
-              <div>
+              <div className="col-span-2">
                 <FieldLabel>Type</FieldLabel>
                 <select
                   value={form.char_type}
@@ -424,23 +397,11 @@ export default function Characters() {
               </div>
 
               <div>
-                <FieldLabel>Level</FieldLabel>
-                <input
-                  type="number"
-                  min={1}
-                  max={30}
-                  value={form.level}
-                  onChange={(e) => setField('level', Number(e.target.value))}
-                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
-                />
-              </div>
-
-              <div>
                 <FieldLabel>{terms.charSpecies}</FieldLabel>
                 <TextInput
                   value={form.race}
                   onChange={(v) => setField('race', v)}
-                  placeholder="e.g. Human, Elf, Dwarf…"
+                  placeholder="e.g. Human, Elf, Android…"
                 />
               </div>
 
@@ -449,15 +410,52 @@ export default function Characters() {
                 <TextInput
                   value={form.char_class}
                   onChange={(v) => setField('char_class', v)}
-                  placeholder="e.g. Fighter, Wizard…"
+                  placeholder="e.g. Warrior, Trickster, Scholar…"
                 />
               </div>
             </div>
 
-            {/* ── D&D Stat block ─────────────────────────────────── */}
+            {/* ── Custom attributes ──────────────────────────────── */}
             <div>
-              <FieldLabel>Ability Scores</FieldLabel>
-              <StatBlock stats={form.stats} onChange={setStat} />
+              <div className="flex items-center justify-between mb-2">
+                <FieldLabel>Attributes</FieldLabel>
+                <button
+                  onClick={addAttribute}
+                  className="text-xs text-accent hover:opacity-80 transition flex items-center gap-1"
+                >
+                  <Plus size={12} /> Add
+                </button>
+              </div>
+              {(form.attributes || []).length === 0 ? (
+                <p className="text-xs text-txt-muted">
+                  No attributes yet — add things like Age, Alignment, Occupation, Power Level…
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {(form.attributes || []).map((attr, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        value={attr.key}
+                        onChange={(e) => updateAttribute(i, 'key', e.target.value)}
+                        placeholder="Label"
+                        className="w-1/3 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-txt text-sm focus:outline-none focus:border-accent"
+                      />
+                      <input
+                        value={attr.value}
+                        onChange={(e) => updateAttribute(i, 'value', e.target.value)}
+                        placeholder="Value"
+                        className="flex-1 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-txt text-sm focus:outline-none focus:border-accent"
+                      />
+                      <button
+                        onClick={() => removeAttribute(i)}
+                        className="text-txt-muted hover:text-danger transition flex-shrink-0"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* ── Backstory ──────────────────────────────────────── */}
