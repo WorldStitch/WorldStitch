@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Users, Plus, Search, Trash2, Save, X, AlertCircle, Layers } from 'lucide-react';
 import { characters as charsApi, notes as notesApi } from '@/api';
 import { useVault } from '@/context/VaultContext';
+import { useVaultTerms } from '@/hooks/useVaultTerms';
 import { SkeletonListItem } from '@/components/Skeleton';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ function statModifier(value) {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function CharCard({ char, isSelected, onClick }) {
+  const terms = useVaultTerms();
   const subtitle = [char.race, char.char_class].filter(Boolean).join(' · ');
   return (
     <button
@@ -51,7 +53,7 @@ function CharCard({ char, isSelected, onClick }) {
               : 'bg-surface-raised text-txt-muted'
           }`}
         >
-          {char.char_type === 'player' ? 'PC' : 'NPC'}
+          {char.char_type === 'player' ? terms.charTypePc : terms.charTypeNpc}
         </span>
       </div>
       {(subtitle || char.level > 1) && (
@@ -117,6 +119,7 @@ function TextInput({ value, onChange, placeholder, className = '' }) {
 export default function Characters() {
   const qc = useQueryClient();
   const { activeVaultId } = useVault();
+  const terms = useVaultTerms();
   const navigate = useNavigate();
 
   if (!activeVaultId) {
@@ -281,7 +284,7 @@ export default function Characters() {
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-lg font-bold text-txt flex items-center gap-2">
               <Users size={20} />
-              Characters
+              {terms.characters}
             </h1>
             <button
               onClick={handleNewChar}
@@ -311,8 +314,8 @@ export default function Characters() {
           <div className="flex gap-1">
             {[
               { key: 'all', label: 'All' },
-              { key: 'player', label: 'Players' },
-              { key: 'npc', label: 'NPCs' },
+              { key: 'player', label: terms.charTypePc },
+              { key: 'npc', label: terms.charTypeNpc },
             ].map(({ key, label }) => (
               <button
                 key={key}
@@ -373,7 +376,7 @@ export default function Characters() {
             {/* ── Title + action buttons ─────────────────────────── */}
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-xl font-bold text-txt truncate">
-                {isCreating ? 'New Character' : (form.name || 'Unnamed')}
+                {isCreating ? `New ${terms.character}` : (form.name || 'Unnamed')}
               </h2>
               <div className="flex gap-2 flex-shrink-0">
                 <button
@@ -415,8 +418,8 @@ export default function Characters() {
                   onChange={(e) => setField('char_type', e.target.value)}
                   className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
                 >
-                  <option value="player">Player Character</option>
-                  <option value="npc">NPC</option>
+                  <option value="player">{terms.charTypePc}</option>
+                  <option value="npc">{terms.charTypeNpc}</option>
                 </select>
               </div>
 
@@ -433,7 +436,7 @@ export default function Characters() {
               </div>
 
               <div>
-                <FieldLabel>Race</FieldLabel>
+                <FieldLabel>{terms.charSpecies}</FieldLabel>
                 <TextInput
                   value={form.race}
                   onChange={(v) => setField('race', v)}
@@ -442,7 +445,7 @@ export default function Characters() {
               </div>
 
               <div>
-                <FieldLabel>Class</FieldLabel>
+                <FieldLabel>{terms.charRole}</FieldLabel>
                 <TextInput
                   value={form.char_class}
                   onChange={(v) => setField('char_class', v)}

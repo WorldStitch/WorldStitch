@@ -40,6 +40,10 @@ class Vault(CoreModel):
         default_factory=dict,
         description="Per-vault config: AI model overrides, export settings, UI prefs, etc.",
     )
+    vault_type: str = Field(
+        default="worldbuilding",
+        description="Media type — controls UI terminology (worldbuilding, tabletop, video_game, novel, film, custom).",
+    )
     record_version: int = Field(
         default=1,
         description="Incremented on every save — used for optimistic locking and sync.",

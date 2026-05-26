@@ -10,11 +10,13 @@ import Input, { TextArea } from '@/components/Input';
 import { SkeletonListItem } from '@/components/Skeleton';
 import { sessions } from '@/api';
 import { useVault } from '@/context/VaultContext';
+import { useVaultTerms } from '@/hooks/useVaultTerms';
 
 // ─── SessionDetail ────────────────────────────────────────────────────────────
 
 function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted }) {
   const queryClient = useQueryClient();
+  const terms = useVaultTerms();
 
   const [title, setTitle] = useState('');
   const [sessionDate, setSessionDate] = useState('');
@@ -128,13 +130,13 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
       <div className="grid grid-cols-2 gap-4">
         <Input
-          label="Participants (comma-separated)"
+          label={`${terms.participants} (comma-separated)`}
           placeholder="Aria, Brom, Cael"
           value={participants}
           onChange={(e) => setParticipants(e.target.value)}
         />
         <Input
-          label="XP Gained"
+          label={terms.milestone}
           type="number"
           min="0"
           value={xpGained}
@@ -143,7 +145,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       </div>
 
       <TextArea
-        label="Loot Notes"
+        label={terms.discoveries}
         placeholder="Gold, magic items, key items found this session..."
         value={lootNotes}
         onChange={(e) => setLootNotes(e.target.value)}
@@ -151,7 +153,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       />
 
       <TextArea
-        label="Raw Notes (DM's session notes)"
+        label={terms.sessionNotes}
         placeholder="Write your raw session notes here. These will be used to generate the AI recap."
         value={rawNotes}
         onChange={(e) => setRawNotes(e.target.value)}
@@ -161,14 +163,14 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       {/* AI Recap section */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-txt-muted text-sm font-medium">AI Recap</label>
+          <label className="text-txt-muted text-sm font-medium">{terms.aiSummary}</label>
           <Button
             variant="secondary"
             size="sm"
             onClick={handleGenerateRecap}
             disabled={isNew || recapLoading || !rawNotes.trim()}
           >
-            {recapLoading ? 'Generating...' : '✨ Generate Recap'}
+            {recapLoading ? 'Generating...' : `✨ Generate ${terms.aiSummary}`}
           </Button>
         </div>
         {aiRecap ? (
@@ -178,8 +180,8 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
         ) : (
           <div className="bg-elevated rounded-xl px-4 py-4 text-txt-muted text-sm text-center">
             {isNew
-              ? 'Save the session first, then generate a recap from raw notes.'
-              : 'No recap yet. Add raw notes and click Generate Recap.'}
+              ? `Save the ${terms.session} first, then generate a ${terms.aiSummary} from ${terms.sessionNotes}.`
+              : `No ${terms.aiSummary} yet. Add ${terms.sessionNotes} and click Generate ${terms.aiSummary}.`}
           </div>
         )}
       </div>
@@ -191,7 +193,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
           onClick={handleSave}
           disabled={saveMutation.isPending}
         >
-          {saveMutation.isPending ? 'Saving...' : isNew ? 'Create Session' : 'Save'}
+          {saveMutation.isPending ? 'Saving...' : isNew ? `Create ${terms.session}` : 'Save'}
         </Button>
         {!isNew && (
           <Button
@@ -216,6 +218,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
 export default function Sessions({ user }) {
   const { activeVaultId } = useVault();
+  const terms = useVaultTerms();
   const navigate = useNavigate();
   const vaultId = activeVaultId || '';
   const [selectedId, setSelectedId] = useState(null);
@@ -281,14 +284,14 @@ export default function Sessions({ user }) {
       {/* Left panel — session list */}
       <div className="w-80 flex-shrink-0 flex flex-col bg-surface border-r border-border-subtle">
         <div className="px-4 pt-5 pb-3 border-b border-border-subtle space-y-3">
-          <SectionHeader title="📜 Sessions" subtitle="Campaign session logs" />
+          <SectionHeader title={`📜 ${terms.sessions}`} subtitle={`Campaign ${terms.sessions.toLowerCase()}`} />
           <Input
             placeholder="Search sessions..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           <Button variant="primary" className="w-full" onClick={handleNewSession}>
-            + New Session
+            {`+ New ${terms.session}`}
           </Button>
         </div>
 
@@ -309,7 +312,7 @@ export default function Sessions({ user }) {
             <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
               <div className="text-4xl">📜</div>
               <p className="text-txt-muted text-sm">
-                {search ? 'No sessions match your search.' : 'No sessions yet. Create your first one!'}
+                {search ? `No ${terms.sessions.toLowerCase()} match your search.` : `No ${terms.sessions.toLowerCase()} yet. Create your first one!`}
               </p>
             </div>
           ) : (

@@ -7,10 +7,20 @@ import Input, { TextArea } from '@/components/Input';
 import { vaults as vaultsApi, invites as invitesApi } from '@/api';
 import { useVault } from '@/context/VaultContext';
 
+const VAULT_TYPE_OPTIONS = [
+  { value: 'worldbuilding', label: 'World Building' },
+  { value: 'tabletop', label: 'Tabletop RPG' },
+  { value: 'video_game', label: 'Video Game' },
+  { value: 'novel', label: 'Novel / Story' },
+  { value: 'film', label: 'Film / TV' },
+  { value: 'custom', label: 'Custom' },
+];
+
 function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
   const [tab, setTab] = useState('overview');
   const [editName, setEditName] = useState(vault.name);
   const [editDesc, setEditDesc] = useState(vault.description || '');
+  const [editVaultType, setEditVaultType] = useState(vault.vault_type || 'worldbuilding');
   const [generatedCode, setGeneratedCode] = useState(null);
   const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -41,6 +51,7 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
     const trimmedName = editName.trim();
     if (trimmedName && trimmedName !== vault.name) payload.name = trimmedName;
     if (editDesc !== (vault.description || '')) payload.description = editDesc;
+    if (editVaultType !== (vault.vault_type || 'worldbuilding')) payload.vault_type = editVaultType;
     if (!Object.keys(payload).length) { toast('No changes to save'); return; }
     updateMutation.mutate(payload);
   };
@@ -107,6 +118,23 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
               onChange={(e) => setEditDesc(e.target.value)}
               placeholder="Describe this vault…"
             />
+            <div>
+              <label className="block text-xs font-semibold text-txt-muted uppercase tracking-wider mb-1.5">
+                Vault Type
+              </label>
+              <select
+                value={editVaultType}
+                onChange={(e) => setEditVaultType(e.target.value)}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
+              >
+                {VAULT_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-txt-muted mt-1">
+                Controls the terminology used throughout the UI for this vault.
+              </p>
+            </div>
             <div className="pt-1">
               <Button onClick={handleSave} disabled={updateMutation.isPending}>
                 Save
@@ -224,6 +252,7 @@ export default function Vaults({ user }) {
   const [showNewVault, setShowNewVault] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [newVaultType, setNewVaultType] = useState('worldbuilding');
 
   const isPlatformAdmin = ['owner', 'admin'].includes(user?.system_role);
 
@@ -240,7 +269,7 @@ export default function Vaults({ user }) {
 
   const createMutation = useMutation({
     mutationFn: () =>
-      vaultsApi.create({ name: newName.trim(), description: newDesc.trim() || undefined }),
+      vaultsApi.create({ name: newName.trim(), description: newDesc.trim() || undefined, vault_type: newVaultType }),
     onSuccess: (vault) => {
       qc.invalidateQueries({ queryKey: ['vaults'] });
       qc.invalidateQueries({ queryKey: ['vaults-page'] });
@@ -264,6 +293,7 @@ export default function Vaults({ user }) {
     setShowNewVault(false);
     setNewName('');
     setNewDesc('');
+    setNewVaultType('worldbuilding');
   };
 
   return (
@@ -389,6 +419,23 @@ export default function Vaults({ user }) {
                 onChange={(e) => setNewDesc(e.target.value)}
                 placeholder="Describe your campaign world…"
               />
+              <div>
+                <label className="block text-xs font-semibold text-txt-muted uppercase tracking-wider mb-1.5">
+                  Vault Type
+                </label>
+                <select
+                  value={newVaultType}
+                  onChange={(e) => setNewVaultType(e.target.value)}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
+                >
+                  {VAULT_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-txt-muted mt-1">
+                  Controls the terminology used throughout the UI.
+                </p>
+              </div>
             </div>
             <div className="flex justify-end gap-3 px-6 pb-6">
               <Button variant="secondary" onClick={closeNewVault}>Cancel</Button>
