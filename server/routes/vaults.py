@@ -24,6 +24,7 @@ class VaultResponse(BaseModel):
     permissions: Dict[str, str] = {}
     is_active: bool
     settings: Dict[str, str] = {}
+    vault_type: str = "worldbuilding"
     record_version: int = 1
     created_at: Optional[datetime] = None
 
@@ -31,12 +32,14 @@ class VaultResponse(BaseModel):
 class CreateVaultRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=64)
     description: Optional[str] = None
+    vault_type: Optional[str] = None
 
 
 class UpdateVaultRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=64)
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    vault_type: Optional[str] = None
     shared_group_id: Optional[str] = None
     backup_cron: Optional[str] = None
 
@@ -74,6 +77,7 @@ async def create_vault(
         name=body.name,
         owner_id=user.id,
         description=body.description,
+        vault_type=body.vault_type,
     )
     return _to_response(vault)
 
@@ -94,6 +98,8 @@ async def update_vault(
         vault.description = body.description
     if body.is_active is not None:
         vault.is_active = body.is_active
+    if body.vault_type is not None:
+        vault.vault_type = body.vault_type
     if body.shared_group_id:
         group = ctx.groups.get_group(body.shared_group_id)
         if not group or not getattr(group, "is_active", True):
