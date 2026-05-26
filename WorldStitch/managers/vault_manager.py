@@ -24,6 +24,7 @@ class VaultManager:
         settings: Optional[Dict[str, str]] = None,
         permissions: Optional[Dict[str, str]] = None,
         vault_id: Optional[str] = None,
+        vault_type: Optional[str] = None,
     ) -> Vault:
         """
         Create and store a new vault/campaign.
@@ -40,6 +41,7 @@ class VaultManager:
             created_at=datetime.utcnow(),
             schema_version=1,
             record_version=1,
+            vault_type=vault_type or "worldbuilding",
         )
         self.storage.save_vault(vault)
         audit("create", "vault", vault.id, user_id=getattr(vault, "owner_id", "system"))
