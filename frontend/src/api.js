@@ -258,8 +258,8 @@ export const ai = {
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 export const dashboard = {
-  stats: () => request("GET", "/dashboard/stats"),
-  recent: () => request("GET", "/dashboard/recent"),
+  stats: (vaultId) => request("GET", `/dashboard/stats${vaultId ? `?vault_id=${encodeURIComponent(vaultId)}` : ''}`),
+  recent: (vaultId) => request("GET", `/dashboard/recent${vaultId ? `?vault_id=${encodeURIComponent(vaultId)}` : ''}`),
 };
 
 // ── Settings ─────────────────────────────────────────────────────────────────
