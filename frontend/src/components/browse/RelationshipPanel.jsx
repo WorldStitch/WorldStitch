@@ -1,5 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Network } from "lucide-react";
 import { relationships as relApi } from "@/api";
 import { SkeletonLine } from "@/components/Skeleton";
 import RelationshipForm from "./RelationshipForm";
@@ -16,22 +18,26 @@ function WeightDot({ weight }) {
 	);
 }
 
-function RelRow({ rel, entityId, onEdit, onDelete }) {
+function RelRow({ rel, entityId, allNotes, onNavigate, onEdit, onDelete }) {
 	const isSource = rel.source_id === entityId;
 	const displayLabel = rel.label || rel.relationship_type;
 	const otherId = isSource ? rel.target_id : rel.source_id;
+	const otherNote = allNotes.find(n => n.id === otherId);
+	const otherTitle = otherNote?.title || otherId;
 
 	return (
 		<div className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-hover transition group">
 			<WeightDot weight={rel.weight} />
 			<div className="flex-1 min-w-0">
-				<span className="text-[10px] text-accent font-medium">
-					{displayLabel}
-				</span>
+				<span className="text-[10px] text-accent font-medium">{displayLabel}</span>
 				<span className="text-[10px] text-txt-muted mx-1">→</span>
-				<span className="text-xs text-txt truncate font-mono text-[10px]">
-					{otherId}
-				</span>
+				<button
+					onClick={() => onNavigate?.(otherId)}
+					className="text-xs text-txt hover:text-accent hover:underline truncate transition"
+					title={otherTitle}
+				>
+					{otherTitle}
+				</button>
 			</div>
 			<div className="hidden group-hover:flex items-center gap-1 flex-shrink-0">
 				<button
@@ -55,7 +61,8 @@ function RelRow({ rel, entityId, onEdit, onDelete }) {
 	);
 }
 
-export default function RelationshipPanel({ entityId, vaultId }) {
+export default function RelationshipPanel({ entityId, vaultId, allNotes = [], onNavigate }) {
+	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [showForm, setShowForm] = useState(false);
 	const [editing, setEditing] = useState(null);
@@ -116,16 +123,25 @@ export default function RelationshipPanel({ entityId, vaultId }) {
 				<p className="text-xs font-bold text-txt-muted uppercase tracking-wider">
 					Relationships
 				</p>
-				{!showForm && !editing && (
+				<div className="flex items-center gap-1">
 					<button
-						type="button"
-						onClick={() => setShowForm(true)}
-						className="text-accent text-xs font-bold px-1.5 py-0.5 rounded hover:bg-accent/10 transition"
-						title="Add relationship"
+						onClick={() => navigate(`/graph?note=${entityId}`)}
+						className="text-txt-muted hover:text-accent transition p-1 rounded"
+						title="View in Graph"
 					>
-						+
+						<Network size={13} />
 					</button>
-				)}
+					{!showForm && !editing && (
+						<button
+							type="button"
+							onClick={() => setShowForm(true)}
+							className="text-accent text-xs font-bold px-1.5 py-0.5 rounded hover:bg-accent/10 transition"
+							title="Add relationship"
+						>
+							+
+						</button>
+					)}
+				</div>
 			</div>
 
 			{/* Inline add form */}
@@ -193,6 +209,8 @@ export default function RelationshipPanel({ entityId, vaultId }) {
 											key={rel.id}
 											rel={rel}
 											entityId={entityId}
+											allNotes={allNotes}
+											onNavigate={onNavigate}
 											onEdit={handleEdit}
 											onDelete={handleDelete}
 										/>

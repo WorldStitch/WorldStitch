@@ -779,6 +779,11 @@ export default function Browse({ user }) {
                       <RelationshipPanel
                         entityId={selectedNote.id}
                         vaultId={activeVaultId}
+                        allNotes={allNotes}
+                        onNavigate={(noteId) => {
+                          const note = allNotes.find(n => n.id === noteId);
+                          if (note) handleSelectNote(note);
+                        }}
                       />
                     </div>
 
