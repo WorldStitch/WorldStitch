@@ -1,4 +1,4 @@
-﻿"""
+"""
 AI endpoints.
 
 GET  /ai/status          — readiness check (no auth required)
@@ -104,6 +104,33 @@ def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> st
         content = msg.get("content", "")
         lines.append(f"{role}: {content}")
     return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
+
+
+def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) -> str:
+    """Fetch recent notes from vault and prepend as context block."""
+    if not vault_id:
+        return prompt
+    try:
+        # Try semantic search first if index is ready
+        if ctx.has_ai() and getattr(ctx.ai, "_index_ready", False):
+            snippets = ctx.ai.search_context(prompt, top_k=8)
+            if snippets:
+                context_block = "Relevant vault content:\n\n" + "\n\n---\n\n".join(snippets)
+                return context_block + "\n\n---\n\nUser question: " + prompt
+        # Fallback: inject most recent notes
+        if hasattr(ctx.storage, "list_notes"):
+            notes = ctx.storage.list_notes(vault_id, limit=15)
+            if notes:
+                lines = ["Vault context (recent notes):"]
+                for n in notes[:12]:
+                    title = getattr(n, "title", "") or ""
+                    content = (getattr(n, "content", "") or "")[:600]
+                    lines.append(f"## {title}\n{content}")
+                context_block = "\n\n".join(lines)
+                return context_block + "\n\n---\n\nUser question: " + prompt
+    except Exception:
+        pass
+    return prompt
 
 
 def _apply_preferred_model(ctx: AppContext) -> None:
@@ -222,7 +249,7 @@ async def ask(
     try:
         _apply_preferred_model(ctx)
         ai = _get_ai_for_user(str(user.id), ctx)
-        full_prompt = _build_prompt_with_history(req.prompt, req.history)
+        full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
         response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
@@ -263,7 +290,7 @@ async def stream_ask(
 
     async def generate():
         try:
-            full_prompt = _build_prompt_with_history(req.prompt, req.history)
+            full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
             response, _, _ = ai.ask(full_prompt)
 
             words = response.split(" ")
