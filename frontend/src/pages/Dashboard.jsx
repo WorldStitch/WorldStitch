@@ -139,6 +139,9 @@ export default function Dashboard({ user }) {
               <Button variant="secondary" className="w-full" onClick={() => navigate('/browse')}>
                 Browse Vault
               </Button>
+              <Button variant="secondary" className="w-full" onClick={() => navigate('/browse?view=graph')}>
+                Relationship Graph →
+              </Button>
               <Button variant="success" className="w-full" onClick={() => navigate('/chat')}>
                 Ask AI
               </Button>

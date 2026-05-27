@@ -18,10 +18,18 @@ export default function RelationshipForm({
 	existing,
 	onSave,
 	onCancel,
+	allNotes,
 }) {
 	const isEdit = !!existing;
 
 	const [targetId, setTargetId] = useState(existing?.target_id ?? "");
+	const [targetInput, setTargetInput] = useState(() => {
+		if (existing?.target_id && allNotes) {
+			const found = allNotes.find((n) => n.id === existing.target_id);
+			return found ? found.title : existing.target_id;
+		}
+		return "";
+	});
 	const [relType, setRelType] = useState(existing?.relationship_type ?? "");
 	const [direction, setDirection] = useState(
 		existing?.direction ?? "bidirectional",
@@ -109,12 +117,43 @@ export default function RelationshipForm({
 					<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
 						Target entity
 					</p>
-					<input
-						value={targetId}
-						onChange={(e) => setTargetId(e.target.value)}
-						placeholder="Entity ID or name…"
-						className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-					/>
+					{allNotes && allNotes.length > 0 ? (
+						<>
+							<input
+								list="relationship-target-notes"
+								value={targetInput}
+								onChange={(e) => {
+									const val = e.target.value;
+									setTargetInput(val);
+									const match = allNotes.find((n) => n.title === val);
+									if (match) {
+										setTargetId(match.id);
+									} else {
+										setTargetId(val);
+									}
+								}}
+								placeholder="Search note by title…"
+								className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+							/>
+							<datalist id="relationship-target-notes">
+								{allNotes
+									.filter((n) => n.id !== entityId)
+									.map((n) => (
+										<option key={n.id} value={n.title} />
+									))}
+							</datalist>
+							<p className="text-[10px] text-txt-muted mt-0.5 px-0.5">
+								Type or pick a note title — the UUID is stored automatically.
+							</p>
+						</>
+					) : (
+						<input
+							value={targetId}
+							onChange={(e) => setTargetId(e.target.value)}
+							placeholder="Entity ID or name…"
+							className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+						/>
+					)}
 				</div>
 			)}
 
@@ -182,53 +221,4 @@ export default function RelationshipForm({
 					value={label}
 					onChange={(e) => setLabel(e.target.value)}
 					placeholder="Custom display label…"
-					className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-				/>
-			</div>
-
-			{/* Weight slider */}
-			<div>
-				<div className="flex items-center justify-between mb-1">
-					<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold">
-						Weight
-					</p>
-					<span className="text-[10px] text-txt-muted tabular-nums">
-						{weight.toFixed(2)}
-					</span>
-				</div>
-				<input
-					type="range"
-					min="0"
-					max="1"
-					step="0.05"
-					value={weight}
-					onChange={(e) => setWeight(parseFloat(e.target.value))}
-					className="w-full accent-[var(--color-accent)]"
-				/>
-			</div>
-
-			{error && (
-				<p className="text-xs text-danger bg-danger/10 rounded-lg px-2 py-1.5">
-					{error}
-				</p>
-			)}
-
-			<div className="flex gap-2 pt-1">
-				<button
-					type="submit"
-					disabled={saving}
-					className="flex-1 bg-accent text-white text-xs font-semibold rounded-lg px-3 py-1.5 hover:bg-accent/80 transition disabled:opacity-50"
-				>
-					{saving ? "Saving…" : isEdit ? "Update" : "Add"}
-				</button>
-				<button
-					type="button"
-					onClick={onCancel}
-					className="flex-1 bg-elevated text-txt text-xs font-semibold rounded-lg px-3 py-1.5 hover:bg-hover transition"
-				>
-					Cancel
-				</button>
-			</div>
-		</form>
-	);
-}
+					className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:
