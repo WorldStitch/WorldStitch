@@ -221,4 +221,53 @@ export default function RelationshipForm({
 					value={label}
 					onChange={(e) => setLabel(e.target.value)}
 					placeholder="Custom display label…"
-					className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:
+					className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+				/>
+			</div>
+
+			{/* Weight slider */}
+			<div>
+				<div className="flex items-center justify-between mb-1">
+					<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold">
+						Weight
+					</p>
+					<span className="text-[10px] text-txt-muted tabular-nums">
+						{weight.toFixed(2)}
+					</span>
+				</div>
+				<input
+					type="range"
+					min="0"
+					max="1"
+					step="0.05"
+					value={weight}
+					onChange={(e) => setWeight(parseFloat(e.target.value))}
+					className="w-full accent-[var(--color-accent)]"
+				/>
+			</div>
+
+			{error && (
+				<p className="text-xs text-danger bg-danger/10 rounded-lg px-2 py-1.5">
+					{error}
+				</p>
+			)}
+
+			<div className="flex gap-2 pt-1">
+				<button
+					type="submit"
+					disabled={saving}
+					className="flex-1 bg-accent text-white text-xs font-semibold rounded-lg px-3 py-1.5 hover:bg-accent/80 transition disabled:opacity-50"
+				>
+					{saving ? "Saving…" : isEdit ? "Update" : "Add"}
+				</button>
+				<button
+					type="button"
+					onClick={onCancel}
+					className="flex-1 bg-elevated text-txt text-xs font-semibold rounded-lg px-3 py-1.5 hover:bg-hover transition"
+				>
+					Cancel
+				</button>
+			</div>
+		</form>
+	);
+}
