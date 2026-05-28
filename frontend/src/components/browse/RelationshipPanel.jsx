@@ -107,10 +107,10 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 		setShowForm(false);
 	};
 
-	// Group by category using the category field from the API response.
+	// Group by relationship_type (the field the API actually returns).
 	const byCategory = {};
 	for (const rel of data) {
-		const cat = rel.category || "Other";
+		const cat = rel.relationship_type || rel.category || "Other";
 		if (!byCategory[cat]) byCategory[cat] = [];
 		byCategory[cat].push(rel);
 	}
@@ -150,6 +150,7 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 					<RelationshipForm
 						entityId={entityId}
 						vaultId={vaultId}
+						allNotes={allNotes}
 						onSave={handleSave}
 						onCancel={() => setShowForm(false)}
 					/>
@@ -162,6 +163,7 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 					<RelationshipForm
 						entityId={entityId}
 						vaultId={vaultId}
+						allNotes={allNotes}
 						existing={editing}
 						onSave={handleSave}
 						onCancel={() => setEditing(null)}

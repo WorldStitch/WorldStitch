@@ -1,4 +1,4 @@
-﻿import clsx from 'clsx';
+import clsx from 'clsx';
 import {
   Home,
   Sparkles,
@@ -8,7 +8,6 @@ import {
   Globe,
   Map,
   Layers,
-  Network,
   Settings,
   LogOut,
   ShieldCheck,
@@ -21,16 +20,22 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
   const { onlineUsers, isConnected } = useRealtime();
   const canAccessAdmin = ADMIN_ROLES.includes(user?.system_role);
   const activeVaultName = vaults.find((v) => v.id === activeVaultId)?.name;
-  const navItems = [
+
+  const mainItems = [
     { icon: Home, label: 'Dashboard', path: '/' },
-    { icon: Layers, label: 'Vaults', path: '/vaults' },
     { icon: Sparkles, label: 'AI', path: '/chat' },
+  ];
+
+  const contentItems = [
     { icon: BookOpen, label: 'Browse', path: '/browse' },
-    { icon: Network, label: 'Graph', path: '/graph' },
     { icon: User, label: 'Characters', path: '/characters' },
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
-    { icon: Globe, label: 'Universe', path: '/universe' },
     { icon: Map, label: 'Maps', path: '/maps' },
+    { icon: Globe, label: 'Universe', path: '/universe' },
+  ];
+
+  const workspaceItems = [
+    { icon: Layers, label: 'Vaults', path: '/vaults' },
   ];
 
   return (
@@ -92,12 +97,8 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
 
       {/* Navigation Section */}
       <div className="px-4 py-4 flex-1 overflow-y-auto min-h-0">
-        <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mb-3">
-          Navigation
-        </p>
-
-        <nav className="flex flex-col gap-2">
-          {navItems.map((item) => {
+        <nav className="flex flex-col gap-1">
+          {mainItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentPath === item.path;
 
@@ -106,13 +107,61 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
                 key={item.path}
                 onClick={() => onNavigate(item.path)}
                 className={clsx(
-                  'flex items-center gap-3 rounded-xl px-4 py-3 transition-all text-left w-full',
+                  'flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all text-left w-full',
                   isActive
                     ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
                     : 'text-txt-dim hover:bg-hover'
                 )}
               >
-                <Icon size={20} />
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+
+          <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mt-4 mb-1 px-1">
+            Content
+          </p>
+          {contentItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPath === item.path;
+
+            return (
+              <button
+                key={item.path}
+                onClick={() => onNavigate(item.path)}
+                className={clsx(
+                  'flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all text-left w-full',
+                  isActive
+                    ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
+                    : 'text-txt-dim hover:bg-hover'
+                )}
+              >
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+
+          <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mt-4 mb-1 px-1">
+            Workspace
+          </p>
+          {workspaceItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPath === item.path;
+
+            return (
+              <button
+                key={item.path}
+                onClick={() => onNavigate(item.path)}
+                className={clsx(
+                  'flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all text-left w-full',
+                  isActive
+                    ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
+                    : 'text-txt-dim hover:bg-hover'
+                )}
+              >
+                <Icon size={18} />
                 <span>{item.label}</span>
               </button>
             );

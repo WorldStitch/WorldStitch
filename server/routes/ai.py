@@ -1,4 +1,4 @@
-﻿"""
+"""
 AI endpoints.
 
 GET  /ai/status          — readiness check (no auth required)
@@ -12,6 +12,7 @@ GET  /ai/usage           — current-month token usage for the logged-in user
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -21,13 +22,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from WorldStitch.ai.cost_tracker import AIUsageRecord, _DEFAULT_PRICING, _PRICING
-from WorldStitch.context.app_context import AppContext
-from WorldStitch.models.user import User
-
 from server.analytics import track as analytics_track
 from server.deps import get_ctx, get_current_user
 from server.limiter import limiter
+from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 
 
 def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) -> float:
@@ -38,6 +38,7 @@ def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) 
 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -104,6 +105,77 @@ def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> st
         content = msg.get("content", "")
         lines.append(f"{role}: {content}")
     return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
+
+
+def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) -> str:
+    """Fetch recent notes from vault and prepend as context block."""
+    if not vault_id:
+        return prompt
+    try:
+        # Try semantic search first if index is ready
+        if ctx.has_ai() and getattr(ctx.ai, "_index_ready", False):
+            note_refs = ctx.ai.search_context(prompt, top_k=8)
+            if note_refs:
+                vault_notes_by_id = {}
+                vault_notes_by_path = {}
+                if hasattr(ctx.storage, "list_all_notes"):
+                    for note in ctx.storage.list_all_notes(vault_id=vault_id):
+                        note_id = getattr(note, "id", "") or ""
+                        note_path = getattr(note, "path", "") or ""
+                        if note_id:
+                            vault_notes_by_id[note_id] = note
+                        if note_path:
+                            vault_notes_by_path[note_path] = note
+
+                snippets = []
+                for ref in note_refs:
+                    note = vault_notes_by_id.get(ref) or vault_notes_by_path.get(ref)
+                    if note is None and hasattr(ctx.storage, "get_note_by_id"):
+                        candidate = ctx.storage.get_note_by_id(ref)
+                        if candidate is not None and getattr(candidate, "vault_id", "") == vault_id:
+                            note = candidate
+                    if note is None:
+                        continue
+                    title = getattr(note, "title", "") or getattr(note, "path", "") or getattr(note, "id", "") or ""
+                    content = (getattr(note, "content", "") or "")[:600]
+                    if title or content:
+                        snippets.append(f"## {title}\n{content}")
+
+                if snippets:
+                    context_block = "Relevant vault content:\n\n" + "\n\n---\n\n".join(snippets)
+                    return context_block + "\n\n---\n\nUser question: " + prompt
+        # Fallback: inject most recent notes
+        notes = []
+        if hasattr(ctx.storage, "list_all_notes"):
+            notes = ctx.storage.list_all_notes(vault_id=vault_id)[:15]
+        elif hasattr(ctx.storage, "list_notes"):
+            note_paths = ctx.storage.list_notes(limit=15)
+            if note_paths and hasattr(ctx.storage, "read_note"):
+                for note_path in note_paths[:15]:
+                    try:
+                        note = ctx.storage.read_note(note_path)
+                    except Exception:
+                        continue
+                    if note is not None:
+                        notes.append(note)
+        if notes:
+            lines = ["Vault context (recent notes):"]
+            for n in notes[:12]:
+                if isinstance(n, dict):
+                    title = n.get("title", "") or n.get("path", "") or n.get("id", "") or ""
+                    content = (n.get("content", "") or "")[:600]
+                else:
+                    title = getattr(n, "title", "") or getattr(n, "path", "") or getattr(n, "id", "") or ""
+                    content = (getattr(n, "content", "") or "")[:600]
+                if not title and not content:
+                    continue
+                lines.append(f"## {title}\n{content}")
+            if len(lines) > 1:
+                context_block = "\n\n".join(lines)
+                return context_block + "\n\n---\n\nUser question: " + prompt
+    except Exception:
+        logger.exception("Failed to build vault context")
+    return prompt
 
 
 def _apply_preferred_model(ctx: AppContext) -> None:
@@ -222,7 +294,7 @@ async def ask(
     try:
         _apply_preferred_model(ctx)
         ai = _get_ai_for_user(str(user.id), ctx)
-        full_prompt = _build_prompt_with_history(req.prompt, req.history)
+        full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
         response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
@@ -263,7 +335,7 @@ async def stream_ask(
 
     async def generate():
         try:
-            full_prompt = _build_prompt_with_history(req.prompt, req.history)
+            full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
             response, _, _ = ai.ask(full_prompt)
 
             words = response.split(" ")
@@ -272,8 +344,9 @@ async def stream_ask(
                 yield f"data: {json.dumps({'token': token})}\n\n"
 
             yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception:
+            logger.exception("Streaming AI ask failed")
+            yield f"data: {json.dumps({'error': 'Request failed'})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

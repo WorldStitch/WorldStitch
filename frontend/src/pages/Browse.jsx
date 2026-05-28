@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ChevronRight, ChevronLeft, FilePlus, FolderPlus, Upload, Download } from 'lucide-react';
+import { ChevronRight, ChevronLeft, FilePlus, FolderPlus, Upload, Download, Network } from 'lucide-react';
 import Card from '@/components/Card';
 import FolderTree from '@/components/browse/FolderTree';
 import NoteEditor from '@/components/browse/NoteEditor';
@@ -11,6 +11,7 @@ import MetaPanel from '@/components/browse/MetaPanel';
 import PermissionsPanel from '@/components/browse/PermissionsPanel';
 import BacklinksPanel from '@/components/browse/BacklinksPanel';
 import RelationshipPanel from '@/components/browse/RelationshipPanel';
+import Graph from '@/pages/Graph';
 import { notes, folders, ai, groups, users, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { useVault } from '@/context/VaultContext';
 import { useRealtime } from '@/context/RealtimeContext';
@@ -20,10 +21,14 @@ import { useRealtime } from '@/context/RealtimeContext';
 // ════════════════════════════════════════════════════════════════════════════
 
 export default function Browse({ user }) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { activeVaultId } = useVault();
   const { editing, lastEvent, startEditing, updateCursor, stopEditing } = useRealtime();
+
+  // ── View mode: 'notes' | 'graph' ─────────────────────────────────────────
+  const notesView = searchParams.get('view') !== 'graph' ? 'notes' : 'graph';
 
   // ── Selection & navigation ───────────────────────────────────────────────
   const [selectedNoteId, setSelectedNoteId] = useState(null);
@@ -560,35 +565,59 @@ export default function Browse({ user }) {
         {activeVaultId && (
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowNewNoteToolbar(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent/90 transition"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                if (notesView === 'graph') {
+                  next.delete('view');
+                } else {
+                  next.set('view', 'graph');
+                }
+                setSearchParams(next);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition border ${
+                notesView === 'graph'
+                  ? 'bg-accent text-white border-accent hover:bg-accent/90'
+                  : 'bg-elevated text-txt border-border-subtle hover:bg-hover'
+              }`}
+              title="Toggle graph view"
             >
-              <FilePlus size={15} />
-              New Note
+              <Network size={15} />
+              Graph
             </button>
-            <button
-              onClick={() => setShowNewFolderToolbar(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
-            >
-              <FolderPlus size={15} />
-              New Folder
-            </button>
-            <button
-              onClick={handleImport}
-              className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
-              title="Import markdown file"
-            >
-              <Upload size={15} />
-              Import
-            </button>
-            <button
-              onClick={handleExportVault}
-              className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
-              title="Export vault as ZIP"
-            >
-              <Download size={15} />
-              Export
-            </button>
+            {notesView !== 'graph' && (
+              <>
+                <button
+                  onClick={() => setShowNewNoteToolbar(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent/90 transition"
+                >
+                  <FilePlus size={15} />
+                  New Note
+                </button>
+                <button
+                  onClick={() => setShowNewFolderToolbar(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
+                >
+                  <FolderPlus size={15} />
+                  New Folder
+                </button>
+                <button
+                  onClick={handleImport}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
+                  title="Import markdown file"
+                >
+                  <Upload size={15} />
+                  Import
+                </button>
+                <button
+                  onClick={handleExportVault}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-elevated text-txt rounded-lg text-sm font-medium hover:bg-hover transition border border-border-subtle"
+                  title="Export vault as ZIP"
+                >
+                  <Download size={15} />
+                  Export
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -640,8 +669,15 @@ export default function Browse({ user }) {
         </Card>
       )}
 
+      {/* ── Graph view ────────────────────────────────────────────────── */}
+      {activeVaultId && notesView === 'graph' && (
+        <div className="flex-1 overflow-hidden min-h-0 rounded-xl border border-border-subtle">
+          <Graph />
+        </div>
+      )}
+
       {/* ── Main layout (3-panel) ──────────────────────────────────────── */}
-      {activeVaultId && (
+      {activeVaultId && notesView !== 'graph' && (
         <div className="flex gap-4 flex-1 overflow-hidden min-h-0 min-w-0">
 
           {/* LEFT PANEL — 240px fixed */}
