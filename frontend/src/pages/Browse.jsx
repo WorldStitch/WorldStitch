@@ -844,4 +844,47 @@ export default function Browse({ user }) {
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span>M
+                          <span>Modified</span>
+                          <span className="text-txt">
+                            {new Date(selectedNote.last_modified).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Words</span>
+                          <span className="text-txt">{wordCount(selectedNote.content)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Owner</span>
+                          <span className="text-txt truncate ml-2">
+                            {selectedNote.owner_id || 'N/A'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>ID</span>
+                          <span className="text-txt truncate ml-2 font-mono text-[10px]">
+                            {selectedNote.id}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Expand button when panel is collapsed */}
+              {!rightPanelOpen && (
+                <button
+                  onClick={() => setRightPanelOpen(true)}
+                  className="flex-shrink-0 self-start mt-1 p-1.5 rounded-lg bg-elevated hover:bg-hover text-txt-muted hover:text-txt transition border border-txt-muted/10"
+                  title="Show properties"
+                >
+                  <ChevronLeft size={15} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
