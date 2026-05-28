@@ -344,8 +344,9 @@ async def stream_ask(
                 yield f"data: {json.dumps({'token': token})}\n\n"
 
             yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception:
+            logger.exception("Streaming AI ask failed")
+            yield f"data: {json.dumps({'error': 'Request failed'})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
