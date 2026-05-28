@@ -114,10 +114,36 @@ def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) 
     try:
         # Try semantic search first if index is ready
         if ctx.has_ai() and getattr(ctx.ai, "_index_ready", False):
-            snippets = ctx.ai.search_context(prompt, top_k=8)
-            if snippets:
-                context_block = "Relevant vault content:\n\n" + "\n\n---\n\n".join(snippets)
-                return context_block + "\n\n---\n\nUser question: " + prompt
+            note_refs = ctx.ai.search_context(prompt, top_k=8)
+            if note_refs:
+                vault_notes_by_id = {}
+                vault_notes_by_path = {}
+                if hasattr(ctx.storage, "list_all_notes"):
+                    for note in ctx.storage.list_all_notes(vault_id=vault_id):
+                        note_id = getattr(note, "id", "") or ""
+                        note_path = getattr(note, "path", "") or ""
+                        if note_id:
+                            vault_notes_by_id[note_id] = note
+                        if note_path:
+                            vault_notes_by_path[note_path] = note
+
+                snippets = []
+                for ref in note_refs:
+                    note = vault_notes_by_id.get(ref) or vault_notes_by_path.get(ref)
+                    if note is None and hasattr(ctx.storage, "get_note_by_id"):
+                        candidate = ctx.storage.get_note_by_id(ref)
+                        if candidate is not None and getattr(candidate, "vault_id", "") == vault_id:
+                            note = candidate
+                    if note is None:
+                        continue
+                    title = getattr(note, "title", "") or getattr(note, "path", "") or getattr(note, "id", "") or ""
+                    content = (getattr(note, "content", "") or "")[:600]
+                    if title or content:
+                        snippets.append(f"## {title}\n{content}")
+
+                if snippets:
+                    context_block = "Relevant vault content:\n\n" + "\n\n---\n\n".join(snippets)
+                    return context_block + "\n\n---\n\nUser question: " + prompt
         # Fallback: inject most recent notes
         notes = []
         if hasattr(ctx.storage, "list_all_notes"):
