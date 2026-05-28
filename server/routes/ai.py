@@ -118,14 +118,32 @@ def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) 
                 context_block = "Relevant vault content:\n\n" + "\n\n---\n\n".join(snippets)
                 return context_block + "\n\n---\n\nUser question: " + prompt
         # Fallback: inject most recent notes
-        if hasattr(ctx.storage, "list_notes"):
-            notes = ctx.storage.list_notes(vault_id, limit=15)
-            if notes:
-                lines = ["Vault context (recent notes):"]
-                for n in notes[:12]:
-                    title = getattr(n, "title", "") or ""
+        notes = []
+        if hasattr(ctx.storage, "list_all_notes"):
+            notes = ctx.storage.list_all_notes(vault_id=vault_id)[:15]
+        elif hasattr(ctx.storage, "list_notes"):
+            note_paths = ctx.storage.list_notes(limit=15)
+            if note_paths and hasattr(ctx.storage, "read_note"):
+                for note_path in note_paths[:15]:
+                    try:
+                        note = ctx.storage.read_note(note_path)
+                    except Exception:
+                        continue
+                    if note is not None:
+                        notes.append(note)
+        if notes:
+            lines = ["Vault context (recent notes):"]
+            for n in notes[:12]:
+                if isinstance(n, dict):
+                    title = n.get("title", "") or n.get("path", "") or n.get("id", "") or ""
+                    content = (n.get("content", "") or "")[:600]
+                else:
+                    title = getattr(n, "title", "") or getattr(n, "path", "") or getattr(n, "id", "") or ""
                     content = (getattr(n, "content", "") or "")[:600]
-                    lines.append(f"## {title}\n{content}")
+                if not title and not content:
+                    continue
+                lines.append(f"## {title}\n{content}")
+            if len(lines) > 1:
                 context_block = "\n\n".join(lines)
                 return context_block + "\n\n---\n\nUser question: " + prompt
     except Exception:
