@@ -12,6 +12,7 @@ GET  /ai/usage           — current-month token usage for the logged-in user
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -21,13 +22,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from WorldStitch.ai.cost_tracker import AIUsageRecord, _DEFAULT_PRICING, _PRICING
-from WorldStitch.context.app_context import AppContext
-from WorldStitch.models.user import User
-
 from server.analytics import track as analytics_track
 from server.deps import get_ctx, get_current_user
 from server.limiter import limiter
+from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 
 
 def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) -> float:
@@ -38,6 +38,7 @@ def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) 
 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -147,7 +148,7 @@ def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) 
                 context_block = "\n\n".join(lines)
                 return context_block + "\n\n---\n\nUser question: " + prompt
     except Exception:
-        pass
+        logger.exception("Failed to build vault context")
     return prompt
 
 
