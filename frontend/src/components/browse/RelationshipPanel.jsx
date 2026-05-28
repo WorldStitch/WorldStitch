@@ -218,4 +218,11 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 										/>
 									))}
 								</div>
-		
+							</div>
+						))}
+					</div>
+				</>
+			) : null}
+		</div>
+	);
+}
