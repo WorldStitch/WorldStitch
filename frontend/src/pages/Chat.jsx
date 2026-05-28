@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
@@ -7,10 +8,13 @@ import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { TextArea } from '@/components/Input';
 import { ai, notes, settings, getApiBase, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
+import { useVault } from '@/context/VaultContext';
 
 const COST_PER_TOKEN = 0.000003;
 
 export default function Chat() {
+  const navigate = useNavigate();
+  const { activeVaultId } = useVault();
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,6 +27,13 @@ export default function Chat() {
   const { data: settingsData } = useQuery({
     queryKey: ['settings'],
     queryFn: settings.get,
+  });
+
+  const { data: aiStatus } = useQuery({
+    queryKey: ['ai-status'],
+    queryFn: ai.status,
+    staleTime: 60_000,
+    retry: false,
   });
 
   const historyLimit = settingsData?.ai_history_limit ?? 10;
@@ -60,7 +71,7 @@ export default function Chat() {
 
   const handleRegularAsk = async (userPrompt, history) => {
     try {
-      const response = await ai.ask(userPrompt, history);
+      const response = await ai.ask(userPrompt, history, activeVaultId);
       const msgTokens = (response.prompt_tokens || 0) + (response.completion_tokens || 0);
       setSessionTokens((prev) => prev + msgTokens);
       setMessages((prev) => [
@@ -100,7 +111,7 @@ export default function Chat() {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ prompt: userPrompt, history }),
+        body: JSON.stringify({ prompt: userPrompt, history, vault_id: activeVaultId }),
       });
 
       if (res.status === 429) {
@@ -226,6 +237,19 @@ export default function Chat() {
           </Button>
         </div>
       </div>
+
+      {/* AI Status Banners */}
+      {aiStatus && !aiStatus.ready && (
+        <div className="mx-4 mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl text-sm text-yellow-400">
+          AI is not configured. Add your OpenAI key in{' '}
+          <button onClick={() => navigate('/settings')} className="underline font-medium">Settings → AI</button>.
+        </div>
+      )}
+      {aiStatus?.ready && !aiStatus?.index_built && (
+        <div className="mx-4 mt-2 p-2 bg-accent/10 border border-accent/20 rounded-xl text-xs text-accent">
+          Vault index is building in the background — AI will have full context shortly.
+        </div>
+      )}
 
       {/* Chat History */}
       <div className="flex-1 overflow-y-auto space-y-4">
