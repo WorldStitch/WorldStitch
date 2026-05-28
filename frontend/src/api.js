@@ -1,4 +1,4 @@
-﻿/**
+/**
  * WorldStitch API Client
  * Talks to the FastAPI backend on localhost:8741.
  */
@@ -247,7 +247,8 @@ export const folders = {
 
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
-  ask: (prompt, history = []) => request("POST", "/ai/ask", { prompt, history }),
+  status: () => request("GET", "/ai/status"),
+  ask: (prompt, history = [], vaultId = null) => request("POST", "/ai/ask", { prompt, history, vault_id: vaultId }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
     request("POST", "/ai/suggest-tags", { text, existing_tags: existingTags }),
