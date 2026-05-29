@@ -51,8 +51,8 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
         if (socketRef.current === socket) socketRef.current = null;
         setOnlineUsers([]);
         setEditing([]);
-        if (!cancelled && attempt < 5) {
-          const delay = Math.pow(2, attempt) * 1000;
+        if (!cancelled) {
+          const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
           attempt += 1;
           timeoutId = setTimeout(connect, delay);
         }

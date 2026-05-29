@@ -405,7 +405,7 @@ export const relationships = {
       `/relationships/?vault_id=${encodeURIComponent(vaultId)}${entityId ? `&entity_id=${encodeURIComponent(entityId)}` : ""}`
     ),
   getTypes: () => request("GET", "/relationships/types"),
-  create: (data) => request("POST", "/relationships", data),
+  create: (data) => request("POST", "/relationships/", data),
   update: (id, data) => request("PUT", `/relationships/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/relationships/${encodeURIComponent(id)}`),
 };
