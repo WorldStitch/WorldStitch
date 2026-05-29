@@ -6,9 +6,8 @@ Reference implementation using SQLAlchemy 2.x declarative ORM.
 This is the canonical schema source-of-truth for all future development.
 
 Design notes:
-  - PostgreSQL-first: JSONB for JSON columns, TIMESTAMP WITH TIME ZONE for datetimes.
-  - SQLite fallback: JSONB is aliased to JSON below (swap the import for Postgres).
-  - All PKs are String(36) UUIDs for portability; migrate to native UUID on PostgreSQL.
+  - PostgreSQL-only: JSONB for JSON columns, TIMESTAMP for datetimes.
+  - All PKs are String(36) UUIDs for portability; migrate to native UUID if needed.
   - Soft deletes via deleted_at timestamp (NULL = active, non-NULL = deleted).
   - Standard metadata: created_at, updated_at, created_by_user_id on all content tables.
   - Three circular FK groups use use_alter=True:
@@ -22,9 +21,6 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-# SQLite compatibility shim: swap for PostgreSQL with:
-#   from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import JSON as JSONB  # noqa: N811
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -40,6 +36,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -585,7 +582,7 @@ class Note(Base):
     Freeform markdown note. Content stored inline (not on disk as in v1).
     linked_entity_type + linked_entity_id: polymorphic soft-link to any entity
     (character, location, faction, item, etc.) — indexed for reverse lookup.
-    Full-text search via PostgreSQL tsvector trigger or SQLite FTS5.
+    Full-text search via PostgreSQL tsvector trigger.
     """
 
     __tablename__ = "notes"

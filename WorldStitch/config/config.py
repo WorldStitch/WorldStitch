@@ -8,7 +8,7 @@ from typing import Any, Optional
 CONFIG_FILENAME = "settings.json"
 DEFAULT_CONFIG = {
     "VAULT_PATH": "./Obsidian",
-    "VAULT_TYPE": "sqlite",
+    "VAULT_TYPE": "postgresql",
     "CORE_DATA_PATH": "./WorldStitch/data",
     "OPENAI_API_KEY": "",
     "EMBEDDING_MODEL": "text-embedding-3-small",

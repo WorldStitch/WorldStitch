@@ -1,20 +1,15 @@
 """
-SQLite Storage Backend for WorldStitch.
+PostgreSQL Storage Backend for WorldStitch.
 
-A fully normalized SQLite implementation using SQLAlchemy 2.0 with declarative
-ORM. All Pydantic models are stored as JSON blobs to avoid schema coupling.
+Uses SQLAlchemy 2.0 with declarative ORM against a PostgreSQL database.
+All Pydantic models are stored as JSON blobs to avoid schema coupling.
 
 The backend operates in "hybrid" mode:
-  - Structured model data (User, Character, Note metadata) is stored in SQLite.
+  - Structured model data (User, Character, Note metadata) is stored in PostgreSQL.
   - Note content is stored as markdown files in vault_path (delegated to pathlib).
   - Attachments, versions, and search indices are also file-based.
 
-This approach provides ACID semantics for models while maintaining filesystem
-flexibility for content. It scales better than pure file-storage but doesn't
-require per-model schema migrations.
-
-Thread-safe for multi-threaded PyQt6 applications via create_engine with
-check_same_thread=False.
+DATABASE_URL environment variable is required — there is no SQLite fallback.
 """
 
 import io
@@ -97,6 +92,9 @@ class VaultRecord(Base):
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     members_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
+    # AI key columns — managed separately from the JSON blob to keep keys encrypted at rest
+    ai_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_key_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
 
 
 class FolderRecord(Base):
@@ -129,7 +127,7 @@ class NoteRecord(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     folder: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
-    # Denormalized columns for FTS5 triggers — populated in save_note()
+    # Denormalized columns for PostgreSQL tsvector search — populated in save_note()
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
     tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
@@ -309,38 +307,44 @@ def _session_log_to_dict(record: SessionLogRecord) -> dict:
 
 class SQLiteBackend(StorageBackend):
     """
-    SQLAlchemy-based SQLite backend for WorldStitch.
+    PostgreSQL-backed storage for WorldStitch.
 
     All Pydantic models are serialized to JSON and stored as TEXT columns,
     avoiding schema coupling and making future migrations trivial.
 
     File-system operations (note content, attachments, versions) are delegated
-    to pathlib in vault_path, following the same pattern as HybridStorage.
+    to pathlib in vault_path.
 
     Parameters
     ----------
-    db_path : str
-        Path to SQLite database file (e.g., "worldstitch.db").
-        Created automatically if it doesn't exist.
     vault_path : str, optional
         Root directory for markdown notes, attachments, and versions.
-        If not provided, defaults to a `.vault` subdirectory next to the DB.
     """
 
-    def __init__(self, db_path: str, vault_path: Optional[str] = None):
-        """Initialize SQLite backend and create tables if needed."""
-        self.db_path = Path(db_path)
-        self.vault_path: Path = Path(vault_path or self.db_path.parent / ".vault").resolve()
+    def __init__(self, vault_path: Optional[str] = None, db_path: Optional[str] = None):
+        """Initialize PostgreSQL backend and create tables if needed."""
+        # db_path is accepted for backwards compatibility but unused — the database
+        # connection is always taken from the DATABASE_URL environment variable.
+        if vault_path:
+            self.vault_path: Path = Path(vault_path).resolve()
+        elif db_path:
+            self.vault_path = Path(db_path).parent / ".vault"
+        else:
+            self.vault_path = Path(".vault").resolve()
         self.vault_path.mkdir(parents=True, exist_ok=True)
 
-        # Create engine — prefer DATABASE_URL env var (Postgres in production),
-        # fall back to SQLite for local dev.
-        db_url = os.environ.get("DATABASE_URL", f"sqlite:///{self.db_path}")
+        # DATABASE_URL is required — no SQLite fallback.
+        db_url = os.environ.get("DATABASE_URL")
+        if not db_url:
+            raise RuntimeError(
+                "DATABASE_URL environment variable is not set.\n"
+                "WorldStitch requires a PostgreSQL database — there is no SQLite fallback.\n"
+                "Example: DATABASE_URL=postgresql+psycopg2://user:pass@localhost:5432/worldstitch"
+            )
         # Railway (and some other hosts) provide postgres:// — psycopg2 needs postgresql+psycopg2://
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-        connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
-        self.engine = create_engine(db_url, connect_args=connect_args, pool_pre_ping=True)
+        self.engine = create_engine(db_url, pool_pre_ping=True)
 
         # Create all tables on first run
         Base.metadata.create_all(self.engine)
@@ -353,45 +357,13 @@ class SQLiteBackend(StorageBackend):
         except Exception:
             pass
 
-        # Full-text search setup — FTS5 for SQLite, tsvector/GIN for Postgres.
+        # PostgreSQL full-text search setup using tsvector/GIN index.
         self._fts_available = False
-        if not self._is_postgres:
-            raw_conn = self.engine.raw_connection()
-            try:
-                self._setup_fts(raw_conn)
-                self._setup_campaign_columns(raw_conn)
-                raw_conn.commit()
-                self._fts_available = True
-            except Exception as exc:
-                logger.warning("FTS5 not available: %s — falling back to LIKE search.", exc)
-            finally:
-                raw_conn.close()
-
-            # Add missing analytics columns for databases created before this feature.
-            raw_conn = self.engine.raw_connection()
-            try:
-                self._setup_analytics(raw_conn)
-                raw_conn.commit()
-            except Exception:
-                pass
-            finally:
-                raw_conn.close()
-        else:
-            try:
-                self._setup_postgres_fts()
-                self._fts_available = True
-            except Exception as exc:
-                logger.warning("Postgres FTS setup failed: %s — falling back to LIKE search.", exc)
-
-        # Create relationships table for databases created before this feature.
-        raw_conn = self.engine.raw_connection()
         try:
-            self._setup_relationships_table(raw_conn)
-            raw_conn.commit()
-        except Exception:
-            pass
-        finally:
-            raw_conn.close()
+            self._setup_postgres_fts()
+            self._fts_available = True
+        except Exception as exc:
+            logger.warning("Postgres FTS setup failed: %s — falling back to LIKE search.", exc)
 
         # AI cost tracking — records token usage per user/vault/operation.
         from WorldStitch.ai.cost_tracker import CostTracker
@@ -409,10 +381,6 @@ class SQLiteBackend(StorageBackend):
     def _session(self) -> Session:
         """Get a new database session."""
         return Session(self.engine)
-
-    @property
-    def _is_postgres(self) -> bool:
-        return str(self.engine.url).startswith("postgresql")
 
     def _setup_postgres_fts(self) -> None:
         """Set up Postgres full-text search using tsvector column and GIN index."""
@@ -657,6 +625,8 @@ class SQLiteBackend(StorageBackend):
             for rec in session.query(VaultRecord).all():
                 try:
                     vault = Vault.model_validate_json(rec.data)
+                    # Sync ai_key_shared from the dedicated column (authoritative source)
+                    vault.ai_key_shared = bool(rec.ai_key_shared)
                     members = json.loads(rec.members_json or "[]")
                     if not getattr(vault, "is_active", True):
                         continue
@@ -749,18 +719,21 @@ class SQLiteBackend(StorageBackend):
 
     def save_vault(self, vault: Vault) -> None:
         """Save or update a Vault record."""
+        ai_key_shared = bool(getattr(vault, "ai_key_shared", False))
         with self._session() as session:
             record = session.query(VaultRecord).filter(VaultRecord.id == vault.id).first()
             if record:
                 record.owner_id = vault.owner_id
                 record.members_json = json.dumps(vault.members)
                 record.data = vault.model_dump_json()
+                record.ai_key_shared = ai_key_shared
             else:
                 record = VaultRecord(
                     id=vault.id,
                     owner_id=vault.owner_id,
                     members_json=json.dumps(vault.members),
                     data=vault.model_dump_json(),
+                    ai_key_shared=ai_key_shared,
                 )
                 session.add(record)
             session.commit()
@@ -771,6 +744,8 @@ class SQLiteBackend(StorageBackend):
             record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
             if record:
                 vault = Vault.model_validate_json(record.data)
+                # Sync ai_key_shared from the dedicated column (authoritative source)
+                vault.ai_key_shared = bool(record.ai_key_shared)
                 members = json.loads(record.members_json or "[]")
                 if not self._can_access(vault.owner_id, vault.permissions, members):
                     return None
@@ -782,6 +757,51 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             session.query(VaultRecord).filter(VaultRecord.id == vault_id).delete()
             session.commit()
+
+    # ── Vault AI key management ───────────────────────────────────────────────
+
+    def get_vault_ai_key(self, vault_id: str) -> Optional[str]:
+        """Return the decrypted vault AI key, or None if not set."""
+        from WorldStitch.ai.user_api_keys import _decrypt as _decrypt_key
+
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record and record.ai_api_key:
+                return _decrypt_key(record.ai_api_key)
+        return None
+
+    def save_vault_ai_key(self, vault_id: str, api_key: str) -> None:
+        """Encrypt and save an AI key for the vault."""
+        from WorldStitch.ai.user_api_keys import _encrypt as _encrypt_key
+
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record:
+                record.ai_api_key = _encrypt_key(api_key)
+                session.commit()
+
+    def remove_vault_ai_key(self, vault_id: str) -> None:
+        """Clear the vault AI key."""
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record:
+                record.ai_api_key = None
+                session.commit()
+
+    def set_vault_ai_sharing(self, vault_id: str, shared: bool) -> None:
+        """Toggle the ai_key_shared flag on the vault record."""
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record:
+                record.ai_key_shared = shared
+                # Keep the JSON blob in sync so Vault.model_validate_json stays consistent
+                try:
+                    data = json.loads(record.data or "{}")
+                    data["ai_key_shared"] = shared
+                    record.data = json.dumps(data)
+                except Exception:
+                    pass
+                session.commit()
 
     # ========================================================================
     # Folders
@@ -979,7 +999,7 @@ class SQLiteBackend(StorageBackend):
         vault_id: str = "",  # deprecated alias for campaign_id
         campaign_id: Optional[str] = None,
     ) -> List[Note]:
-        """List notes directly from the SQLite database (not file-system based).
+        """List notes directly from the database (not file-system based).
 
         This is the authoritative listing method for notes created via the API.
         File-based notes (legacy .md files) are NOT returned here; use
@@ -1020,7 +1040,7 @@ class SQLiteBackend(StorageBackend):
         return results
 
     def list_all_folders(self, vault_id: str = "") -> List[Folder]:
-        """List all folders directly from the SQLite database."""
+        """List all folders directly from the database."""
         results: List[Folder] = []
         with self._session() as session:
             for record in session.query(FolderRecord).all():
@@ -1648,90 +1668,14 @@ class SQLiteBackend(StorageBackend):
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ) -> dict:
-        """FTS5-powered full-text search with BM25 ranking and snippet highlighting.
+        """PostgreSQL tsvector/GIN full-text search with ts_rank ranking.
 
-        Uses Postgres tsvector/GIN search when running on Postgres, FTS5 on SQLite.
-        Falls back to LIKE-based search when neither is available.
+        Falls back to LIKE-based search if PostgreSQL FTS is not available.
         Returns ``{items, total, skip, limit}``.
         """
-        if not self._fts_available:
-            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
-
-        if self._is_postgres:
+        if self._fts_available:
             return self._search_notes_postgres(query, vault_id, skip, limit, folder, tags, date_from, date_to)
-
-        raw_conn = self.engine.raw_connection()
-        try:
-            cursor = raw_conn.cursor()
-            sql = """
-                SELECT
-                    n.id,
-                    n.data,
-                    bm25(notes_fts) AS rank,
-                    snippet(notes_fts, 2, '<mark>', '</mark>', '...', 20) AS snippet
-                FROM notes_fts
-                JOIN notes n ON notes_fts.id = n.id
-                WHERE notes_fts MATCH ?
-                  AND n.is_deleted = 0
-            """
-            params: list = [query]
-
-            if vault_id:
-                sql += " AND n.vault_id = ?"
-                params.append(vault_id)
-            if folder:
-                sql += " AND (n.folder = ? OR n.folder LIKE ?)"
-                params.extend([folder, f"{folder}/%"])
-            if date_from:
-                sql += " AND n.created_at >= ?"
-                params.append(date_from)
-            if date_to:
-                sql += " AND n.created_at <= ?"
-                params.append(date_to)
-
-            sql += " ORDER BY rank"  # BM25 returns negatives; more negative = more relevant
-
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
-        except Exception as exc:
-            logger.warning("FTS5 query failed (%s), falling back to LIKE search.", exc)
-            raw_conn.close()
-            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
-        finally:
-            raw_conn.close()
-
-        all_items = []
-        for row in rows:
-            note_id, data_json, rank, snippet_text = row
-            try:
-                note = Note.model_validate_json(data_json)
-            except Exception:
-                continue
-
-            # Filter by ALL required tags (post-SQL, since tags are stored in JSON)
-            if tags:
-                note_tags_lower = [t.lower() for t in (getattr(note, "tags", []) or [])]
-                if not all(t.lower() in note_tags_lower for t in tags):
-                    continue
-
-            all_items.append(
-                {
-                    "id": note.id,
-                    "title": note.title,
-                    "folder_id": getattr(note, "folder_id", None),
-                    "tags": getattr(note, "tags", []) or [],
-                    "group_id": getattr(note, "group_id", None),
-                    "owner_id": getattr(note, "owner_id", ""),
-                    "is_deleted": getattr(note, "is_deleted", False),
-                    "created_at": note.created_at,
-                    "last_modified": note.last_modified,
-                    "snippet": snippet_text or "",
-                }
-            )
-
-        total = len(all_items)
-        page = all_items[skip : skip + limit]
-        return {"items": page, "total": total, "skip": skip, "limit": limit}
+        return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
 
     def _search_notes_postgres(
         self,
@@ -1823,7 +1767,7 @@ class SQLiteBackend(StorageBackend):
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ) -> dict:
-        """LIKE-based search fallback used when FTS5 is unavailable."""
+        """LIKE-based search fallback used when PostgreSQL FTS is unavailable."""
         notes_list = self.search_notes(query, vault_id=vault_id, top_k=10000)
 
         if folder:
@@ -2388,7 +2332,7 @@ class SQLiteBackend(StorageBackend):
             from sqlalchemy import text as _text
 
             with self.engine.connect() as conn:
-                # Upsert: delete existing then insert (SQLite lacks ON CONFLICT UPDATE cleanly)
+                # Upsert via delete + insert (portable and explicit)
                 conn.execute(
                     _text("DELETE FROM campaign_members WHERE campaign_id = :cid AND user_id = :uid"),
                     {"cid": campaign_id, "uid": user_id},

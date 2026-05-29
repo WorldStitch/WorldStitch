@@ -1,14 +1,13 @@
-﻿"""
+"""
 AI Cost Tracking for WorldStitch.
 
 Tracks token usage and estimated USD cost per AI operation, scoped by user
-and vault. Records are persisted in a dedicated 'ai_usage' table in the same
-SQLite database used by SQLiteBackend.
+and vault. Records are persisted in a dedicated 'ai_usage' table in the
+PostgreSQL database.
 
 Wire-in:
-  - CostTracker is instantiated in SQLiteBackend.__init__() after migrations.
-  - AppContext exposes it via the cost_tracker property (returns None if the
-    active backend is not SQLite).
+  - CostTracker is instantiated in the storage backend __init__() after migrations.
+  - AppContext exposes it via the cost_tracker property.
   - Call record() from AI engine adapters (openai_engine.py, etc.) after each
     successful API call, passing the token counts returned by the provider.
 """
@@ -20,7 +19,6 @@ from typing import Optional
 
 from sqlalchemy import DateTime, Float, Integer, String, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
-
 
 # ---------------------------------------------------------------------------
 # Pricing table: model_key -> (prompt_$/1M_tokens, completion_$/1M_tokens)
@@ -55,9 +53,7 @@ class AIUsageRecord(_CostBase):
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     operation: Mapped[str] = mapped_column(String, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -90,9 +86,7 @@ class CostTracker:
     ) -> None:
         """Insert a usage record, computing cost_usd from the built-in pricing table."""
         prompt_rate, completion_rate = _PRICING.get(model, _DEFAULT_PRICING)
-        cost_usd = (
-            prompt_tokens * prompt_rate + completion_tokens * completion_rate
-        ) / 1_000_000
+        cost_usd = (prompt_tokens * prompt_rate + completion_tokens * completion_rate) / 1_000_000
 
         row = AIUsageRecord(
             user_id=user_id,
