@@ -11,6 +11,7 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import inspect
 
 revision: str = "0013"
 down_revision: Union[str, None] = "0012"
@@ -19,6 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    if "ai_conversations" in inspector.get_table_names():
+        # Table already exists (created by migration 0005 or create_all()).
+        # Nothing to do — the table is in place.
+        return
+
     op.create_table(
         "ai_conversations",
         sa.Column("id", sa.String(36), primary_key=True),
