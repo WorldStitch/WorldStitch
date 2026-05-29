@@ -1,12 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Network } from "lucide-react";
+import { Network, Plus, Pencil, Trash2 } from "lucide-react";
 import { relationships as relApi } from "@/api";
 import { SkeletonLine } from "@/components/Skeleton";
 import RelationshipForm from "./RelationshipForm";
 
-// Weight displayed as a dot-opacity indicator.
 function WeightDot({ weight }) {
 	const opacity = Math.max(0.2, weight);
 	return (
@@ -45,25 +44,25 @@ function RelRow({ rel, entityId, allNotes, onNavigate, onEdit, onDelete }) {
 				<button
 					type="button"
 					onClick={() => onEdit(rel)}
-					className="text-txt-muted hover:text-accent text-[10px] transition px-1 py-0.5 rounded hover:bg-accent/10"
+					className="text-txt-muted hover:text-accent transition p-0.5 rounded hover:bg-accent/10"
 					title="Edit"
 				>
-					✎
+					<Pencil size={10} />
 				</button>
 				<button
 					type="button"
 					onClick={() => onDelete(rel)}
-					className="text-txt-muted hover:text-danger text-[10px] transition px-1 py-0.5 rounded hover:bg-danger/10"
+					className="text-txt-muted hover:text-danger transition p-0.5 rounded hover:bg-danger/10"
 					title="Delete"
 				>
-					✕
+					<Trash2 size={10} />
 				</button>
 			</div>
 		</div>
 	);
 }
 
-export default function RelationshipPanel({ entityId, vaultId, allNotes = [], onNavigate }) {
+export default function RelationshipPanel({ entityId, vaultId, allNotes = [], onNavigate, headless = false }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [showForm, setShowForm] = useState(false);
@@ -109,7 +108,6 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 		setShowForm(false);
 	};
 
-	// Group by relationship_type.
 	const byCategory = {};
 	for (const rel of data) {
 		const cat = rel.relationship_type || rel.category || "Other";
@@ -121,29 +119,26 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 
 	return (
 		<div>
-			<div className="flex items-center justify-between mb-2">
-				<p className="text-xs font-bold text-txt-muted uppercase tracking-wider">
-					Relationships
-				</p>
-				<div className="flex items-center gap-1">
+			{/* Action bar — always shown, replaces the old header when headless */}
+			<div className="flex items-center gap-1 mb-2 justify-end">
+				<button
+					onClick={() => navigate(`/graph?note=${entityId}`)}
+					className="text-txt-muted hover:text-accent transition p-1 rounded"
+					title="View in Graph"
+				>
+					<Network size={13} />
+				</button>
+				{!showForm && !editing && (
 					<button
-						onClick={() => navigate(`/graph?note=${entityId}`)}
-						className="text-txt-muted hover:text-accent transition p-1 rounded"
-						title="View in Graph"
+						type="button"
+						onClick={() => setShowForm(true)}
+						className="flex items-center gap-1 text-accent text-xs font-medium px-2 py-1 rounded-lg hover:bg-accent/10 transition"
+						title="Add connection"
 					>
-						<Network size={13} />
+						<Plus size={12} />
+						Add
 					</button>
-					{!showForm && !editing && (
-						<button
-							type="button"
-							onClick={() => setShowForm(true)}
-							className="text-accent text-xs font-bold px-1.5 py-0.5 rounded hover:bg-accent/10 transition flex items-center gap-0.5"
-							title="Add relationship"
-						>
-							+ Add connection
-						</button>
-					)}
-				</div>
+				)}
 			</div>
 
 			{/* Inline add form */}
@@ -186,44 +181,34 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 					<SkeletonLine width="w-2/3" />
 				</div>
 			) : error ? (
-				<p className="text-xs text-danger">Failed to load relationships.</p>
+				<p className="text-xs text-danger">Failed to load connections.</p>
 			) : total === 0 && !showForm ? (
-				<p className="text-xs text-txt-muted">
-					No connections yet. Use the + button to link this entry to others in your vault.
+				<p className="text-xs text-txt-muted/70 italic">
+					No connections yet — use the Add button to link this entry to others in your vault.
 				</p>
 			) : total > 0 ? (
-				<>
-					{/* Summary chip */}
-					<div className="mb-3 px-2 py-1.5 bg-accent/8 rounded-lg border border-accent/15">
-						<p className="text-xs text-accent font-semibold">
-							{total} connection{total !== 1 ? "s" : ""}
-						</p>
-					</div>
-
-					{/* Grouped by category */}
-					<div className="space-y-2">
-						{Object.entries(byCategory).map(([cat, rels]) => (
-							<div key={cat}>
-								<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold px-1 mb-0.5">
-									{cat}
-								</p>
-								<div className="space-y-0.5">
-									{rels.map((rel) => (
-										<RelRow
-											key={rel.id}
-											rel={rel}
-											entityId={entityId}
-											allNotes={allNotes}
-											onNavigate={onNavigate}
-											onEdit={handleEdit}
-											onDelete={handleDelete}
-										/>
-									))}
-								</div>
+				<div className="space-y-2">
+					{Object.entries(byCategory).map(([cat, rels]) => (
+						<div key={cat}>
+							<p className="text-[10px] uppercase tracking-widest text-txt-muted/50 font-semibold px-1 mb-0.5">
+								{cat}
+							</p>
+							<div className="space-y-0.5">
+								{rels.map((rel) => (
+									<RelRow
+										key={rel.id}
+										rel={rel}
+										entityId={entityId}
+										allNotes={allNotes}
+										onNavigate={onNavigate}
+										onEdit={handleEdit}
+										onDelete={handleDelete}
+									/>
+								))}
 							</div>
-						))}
-					</div>
-				</>
+						</div>
+					))}
+				</div>
 			) : null}
 		</div>
 	);
