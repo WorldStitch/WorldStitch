@@ -1,4 +1,4 @@
-﻿"""
+"""
 SQLite backend integration tests.
 
 Runs the same operations as the HybridStorage tests but against
@@ -109,9 +109,9 @@ class TestSQLiteNoteCRUD:
 class TestSQLiteFolderCRUD:
     def test_create_and_list_folders(self, tmp_path):
         storage = make_sqlite_storage(tmp_path)
-        storage.create_folder("campaigns/westmarch")
+        storage.create_folder("campaigns/main")
         folders = storage.list_folders()
-        assert any("westmarch" in f for f in folders)
+        assert any("main" in f for f in folders)
 
     def test_folder_exists(self, tmp_path):
         storage = make_sqlite_storage(tmp_path)
