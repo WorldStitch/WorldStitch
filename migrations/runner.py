@@ -1,7 +1,7 @@
-﻿"""
+"""
 migrations/runner.py — Programmatic Alembic runner for WorldStitch.
 
-Wraps Alembic's Python API so that SQLiteBackend.__init__ can apply any
+Wraps Alembic's Python API so that the storage backend can apply any
 pending schema migrations on startup without requiring a CLI call.
 
 Concept mapping
@@ -34,10 +34,7 @@ _INI_PATH = Path(__file__).parent.parent / "alembic.ini"
 
 
 def run_migrations(engine: "Engine") -> None:
-    """Apply all pending Alembic migrations to *engine*.
-
-    Call this from SQLiteBackend.__init__ after Base.metadata.create_all().
-    """
+    """Apply all pending Alembic migrations to *engine* (PostgreSQL only)."""
     from alembic import command
     from alembic.config import Config
     from alembic.runtime.migration import MigrationContext
@@ -63,8 +60,14 @@ def run_migrations(engine: "Engine") -> None:
         #   conflict with tables already created by create_all).
         try:
             with engine.connect() as conn:
-                rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
-                has_email_col = any(row[1] == "email" for row in rows)
+                result = conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = 'users' "
+                        "AND column_name = 'email'"
+                    )
+                )
+                has_email_col = result.fetchone() is not None
         except Exception:
             has_email_col = True  # Cannot inspect; treat as fresh and stamp.
 

@@ -1,9 +1,9 @@
-﻿"""
+"""
 HybridStorage — the primary storage backend for WorldStitch.
 
 Notes and folders live as markdown files inside the vault directory.
-All structured DND model data (characters, maps, etc.) is stored as JSON
-in a hidden .dnd_meta subfolder inside the vault.
+All structured model data (characters, maps, etc.) is stored as JSON
+in a hidden .ws_meta subfolder inside the vault.
 Users and groups are stored in a global data directory (~/.worldstitch_ai/).
 
 All path handling uses pathlib.Path for cross-platform compatibility.
@@ -33,7 +33,7 @@ from WorldStitch.storage.storage_base import StorageBackend
 class HybridStorage(StorageBackend):
     """
     Hybrid backend: notes/folders as markdown in vault,
-    DND models as JSON in .dnd_meta,
+    structured models as JSON in .ws_meta,
     users/groups in global storage.
     """
 
@@ -46,15 +46,15 @@ class HybridStorage(StorageBackend):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
+    def _meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object, creating the dir if needed."""
-        d = self.vault_path / ".dnd_meta" / subfolder
+        d = self.vault_path / ".ws_meta" / subfolder
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{obj_id}.json"
 
-    def _dnd_meta_dir(self, subfolder: str) -> Path:
+    def _meta_dir(self, subfolder: str) -> Path:
         """Return the directory for a model subfolder, creating it if needed."""
-        d = self.vault_path / ".dnd_meta" / subfolder
+        d = self.vault_path / ".ws_meta" / subfolder
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -128,17 +128,17 @@ class HybridStorage(StorageBackend):
     # ------------------------------------------------------------------
 
     def save_vault(self, vault: Vault) -> None:
-        path = self._dnd_meta_path("vaults", vault.id)
+        path = self._meta_path("vaults", vault.id)
         path.write_text(json.dumps(vault.model_dump(), indent=2), encoding="utf-8")
 
     def get_vault_by_id(self, vault_id: str) -> Optional[Vault]:
-        path = self._dnd_meta_path("vaults", vault_id)
+        path = self._meta_path("vaults", vault_id)
         if not path.is_file():
             return None
         return Vault.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
     def delete_vault_by_id(self, vault_id: str) -> None:
-        path = self._dnd_meta_path("vaults", vault_id)
+        path = self._meta_path("vaults", vault_id)
         if path.is_file():
             path.unlink()
 
@@ -149,12 +149,12 @@ class HybridStorage(StorageBackend):
     def save_folder(self, folder: Folder) -> None:
         if folder.path:
             self._abs(folder.path).mkdir(parents=True, exist_ok=True)
-        meta_path = self._dnd_meta_path("folders", folder.id)
+        meta_path = self._meta_path("folders", folder.id)
         meta_path.write_text(json.dumps(folder.model_dump(), indent=2), encoding="utf-8")
 
     def get_folder_by_id(self, folder_id: str) -> Optional[Folder]:
         abs_path = self._abs(folder_id)
-        meta_path = self._dnd_meta_path("folders", folder_id)
+        meta_path = self._meta_path("folders", folder_id)
         if abs_path.is_dir() and meta_path.is_file():
             return Folder.model_validate(json.loads(meta_path.read_text(encoding="utf-8")))
         if abs_path.is_dir():
@@ -165,7 +165,7 @@ class HybridStorage(StorageBackend):
         abs_path = self._abs(folder_id)
         if abs_path.is_dir():
             shutil.rmtree(abs_path)
-        meta_path = self._dnd_meta_path("folders", folder_id)
+        meta_path = self._meta_path("folders", folder_id)
         if meta_path.is_file():
             meta_path.unlink()
 
@@ -210,12 +210,12 @@ class HybridStorage(StorageBackend):
             abs_path = self._abs(note.path)
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(note.content, encoding="utf-8")
-        meta_path = self._dnd_meta_path("notes", note.id)
+        meta_path = self._meta_path("notes", note.id)
         meta_path.write_text(json.dumps(note.model_dump(), indent=2), encoding="utf-8")
 
     def get_note_by_id(self, note_id: str) -> Optional[Note]:
         abs_path = self._abs(note_id)
-        meta_path = self._dnd_meta_path("notes", note_id)
+        meta_path = self._meta_path("notes", note_id)
         if not abs_path.is_file():
             return None
         if meta_path.is_file():
@@ -235,7 +235,7 @@ class HybridStorage(StorageBackend):
         abs_path = self._abs(note_id)
         if abs_path.is_file():
             abs_path.unlink()
-        meta_path = self._dnd_meta_path("notes", note_id)
+        meta_path = self._meta_path("notes", note_id)
         if meta_path.is_file():
             meta_path.unlink()
 
@@ -285,67 +285,67 @@ class HybridStorage(StorageBackend):
     # ------------------------------------------------------------------
 
     def save_character(self, character: Character) -> None:
-        p = self._dnd_meta_path("characters", character.id)
+        p = self._meta_path("characters", character.id)
         p.write_text(json.dumps(character.model_dump(), indent=2), encoding="utf-8")
 
     def get_character_by_id(self, character_id: str) -> Optional[Character]:
-        p = self._dnd_meta_path("characters", character_id)
+        p = self._meta_path("characters", character_id)
         return Character.model_validate(json.loads(p.read_text(encoding="utf-8"))) if p.is_file() else None
 
     def delete_character_by_id(self, character_id: str) -> None:
-        p = self._dnd_meta_path("characters", character_id)
+        p = self._meta_path("characters", character_id)
         if p.is_file():
             p.unlink()
 
     def save_map(self, map_obj: Map) -> None:
-        p = self._dnd_meta_path("maps", map_obj.id)
+        p = self._meta_path("maps", map_obj.id)
         p.write_text(json.dumps(map_obj.model_dump(), indent=2), encoding="utf-8")
 
     def get_map_by_id(self, map_id: str) -> Optional[Map]:
-        p = self._dnd_meta_path("maps", map_id)
+        p = self._meta_path("maps", map_id)
         return Map.model_validate(json.loads(p.read_text(encoding="utf-8"))) if p.is_file() else None
 
     def delete_map_by_id(self, map_id: str) -> None:
-        p = self._dnd_meta_path("maps", map_id)
+        p = self._meta_path("maps", map_id)
         if p.is_file():
             p.unlink()
 
     def save_image(self, image: Image) -> None:
-        p = self._dnd_meta_path("images", image.id)
+        p = self._meta_path("images", image.id)
         p.write_text(json.dumps(image.model_dump(), indent=2), encoding="utf-8")
 
     def get_image_by_id(self, image_id: str) -> Optional[Image]:
-        p = self._dnd_meta_path("images", image_id)
+        p = self._meta_path("images", image_id)
         return Image.model_validate(json.loads(p.read_text(encoding="utf-8"))) if p.is_file() else None
 
     def delete_image_by_id(self, image_id: str) -> None:
-        p = self._dnd_meta_path("images", image_id)
+        p = self._meta_path("images", image_id)
         if p.is_file():
             p.unlink()
 
     def save_sound(self, sound: Sound) -> None:
-        p = self._dnd_meta_path("sounds", sound.id)
+        p = self._meta_path("sounds", sound.id)
         p.write_text(json.dumps(sound.model_dump(), indent=2), encoding="utf-8")
 
     def get_sound_by_id(self, sound_id: str) -> Optional[Sound]:
-        p = self._dnd_meta_path("sounds", sound_id)
+        p = self._meta_path("sounds", sound_id)
         return Sound.model_validate(json.loads(p.read_text(encoding="utf-8"))) if p.is_file() else None
 
     def delete_sound_by_id(self, sound_id: str) -> None:
-        p = self._dnd_meta_path("sounds", sound_id)
+        p = self._meta_path("sounds", sound_id)
         if p.is_file():
             p.unlink()
 
     def save_session(self, session: Session) -> None:
-        p = self._dnd_meta_path("sessions", session.id)
+        p = self._meta_path("sessions", session.id)
         p.write_text(json.dumps(session.model_dump(), indent=2), encoding="utf-8")
 
     def get_session_by_id(self, session_id: str) -> Optional[Session]:
-        p = self._dnd_meta_path("sessions", session_id)
+        p = self._meta_path("sessions", session_id)
         return Session.model_validate(json.loads(p.read_text(encoding="utf-8"))) if p.is_file() else None
 
     def delete_session_by_id(self, session_id: str) -> None:
-        p = self._dnd_meta_path("sessions", session_id)
+        p = self._meta_path("sessions", session_id)
         if p.is_file():
             p.unlink()
 
@@ -354,14 +354,14 @@ class HybridStorage(StorageBackend):
     # ------------------------------------------------------------------
 
     def read_timeline(self) -> list:
-        path = self.vault_path / ".dnd_meta" / "timeline.json"
+        path = self.vault_path / ".ws_meta" / "timeline.json"
         if not path.is_file():
             return []
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, list) else []
 
     def save_timeline(self, events: list) -> None:
-        meta_dir = self.vault_path / ".dnd_meta"
+        meta_dir = self.vault_path / ".ws_meta"
         meta_dir.mkdir(parents=True, exist_ok=True)
         (meta_dir / "timeline.json").write_text(json.dumps(events, indent=2), encoding="utf-8")
 
@@ -468,7 +468,7 @@ class HybridStorage(StorageBackend):
         Merge meta into the stored JSON metadata for note_id.
         Only updates the provided keys — non-overlapping keys are preserved.
         """
-        meta_path = self._dnd_meta_path("notes", note_id)
+        meta_path = self._meta_path("notes", note_id)
         if meta_path.is_file():
             existing = json.loads(meta_path.read_text(encoding="utf-8"))
             existing.update(meta)
@@ -479,25 +479,23 @@ class HybridStorage(StorageBackend):
     # ------------------------------------------------------------------
 
     def create_relationship(self, rel: Relationship) -> Relationship:
-        path = self._dnd_meta_path("relationships", rel.id)
+        path = self._meta_path("relationships", rel.id)
         path.write_text(json.dumps(rel.model_dump(mode="json"), indent=2), encoding="utf-8")
         return rel
 
     def get_relationship(self, rel_id: str) -> Optional[Relationship]:
-        path = self._dnd_meta_path("relationships", rel_id)
+        path = self._meta_path("relationships", rel_id)
         if not path.is_file():
             return None
         return Relationship.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
     def list_relationships_for_entity(self, entity_id: str, vault_id: str) -> List[Relationship]:
         return [
-            rel
-            for rel in self.list_relationships(vault_id)
-            if rel.source_id == entity_id or rel.target_id == entity_id
+            rel for rel in self.list_relationships(vault_id) if rel.source_id == entity_id or rel.target_id == entity_id
         ]
 
     def list_relationships(self, vault_id: str) -> List[Relationship]:
-        rel_dir = self._dnd_meta_dir("relationships")
+        rel_dir = self._meta_dir("relationships")
         results: List[Relationship] = []
         for path in rel_dir.glob("*.json"):
             try:
@@ -509,7 +507,7 @@ class HybridStorage(StorageBackend):
         return results
 
     def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
-        rel_dir = self._dnd_meta_dir("relationships")
+        rel_dir = self._meta_dir("relationships")
         for path in rel_dir.glob("*.json"):
             try:
                 rel = Relationship.model_validate(json.loads(path.read_text(encoding="utf-8")))
@@ -522,7 +520,7 @@ class HybridStorage(StorageBackend):
         return False
 
     def delete_relationship(self, rel_id: str) -> bool:
-        path = self._dnd_meta_path("relationships", rel_id)
+        path = self._meta_path("relationships", rel_id)
         if not path.is_file():
             return False
         path.unlink()
@@ -542,7 +540,7 @@ class HybridStorage(StorageBackend):
 
     def list_active_sessions(self) -> List[Session]:
         """Return all sessions that are active and not yet expired."""
-        session_dir = self._dnd_meta_dir("sessions")
+        session_dir = self._meta_dir("sessions")
         results: List[Session] = []
         for p in session_dir.glob("*.json"):
             try:
@@ -558,11 +556,11 @@ class HybridStorage(StorageBackend):
     # ------------------------------------------------------------------
 
     def save_invite(self, invite: "InviteCode") -> None:
-        p = self._dnd_meta_path("invites", invite.id)
+        p = self._meta_path("invites", invite.id)
         p.write_text(json.dumps(invite.model_dump(), indent=2), encoding="utf-8")
 
     def get_invite_by_code(self, code: str) -> Optional["InviteCode"]:
-        invite_dir = self._dnd_meta_dir("invites")
+        invite_dir = self._meta_dir("invites")
         # Invite codes are always stored and compared in uppercase (see save_invite / InviteManager).
         code_upper = code.strip().upper()
         for p in invite_dir.glob("*.json"):
@@ -575,14 +573,14 @@ class HybridStorage(StorageBackend):
         return None
 
     def get_invite_by_id(self, invite_id: str) -> Optional["InviteCode"]:
-        p = self._dnd_meta_path("invites", invite_id)
+        p = self._meta_path("invites", invite_id)
         if not p.is_file():
             return None
         return InviteCode.model_validate(json.loads(p.read_text(encoding="utf-8")))
 
     def list_invites(self) -> List["InviteCode"]:
         """Return all invite codes."""
-        invite_dir = self._dnd_meta_dir("invites")
+        invite_dir = self._meta_dir("invites")
         codes: List[InviteCode] = []
         for p in invite_dir.glob("*.json"):
             try:

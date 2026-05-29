@@ -1,4 +1,4 @@
-﻿# WorldStitch
+# WorldStitch
 
 A creative worldbuilding platform for novels, games, films, TTRPGs, and any fiction that needs a living world. Manage characters, notes, maps, timelines, factions, locations, and AI-assisted lore — all in one place.
 
@@ -8,10 +8,10 @@ A creative worldbuilding platform for novels, games, films, TTRPGs, and any fict
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Electron + React (Vite) |
+| Frontend | React (Vite) |
 | Backend | FastAPI (Python 3.11+) |
 | Database | SQLite (local / dev), PostgreSQL (hosted) |
-| AI | Anthropic Claude via API |
+| AI | OpenAI API |
 
 ---
 
@@ -60,10 +60,10 @@ All other settings live in `WorldStitch/config/settings.json`.
 # Terminal 1 — Python backend (from project root)
 python -m uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
 
-# Terminal 2 — Electron + React frontend
+# Terminal 2 — React frontend
 cd frontend
 npm install
-npm run electron:dev
+npm run dev
 ```
 
 Or use the convenience launcher:
@@ -71,21 +71,6 @@ Or use the convenience launcher:
 ```bat
 Launch_WorldStitch.bat
 ```
-
----
-
-## Building for testers
-
-See [HOW_TO_BUILD_FOR_TESTERS.md](HOW_TO_BUILD_FOR_TESTERS.md) for the full guide.
-
-Quick reference:
-
-```bat
-scripts\build-backend.bat
-cd frontend && npm run build:win
-```
-
-Output: `frontend\dist-electron\WorldStitch Setup x.x.x.exe`
 
 ---
 
@@ -106,9 +91,9 @@ Output: `frontend\dist-electron\WorldStitch Setup x.x.x.exe`
 ```
 WorldStitch/
 ├── server/           # FastAPI routes and business logic
-├── frontend/         # Electron + React (Vite) UI
+├── frontend/         # React (Vite) UI
 ├── migrations/       # Alembic database migrations
-├── WorldStitch/     # Legacy Python layer (storage, managers, models)
+├── WorldStitch/      # Python layer (storage, managers, models)
 │   ├── auth/         # Auth manager, session manager, permission checker
 │   ├── config/       # Config loader
 │   ├── context/      # AppContext — central service locator

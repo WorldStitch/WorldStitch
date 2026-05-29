@@ -1,4 +1,4 @@
-﻿from unittest.mock import patch
+from unittest.mock import patch
 
 from WorldStitch.managers.map_manager import MapManager
 
@@ -40,8 +40,8 @@ def test_update_map_audits_updated_map_id():
     created = mgr.create_map(
         vault_id="vault-1",
         owner_id="user-1",
-        name="Dungeon Map",
-        file_path="maps/dungeon.png",
+        name="Region Map",
+        file_path="maps/region.png",
     )
 
     with patch("WorldStitch.managers.map_manager.audit") as mock_audit:

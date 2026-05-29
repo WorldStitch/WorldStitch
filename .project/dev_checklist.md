@@ -1,4 +1,4 @@
-# Dev Workflow Reference — MythosEngine
+# Dev Workflow Reference — WorldStitch
 
 # WHEN: Do this whenever a new route is added, major manager logic changes,
 # or after refactors. Always before committing.
@@ -17,7 +17,7 @@ pytest -v -k test_smoke
 pytest -q --tb=short -ra --disable-warnings
 
 # Run type checker
-mypy MythosEngine/models/ MythosEngine/managers/ MythosEngine/storage/
+mypy WorldStitch/models/ WorldStitch/managers/ WorldStitch/storage/
 
 # Lint + format
 ruff check .
@@ -31,10 +31,10 @@ ruff format .
 python -m uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
 
 # Start frontend (from frontend/)
-npm run electron:dev
+npm run dev
 
 # Or use the convenience launcher
-Launch_MythosEngine.bat
+Launch_WorldStitch.bat
 
 # -----------------------------
 # 💾 COMMIT FLOW
