@@ -22,15 +22,12 @@ function RelRow({ rel, entityId, allNotes, onNavigate, onEdit, onDelete }) {
 	const isSource = rel.source_id === entityId;
 	const displayLabel = rel.label || rel.relationship_type;
 	const otherId = isSource ? rel.target_id : rel.source_id;
-	const otherNote = allNotes.find(n => n.id === otherId);
+	const otherNote = allNotes.find((n) => n.id === otherId);
 	const otherTitle = otherNote?.title || otherId;
 
 	return (
 		<div className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-hover transition group">
-			<WeightDot weight={rel.weight} />
-			<div className="flex-1 min-w-0">
-				<span className="text-[10px] text-accent font-medium">{displayLabel}</span>
-				<span className="text-[10px] text-txt-muted mx-1">→</span>
+			<div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
 				<button
 					onClick={() => onNavigate?.(otherId)}
 					className="text-xs text-txt hover:text-accent hover:underline truncate transition"
@@ -38,6 +35,11 @@ function RelRow({ rel, entityId, allNotes, onNavigate, onEdit, onDelete }) {
 				>
 					{otherTitle}
 				</button>
+				<span className="text-[10px] text-txt-muted">→</span>
+				<span className="inline-flex items-center gap-1 text-[10px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded-full flex-shrink-0">
+					{displayLabel}
+					<WeightDot weight={rel.weight} />
+				</span>
 			</div>
 			<div className="hidden group-hover:flex items-center gap-1 flex-shrink-0">
 				<button
@@ -107,7 +109,7 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 		setShowForm(false);
 	};
 
-	// Group by relationship_type (the field the API actually returns).
+	// Group by relationship_type.
 	const byCategory = {};
 	for (const rel of data) {
 		const cat = rel.relationship_type || rel.category || "Other";
@@ -135,10 +137,10 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 						<button
 							type="button"
 							onClick={() => setShowForm(true)}
-							className="text-accent text-xs font-bold px-1.5 py-0.5 rounded hover:bg-accent/10 transition"
+							className="text-accent text-xs font-bold px-1.5 py-0.5 rounded hover:bg-accent/10 transition flex items-center gap-0.5"
 							title="Add relationship"
 						>
-							+
+							+ Add connection
 						</button>
 					)}
 				</div>
@@ -187,14 +189,14 @@ export default function RelationshipPanel({ entityId, vaultId, allNotes = [], on
 				<p className="text-xs text-danger">Failed to load relationships.</p>
 			) : total === 0 && !showForm ? (
 				<p className="text-xs text-txt-muted">
-					No relationships yet — click + to add one.
+					No connections yet. Use the + button to link this entry to others in your vault.
 				</p>
 			) : total > 0 ? (
 				<>
 					{/* Summary chip */}
 					<div className="mb-3 px-2 py-1.5 bg-accent/8 rounded-lg border border-accent/15">
 						<p className="text-xs text-accent font-semibold">
-							{total} relationship{total !== 1 ? "s" : ""}
+							{total} connection{total !== 1 ? "s" : ""}
 						</p>
 					</div>
 
