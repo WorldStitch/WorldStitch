@@ -49,7 +49,7 @@ def upgrade() -> None:
         conn.execute(text("ALTER TABLE vaults ADD COLUMN ai_api_key TEXT"))
 
     if not _column_exists(conn, "vaults", "ai_key_shared"):
-        conn.execute(text("ALTER TABLE vaults ADD COLUMN ai_key_shared BOOLEAN NOT NULL DEFAULT 0"))
+        conn.execute(text("ALTER TABLE vaults ADD COLUMN ai_key_shared BOOLEAN NOT NULL DEFAULT FALSE"))
 
     # ── Backfill ai_key_shared into the JSON blob so Vault.model_validate_json stays in sync ──
     rows = conn.execute(text("SELECT id, data FROM vaults")).fetchall()
