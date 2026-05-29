@@ -23,27 +23,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
-    if conn.dialect.name == "postgresql":
-        result = conn.execute(
-            text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = 'public' AND table_name = :table AND column_name = :col"
-            ),
-            {"table": table, "col": column},
-        )
-        return result.fetchone() is not None
-    else:
-        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-        return any(row[1] == column for row in rows)
+    result = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = :table AND column_name = :col"
+        ),
+        {"table": table, "col": column},
+    )
+    return result.fetchone() is not None
 
 
 def upgrade() -> None:
     conn = op.get_bind()
 
     if not _column_exists(conn, "users", "system_role"):
-        conn.execute(
-            text("ALTER TABLE users ADD COLUMN system_role VARCHAR(20) NOT NULL DEFAULT 'user'")
-        )
+        conn.execute(text("ALTER TABLE users ADD COLUMN system_role VARCHAR(20) NOT NULL DEFAULT 'user'"))
 
     # Backfill: users with "admin" in their roles JSON blob → system_role = "owner"
     rows = conn.execute(text("SELECT id, data FROM users")).fetchall()

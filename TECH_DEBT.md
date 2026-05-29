@@ -7,13 +7,6 @@ Each entry has a severity, description, and the conditions under which it should
 
 ## Active Items
 
-### [LOW] SQLite FTS5 backfill skipped on Postgres path
-**Issue:** The `_setup_fts` block that adds legacy columns (`created_at`, `folder`, etc.) to older
-SQLite databases only runs when `_is_postgres` is False. A fresh Postgres deployment will have those
-columns from Alembic migrations, so this is fine — but any future SQLite-only legacy-column backfills
-must remember to keep them inside the `not _is_postgres` branch.
-**Fix when:** Legacy SQLite support is dropped entirely.
-
 ### [LOW] No mypy type checking configured
 **Issue:** Pydantic models are fully typed but the rest of the codebase has no type annotations or
 mypy enforcement. Type errors in controllers and managers won't be caught before runtime.

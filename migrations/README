@@ -1,4 +1,4 @@
-MythosEngine — Alembic Database Migrations
+WorldStitch — Alembic Database Migrations
 ==========================================
 
 Quick start
@@ -22,14 +22,15 @@ Generate a new migration after changing ORM models:
     alembic revision --autogenerate -m "describe your change"
     # Review the generated file in migrations/versions/ before applying.
 
-Custom database path
---------------------
-Override the default (sqlite:///mythos_engine.db) via environment variable:
-    DATABASE_URL=sqlite:////absolute/path/to/mythos_engine.db alembic upgrade head
+Database connection
+-------------------
+DATABASE_URL environment variable is required — set it before running alembic:
+    export DATABASE_URL=postgresql+psycopg2://user:pass@localhost:5432/worldstitch
+    alembic upgrade head
 
 Existing databases
 ------------------
-If you already have a mythos_engine.db created by Base.metadata.create_all(),
+If you already have a database created by Base.metadata.create_all(),
 stamp it as being at the initial revision without re-running the migration:
     alembic stamp 0001
 
