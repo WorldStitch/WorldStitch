@@ -1,20 +1,15 @@
 """
-SQLite Storage Backend for WorldStitch.
+PostgreSQL Storage Backend for WorldStitch.
 
-A fully normalized SQLite implementation using SQLAlchemy 2.0 with declarative
-ORM. All Pydantic models are stored as JSON blobs to avoid schema coupling.
+Uses SQLAlchemy 2.0 with declarative ORM against a PostgreSQL database.
+All Pydantic models are stored as JSON blobs to avoid schema coupling.
 
 The backend operates in "hybrid" mode:
-  - Structured model data (User, Character, Note metadata) is stored in SQLite.
+  - Structured model data (User, Character, Note metadata) is stored in PostgreSQL.
   - Note content is stored as markdown files in vault_path (delegated to pathlib).
   - Attachments, versions, and search indices are also file-based.
 
-This approach provides ACID semantics for models while maintaining filesystem
-flexibility for content. It scales better than pure file-storage but doesn't
-require per-model schema migrations.
-
-Thread-safe for multi-threaded PyQt6 applications via create_engine with
-check_same_thread=False.
+DATABASE_URL environment variable is required — there is no SQLite fallback.
 """
 
 import io
@@ -129,7 +124,7 @@ class NoteRecord(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     folder: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
-    # Denormalized columns for FTS5 triggers — populated in save_note()
+    # Denormalized columns for PostgreSQL tsvector search — populated in save_note()
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
     tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
@@ -251,7 +246,9 @@ class EdgeRecord(Base):
     source_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     target_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     relationship_type: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    direction: Mapped[str] = mapped_column(String(30), nullable=False, default="bidirectional", server_default="bidirectional")
+    direction: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="bidirectional", server_default="bidirectional"
+    )
     label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1.0")
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
@@ -307,38 +304,44 @@ def _session_log_to_dict(record: SessionLogRecord) -> dict:
 
 class SQLiteBackend(StorageBackend):
     """
-    SQLAlchemy-based SQLite backend for WorldStitch.
+    PostgreSQL-backed storage for WorldStitch.
 
     All Pydantic models are serialized to JSON and stored as TEXT columns,
     avoiding schema coupling and making future migrations trivial.
 
     File-system operations (note content, attachments, versions) are delegated
-    to pathlib in vault_path, following the same pattern as HybridStorage.
+    to pathlib in vault_path.
 
     Parameters
     ----------
-    db_path : str
-        Path to SQLite database file (e.g., "worldstitch.db").
-        Created automatically if it doesn't exist.
     vault_path : str, optional
         Root directory for markdown notes, attachments, and versions.
-        If not provided, defaults to a `.vault` subdirectory next to the DB.
     """
 
-    def __init__(self, db_path: str, vault_path: Optional[str] = None):
-        """Initialize SQLite backend and create tables if needed."""
-        self.db_path = Path(db_path)
-        self.vault_path: Path = Path(vault_path or self.db_path.parent / ".vault").resolve()
+    def __init__(self, vault_path: Optional[str] = None, db_path: Optional[str] = None):
+        """Initialize PostgreSQL backend and create tables if needed."""
+        # db_path is accepted for backwards compatibility but unused — the database
+        # connection is always taken from the DATABASE_URL environment variable.
+        if vault_path:
+            self.vault_path: Path = Path(vault_path).resolve()
+        elif db_path:
+            self.vault_path = Path(db_path).parent / ".vault"
+        else:
+            self.vault_path = Path(".vault").resolve()
         self.vault_path.mkdir(parents=True, exist_ok=True)
 
-        # Create engine — prefer DATABASE_URL env var (Postgres in production),
-        # fall back to SQLite for local dev.
-        db_url = os.environ.get("DATABASE_URL", f"sqlite:///{self.db_path}")
+        # DATABASE_URL is required — no SQLite fallback.
+        db_url = os.environ.get("DATABASE_URL")
+        if not db_url:
+            raise RuntimeError(
+                "DATABASE_URL environment variable is not set.\n"
+                "WorldStitch requires a PostgreSQL database — there is no SQLite fallback.\n"
+                "Example: DATABASE_URL=postgresql+psycopg2://user:pass@localhost:5432/worldstitch"
+            )
         # Railway (and some other hosts) provide postgres:// — psycopg2 needs postgresql+psycopg2://
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-        connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
-        self.engine = create_engine(db_url, connect_args=connect_args, pool_pre_ping=True)
+        self.engine = create_engine(db_url, pool_pre_ping=True)
 
         # Create all tables on first run
         Base.metadata.create_all(self.engine)
@@ -351,45 +354,13 @@ class SQLiteBackend(StorageBackend):
         except Exception:
             pass
 
-        # Full-text search setup — FTS5 for SQLite, tsvector/GIN for Postgres.
+        # PostgreSQL full-text search setup using tsvector/GIN index.
         self._fts_available = False
-        if not self._is_postgres:
-            raw_conn = self.engine.raw_connection()
-            try:
-                self._setup_fts(raw_conn)
-                self._setup_campaign_columns(raw_conn)
-                raw_conn.commit()
-                self._fts_available = True
-            except Exception as exc:
-                logger.warning("FTS5 not available: %s — falling back to LIKE search.", exc)
-            finally:
-                raw_conn.close()
-
-            # Add missing analytics columns for databases created before this feature.
-            raw_conn = self.engine.raw_connection()
-            try:
-                self._setup_analytics(raw_conn)
-                raw_conn.commit()
-            except Exception:
-                pass
-            finally:
-                raw_conn.close()
-        else:
-            try:
-                self._setup_postgres_fts()
-                self._fts_available = True
-            except Exception as exc:
-                logger.warning("Postgres FTS setup failed: %s — falling back to LIKE search.", exc)
-
-        # Create relationships table for databases created before this feature.
-        raw_conn = self.engine.raw_connection()
         try:
-            self._setup_relationships_table(raw_conn)
-            raw_conn.commit()
-        except Exception:
-            pass
-        finally:
-            raw_conn.close()
+            self._setup_postgres_fts()
+            self._fts_available = True
+        except Exception as exc:
+            logger.warning("Postgres FTS setup failed: %s — falling back to LIKE search.", exc)
 
         # AI cost tracking — records token usage per user/vault/operation.
         from WorldStitch.ai.cost_tracker import CostTracker
@@ -408,21 +379,22 @@ class SQLiteBackend(StorageBackend):
         """Get a new database session."""
         return Session(self.engine)
 
-    @property
-    def _is_postgres(self) -> bool:
-        return str(self.engine.url).startswith("postgresql")
-
     def _setup_postgres_fts(self) -> None:
         """Set up Postgres full-text search using tsvector column and GIN index."""
         with self.engine.begin() as conn:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 ALTER TABLE notes ADD COLUMN IF NOT EXISTS search_vector tsvector
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 CREATE INDEX IF NOT EXISTS ix_notes_search_vector
                 ON notes USING GIN(search_vector)
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 CREATE OR REPLACE FUNCTION notes_search_vector_update() RETURNS trigger AS $$
                 BEGIN
                     NEW.search_vector := to_tsvector('english',
@@ -433,120 +405,29 @@ class SQLiteBackend(StorageBackend):
                     RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 DROP TRIGGER IF EXISTS notes_search_vector_trigger ON notes
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 CREATE TRIGGER notes_search_vector_trigger
                 BEFORE INSERT OR UPDATE ON notes
                 FOR EACH ROW EXECUTE FUNCTION notes_search_vector_update()
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 UPDATE notes SET search_vector = to_tsvector('english',
                     COALESCE(title, '') || ' ' ||
                     COALESCE(content, '') || ' ' ||
                     COALESCE(tags, '')
                 ) WHERE search_vector IS NULL
-            """))
-
-    def _setup_fts(self, conn) -> None:
-        """Create the FTS5 virtual table and sync triggers on the raw SQLite connection."""
-        # Add missing notes columns for legacy databases.
-        # This makes startup resilient when an older DB predates Alembic or
-        # when migration stamping skipped table-alter migrations.
-        for statement in (
-            "ALTER TABLE notes ADD COLUMN created_at DATETIME",
-            "ALTER TABLE notes ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE notes ADD COLUMN folder TEXT DEFAULT ''",
-            "ALTER TABLE notes ADD COLUMN title TEXT DEFAULT ''",
-            "ALTER TABLE notes ADD COLUMN content TEXT DEFAULT ''",
-            "ALTER TABLE notes ADD COLUMN tags TEXT DEFAULT ''",
-        ):
-            try:
-                conn.execute(statement)
-            except Exception:
-                pass  # column already exists
-
-        for statement in (
-            "ALTER TABLE characters ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE maps ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
-        ):
-            try:
-                conn.execute(statement)
-            except Exception:
-                pass  # column already exists
-
-        conn.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
-            USING fts5(id UNINDEXED, title, content, tags, tokenize='porter ascii')
-        """)
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS notes_fts_insert AFTER INSERT ON notes BEGIN
-                INSERT INTO notes_fts(id, title, content, tags)
-                VALUES (new.id, new.title, new.content, new.tags);
-            END
-        """)
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS notes_fts_update AFTER UPDATE ON notes BEGIN
-                UPDATE notes_fts SET title=new.title, content=new.content, tags=new.tags
-                WHERE id=new.id;
-            END
-        """)
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS notes_fts_delete AFTER DELETE ON notes BEGIN
-                DELETE FROM notes_fts WHERE id=old.id;
-            END
-        """)
-
-    def _setup_analytics(self, conn) -> None:
-        """Add analytics_consent column to users table for legacy databases."""
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN analytics_consent INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass  # column already exists
-
-    def _setup_campaign_columns(self, conn) -> None:
-        """Add campaign_id column to characters, maps, and notes if not already present."""
-        for statement in (
-            "ALTER TABLE characters ADD COLUMN campaign_id TEXT",
-            "ALTER TABLE maps ADD COLUMN campaign_id TEXT",
-            "ALTER TABLE notes ADD COLUMN campaign_id TEXT",
-        ):
-            try:
-                conn.execute(statement)
-            except Exception:
-                pass  # column already exists
-
-    def _setup_relationships_table(self, conn) -> None:
-        """Create the relationships table and indexes for legacy databases."""
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS relationships (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                relationship_type TEXT NOT NULL,
-                direction TEXT NOT NULL DEFAULT 'bidirectional',
-                label TEXT,
-                weight REAL NOT NULL DEFAULT 1.0,
-                owner_id TEXT NOT NULL,
-                vault_id TEXT NOT NULL,
-                meta TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                data TEXT NOT NULL DEFAULT '{}'
+            """)
             )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id, vault_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, vault_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_rel_vault ON relationships(vault_id, is_active)"
-        )
 
     def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
@@ -971,7 +852,7 @@ class SQLiteBackend(StorageBackend):
         vault_id: str = "",  # deprecated alias for campaign_id
         campaign_id: Optional[str] = None,
     ) -> List[Note]:
-        """List notes directly from the SQLite database (not file-system based).
+        """List notes directly from the database (not file-system based).
 
         This is the authoritative listing method for notes created via the API.
         File-based notes (legacy .md files) are NOT returned here; use
@@ -985,9 +866,7 @@ class SQLiteBackend(StorageBackend):
             q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)  # noqa: E712
             if filter_id:
                 # Prefer campaign_id column; fall back to vault_id column for legacy rows
-                q = q.filter(
-                    or_(NoteRecord.campaign_id == filter_id, NoteRecord.vault_id == filter_id)
-                )
+                q = q.filter(or_(NoteRecord.campaign_id == filter_id, NoteRecord.vault_id == filter_id))
             if folder:
                 q = q.filter(NoteRecord.folder == folder)
             records = q.order_by(NoteRecord.created_at.desc()).all()
@@ -1014,7 +893,7 @@ class SQLiteBackend(StorageBackend):
         return results
 
     def list_all_folders(self, vault_id: str = "") -> List[Folder]:
-        """List all folders directly from the SQLite database."""
+        """List all folders directly from the database."""
         results: List[Folder] = []
         with self._session() as session:
             for record in session.query(FolderRecord).all():
@@ -1164,7 +1043,9 @@ class SQLiteBackend(StorageBackend):
                 record.campaign_id = campaign_id or record.campaign_id
                 record.data = character.model_dump_json()
             else:
-                record = CharacterRecord(id=character.id, vault_id=vault_id, campaign_id=campaign_id, data=character.model_dump_json())
+                record = CharacterRecord(
+                    id=character.id, vault_id=vault_id, campaign_id=campaign_id, data=character.model_dump_json()
+                )
                 session.add(record)
             session.commit()
 
@@ -1197,9 +1078,7 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             q = session.query(CharacterRecord)
             if filter_id:
-                q = q.filter(
-                    or_(CharacterRecord.campaign_id == filter_id, CharacterRecord.vault_id == filter_id)
-                )
+                q = q.filter(or_(CharacterRecord.campaign_id == filter_id, CharacterRecord.vault_id == filter_id))
             for rec in q.all():
                 try:
                     char = Character.model_validate_json(rec.data)
@@ -1239,7 +1118,9 @@ class SQLiteBackend(StorageBackend):
                 record.campaign_id = campaign_id or record.campaign_id
                 record.data = map_obj.model_dump_json()
             else:
-                record = MapRecord(id=map_obj.id, vault_id=vault_id, campaign_id=campaign_id, data=map_obj.model_dump_json())
+                record = MapRecord(
+                    id=map_obj.id, vault_id=vault_id, campaign_id=campaign_id, data=map_obj.model_dump_json()
+                )
                 session.add(record)
             session.commit()
 
@@ -1272,9 +1153,7 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             q = session.query(MapRecord)
             if filter_id:
-                q = q.filter(
-                    or_(MapRecord.campaign_id == filter_id, MapRecord.vault_id == filter_id)
-                )
+                q = q.filter(or_(MapRecord.campaign_id == filter_id, MapRecord.vault_id == filter_id))
             for record in q.all():
                 try:
                     map_obj = Map.model_validate_json(record.data)
@@ -1642,90 +1521,14 @@ class SQLiteBackend(StorageBackend):
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ) -> dict:
-        """FTS5-powered full-text search with BM25 ranking and snippet highlighting.
+        """PostgreSQL tsvector/GIN full-text search with ts_rank ranking.
 
-        Uses Postgres tsvector/GIN search when running on Postgres, FTS5 on SQLite.
-        Falls back to LIKE-based search when neither is available.
+        Falls back to LIKE-based search if PostgreSQL FTS is not available.
         Returns ``{items, total, skip, limit}``.
         """
-        if not self._fts_available:
-            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
-
-        if self._is_postgres:
+        if self._fts_available:
             return self._search_notes_postgres(query, vault_id, skip, limit, folder, tags, date_from, date_to)
-
-        raw_conn = self.engine.raw_connection()
-        try:
-            cursor = raw_conn.cursor()
-            sql = """
-                SELECT
-                    n.id,
-                    n.data,
-                    bm25(notes_fts) AS rank,
-                    snippet(notes_fts, 2, '<mark>', '</mark>', '...', 20) AS snippet
-                FROM notes_fts
-                JOIN notes n ON notes_fts.id = n.id
-                WHERE notes_fts MATCH ?
-                  AND n.is_deleted = 0
-            """
-            params: list = [query]
-
-            if vault_id:
-                sql += " AND n.vault_id = ?"
-                params.append(vault_id)
-            if folder:
-                sql += " AND (n.folder = ? OR n.folder LIKE ?)"
-                params.extend([folder, f"{folder}/%"])
-            if date_from:
-                sql += " AND n.created_at >= ?"
-                params.append(date_from)
-            if date_to:
-                sql += " AND n.created_at <= ?"
-                params.append(date_to)
-
-            sql += " ORDER BY rank"  # BM25 returns negatives; more negative = more relevant
-
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
-        except Exception as exc:
-            logger.warning("FTS5 query failed (%s), falling back to LIKE search.", exc)
-            raw_conn.close()
-            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
-        finally:
-            raw_conn.close()
-
-        all_items = []
-        for row in rows:
-            note_id, data_json, rank, snippet_text = row
-            try:
-                note = Note.model_validate_json(data_json)
-            except Exception:
-                continue
-
-            # Filter by ALL required tags (post-SQL, since tags are stored in JSON)
-            if tags:
-                note_tags_lower = [t.lower() for t in (getattr(note, "tags", []) or [])]
-                if not all(t.lower() in note_tags_lower for t in tags):
-                    continue
-
-            all_items.append(
-                {
-                    "id": note.id,
-                    "title": note.title,
-                    "folder_id": getattr(note, "folder_id", None),
-                    "tags": getattr(note, "tags", []) or [],
-                    "group_id": getattr(note, "group_id", None),
-                    "owner_id": getattr(note, "owner_id", ""),
-                    "is_deleted": getattr(note, "is_deleted", False),
-                    "created_at": note.created_at,
-                    "last_modified": note.last_modified,
-                    "snippet": snippet_text or "",
-                }
-            )
-
-        total = len(all_items)
-        page = all_items[skip : skip + limit]
-        return {"items": page, "total": total, "skip": skip, "limit": limit}
+        return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
 
     def _search_notes_postgres(
         self,
@@ -1817,7 +1620,7 @@ class SQLiteBackend(StorageBackend):
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ) -> dict:
-        """LIKE-based search fallback used when FTS5 is unavailable."""
+        """LIKE-based search fallback used when PostgreSQL FTS is unavailable."""
         notes_list = self.search_notes(query, vault_id=vault_id, top_k=10000)
 
         if folder:
@@ -2099,9 +1902,14 @@ class SQLiteBackend(StorageBackend):
     def get_relationship(self, rel_id: str) -> Optional[Relationship]:
         """Retrieve a Relationship by ID. Returns None if not found or inactive."""
         with self._session() as session:
-            record = session.query(EdgeRecord).filter(
-                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
-            ).first()
+            record = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.id == rel_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
             if record:
                 return self._edge_to_relationship(record)
         return None
@@ -2110,11 +1918,15 @@ class SQLiteBackend(StorageBackend):
         """Return all active relationships where source_id OR target_id == entity_id."""
         results: List[Relationship] = []
         with self._session() as session:
-            records = session.query(EdgeRecord).filter(
-                or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
-                EdgeRecord.vault_id == vault_id,
-                EdgeRecord.is_active == True,  # noqa: E712
-            ).all()
+            records = (
+                session.query(EdgeRecord)
+                .filter(
+                    or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
+                    EdgeRecord.vault_id == vault_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
             for rec in records:
                 try:
                     results.append(self._edge_to_relationship(rec))
@@ -2126,10 +1938,14 @@ class SQLiteBackend(StorageBackend):
         """Return all active relationships for a vault."""
         results: List[Relationship] = []
         with self._session() as session:
-            records = session.query(EdgeRecord).filter(
-                EdgeRecord.vault_id == vault_id,
-                EdgeRecord.is_active == True,  # noqa: E712
-            ).all()
+            records = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.vault_id == vault_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
             for rec in records:
                 try:
                     results.append(self._edge_to_relationship(rec))
@@ -2151,9 +1967,14 @@ class SQLiteBackend(StorageBackend):
     def update_relationship(self, rel_id: str, updates: dict) -> Optional[Relationship]:
         """Apply updates dict to a relationship and return the updated record."""
         with self._session() as session:
-            record = session.query(EdgeRecord).filter(
-                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
-            ).first()
+            record = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.id == rel_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
             if not record:
                 return None
             rel = self._edge_to_relationship(record)
@@ -2176,13 +1997,17 @@ class SQLiteBackend(StorageBackend):
     def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
         """Return True if an active relationship with these params already exists."""
         with self._session() as session:
-            record = session.query(EdgeRecord).filter(
-                EdgeRecord.source_id == source_id,
-                EdgeRecord.target_id == target_id,
-                EdgeRecord.vault_id == vault_id,
-                EdgeRecord.relationship_type == rel_type,
-                EdgeRecord.is_active == True,  # noqa: E712
-            ).first()
+            record = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.source_id == source_id,
+                    EdgeRecord.target_id == target_id,
+                    EdgeRecord.vault_id == vault_id,
+                    EdgeRecord.relationship_type == rel_type,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
             return record is not None
 
     # ========================================================================
@@ -2233,9 +2058,7 @@ class SQLiteBackend(StorageBackend):
 
         cutoff = datetime.utcnow() - timedelta(days=days)
         with self._session() as session:
-            q = session.query(AnalyticsEventRecord).filter(
-                AnalyticsEventRecord.created_at >= cutoff
-            )
+            q = session.query(AnalyticsEventRecord).filter(AnalyticsEventRecord.created_at >= cutoff)
             if user_id:
                 q = q.filter(AnalyticsEventRecord.user_id == user_id)
             if event_type:
@@ -2274,6 +2097,7 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 conn.execute(
                     _text(
@@ -2282,8 +2106,16 @@ class SQLiteBackend(StorageBackend):
                         "created_by_user_id, created_at, updated_at) VALUES "
                         "(:id, :gid, :name, :slug, :desc, :sys, 'active', :uid, :now, :now)"
                     ),
-                    dict(id=campaign_id, gid=group_id, name=name, slug=slug,
-                         desc=description or "", sys=system or "", uid=owner_user_id, now=now),
+                    dict(
+                        id=campaign_id,
+                        gid=group_id,
+                        name=name,
+                        slug=slug,
+                        desc=description or "",
+                        sys=system or "",
+                        uid=owner_user_id,
+                        now=now,
+                    ),
                 )
                 conn.commit()
         except Exception as exc:
@@ -2309,6 +2141,7 @@ class SQLiteBackend(StorageBackend):
         """Fetch a single campaign by ID; returns None if not found or deleted."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 row = conn.execute(
                     _text(
@@ -2328,6 +2161,7 @@ class SQLiteBackend(StorageBackend):
         """Return all active campaigns for a group, ordered by name."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
                     _text(
@@ -2349,8 +2183,9 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
-                # Upsert: delete existing then insert (SQLite lacks ON CONFLICT UPDATE cleanly)
+                # Upsert via delete + insert (portable and explicit)
                 conn.execute(
                     _text("DELETE FROM campaign_members WHERE campaign_id = :cid AND user_id = :uid"),
                     {"cid": campaign_id, "uid": user_id},
@@ -2371,6 +2206,7 @@ class SQLiteBackend(StorageBackend):
         """Return all members of a campaign."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
                     _text(
@@ -2380,8 +2216,13 @@ class SQLiteBackend(StorageBackend):
                     {"cid": campaign_id},
                 ).fetchall()
             return [
-                {"id": r[0], "campaign_id": r[1], "user_id": r[2], "role": r[3],
-                 "joined_at": r[4].isoformat() if r[4] else None}
+                {
+                    "id": r[0],
+                    "campaign_id": r[1],
+                    "user_id": r[2],
+                    "role": r[3],
+                    "joined_at": r[4].isoformat() if r[4] else None,
+                }
                 for r in rows
             ]
         except Exception as exc:
@@ -2398,6 +2239,7 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 conn.execute(
                     _text("DELETE FROM group_members WHERE group_id = :gid AND user_id = :uid"),
@@ -2419,17 +2261,20 @@ class SQLiteBackend(StorageBackend):
         """Return all members of a group from the group_members table."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
-                    _text(
-                        "SELECT id, group_id, user_id, role, joined_at "
-                        "FROM group_members WHERE group_id = :gid"
-                    ),
+                    _text("SELECT id, group_id, user_id, role, joined_at FROM group_members WHERE group_id = :gid"),
                     {"gid": group_id},
                 ).fetchall()
             return [
-                {"id": r[0], "group_id": r[1], "user_id": r[2], "role": r[3],
-                 "joined_at": r[4].isoformat() if r[4] else None}
+                {
+                    "id": r[0],
+                    "group_id": r[1],
+                    "user_id": r[2],
+                    "role": r[3],
+                    "joined_at": r[4].isoformat() if r[4] else None,
+                }
                 for r in rows
             ]
         except Exception as exc:
@@ -2440,6 +2285,7 @@ class SQLiteBackend(StorageBackend):
         """Return all groups a user belongs to (via group_members table)."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
                     _text(
@@ -2452,9 +2298,13 @@ class SQLiteBackend(StorageBackend):
                     {"uid": user_id},
                 ).fetchall()
             return [
-                {"group_id": r[0], "role": r[1],
-                 "joined_at": r[2].isoformat() if r[2] else None,
-                 "name": r[3], "owner_id": r[4]}
+                {
+                    "group_id": r[0],
+                    "role": r[1],
+                    "joined_at": r[2].isoformat() if r[2] else None,
+                    "name": r[3],
+                    "owner_id": r[4],
+                }
                 for r in rows
             ]
         except Exception as exc:
@@ -2489,20 +2339,32 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 existing = conn.execute(
                     _text("SELECT id FROM play_sessions WHERE id = :id"),
                     {"id": session_id},
                 ).fetchone()
                 if existing:
-                    updatable = ["title", "session_number", "session_date", "summary",
-                                 "raw_notes", "ai_recap", "xp_gained", "loot_notes", "status"]
+                    updatable = [
+                        "title",
+                        "session_number",
+                        "session_date",
+                        "summary",
+                        "raw_notes",
+                        "ai_recap",
+                        "xp_gained",
+                        "loot_notes",
+                        "status",
+                    ]
                     sets = ", ".join(f"{f} = :{f}" for f in updatable if f in data)
                     if sets:
                         params = {f: data[f] for f in updatable if f in data}
                         params["id"] = session_id
                         params["now"] = now
-                        conn.execute(_text(f"UPDATE play_sessions SET {sets}, updated_at = :now WHERE id = :id"), params)
+                        conn.execute(
+                            _text(f"UPDATE play_sessions SET {sets}, updated_at = :now WHERE id = :id"), params
+                        )
                 else:
                     conn.execute(
                         _text(
@@ -2514,7 +2376,8 @@ class SQLiteBackend(StorageBackend):
                             ":ai_recap, :xp, :loot, :status, :now, :now)"
                         ),
                         {
-                            "id": session_id, "cid": campaign_id,
+                            "id": session_id,
+                            "cid": campaign_id,
                             "uid": data.get("created_by_user_id", ""),
                             "title": data.get("title", ""),
                             "snum": data.get("session_number"),
@@ -2537,6 +2400,7 @@ class SQLiteBackend(StorageBackend):
         """Fetch a single play session; enforces campaign isolation if campaign_id is given."""
         try:
             from sqlalchemy import text as _text
+
             sql = (
                 "SELECT id, campaign_id, created_by_user_id, title, session_number, "
                 "session_date, summary, raw_notes, ai_recap, xp_gained, loot_notes, "
@@ -2559,6 +2423,7 @@ class SQLiteBackend(StorageBackend):
         """Return play sessions for a campaign, sorted newest first."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 total_row = conn.execute(
                     _text("SELECT COUNT(*) FROM play_sessions WHERE campaign_id = :cid AND deleted_at IS NULL"),
@@ -2585,6 +2450,7 @@ class SQLiteBackend(StorageBackend):
         """Soft-delete a play session by setting deleted_at."""
         try:
             from sqlalchemy import text as _text
+
             now = datetime.utcnow()
             sql = "UPDATE play_sessions SET deleted_at = :now WHERE id = :id"
             params: dict = {"now": now, "id": session_id}

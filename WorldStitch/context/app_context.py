@@ -16,7 +16,6 @@ Multiuser design:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from WorldStitch.auth.auth_manager import AuthManager
@@ -78,20 +77,6 @@ class AppContext:
     def __init__(self, config: Config, storage: Optional[StorageBackend] = None):
         self.config = config
 
-        # Migrate old DB names on first run after rebrands.
-        # ward_dnd.db → worldstitch.db  (original legacy name)
-        # mythos_engine.db → worldstitch.db  (MythosEngine → WorldStitch rebrand)
-        _project_root = Path(config.VAULT_PATH).resolve().parent
-        _db_new = _project_root / "worldstitch.db"
-        if not _db_new.exists():
-            import shutil
-
-            for _db_old_name in ("mythos_engine.db", "ward_dnd.db"):
-                _db_old = _project_root / _db_old_name
-                if _db_old.exists():
-                    shutil.copy2(str(_db_old), str(_db_new))
-                    break
-
         # Backend is resolved via StorageRouter (respects config.VAULT_TYPE).
         # StorageRouter proxies all StorageBackend calls to its active backend,
         # so callers use ctx.storage exactly like a raw StorageBackend.
@@ -148,7 +133,7 @@ class AppContext:
 
     @property
     def cost_tracker(self):
-        """Return the CostTracker from the SQLite backend, or None if unavailable."""
+        """Return the CostTracker from the storage backend, or None if unavailable."""
         return getattr(self.storage, "cost_tracker", None)
 
     @property

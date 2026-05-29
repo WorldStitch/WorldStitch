@@ -1,4 +1,4 @@
-﻿"""
+"""
 WorldStitch — Comprehensive Database Schema
 ============================================
 Reference implementation using SQLAlchemy 2.x declarative ORM.
@@ -6,9 +6,8 @@ Reference implementation using SQLAlchemy 2.x declarative ORM.
 This is the canonical schema source-of-truth for all future development.
 
 Design notes:
-  - PostgreSQL-first: JSONB for JSON columns, TIMESTAMP WITH TIME ZONE for datetimes.
-  - SQLite fallback: JSONB is aliased to JSON below (swap the import for Postgres).
-  - All PKs are String(36) UUIDs for portability; migrate to native UUID on PostgreSQL.
+  - PostgreSQL-only: JSONB for JSON columns, TIMESTAMP for datetimes.
+  - All PKs are String(36) UUIDs for portability; migrate to native UUID if needed.
   - Soft deletes via deleted_at timestamp (NULL = active, non-NULL = deleted).
   - Standard metadata: created_at, updated_at, created_by_user_id on all content tables.
   - Three circular FK groups use use_alter=True:
@@ -37,11 +36,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-
-# SQLite compatibility shim: swap for PostgreSQL with:
-#   from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import JSON as JSONB  # noqa: N811
-
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -74,15 +69,9 @@ class User(Base):
         ForeignKey("assets.id", ondelete="SET NULL", use_alter=True, name="fk_users_avatar_asset_id"),
     )
     bio: Mapped[Optional[str]] = mapped_column(Text)
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
-    is_verified: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
-    is_superadmin: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
+    is_superadmin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -120,15 +109,9 @@ class Group(Base):
         String(36),
         ForeignKey("assets.id", ondelete="SET NULL", use_alter=True, name="fk_groups_avatar_asset_id"),
     )
-    owner_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
-    settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'")
-    )
+    owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -161,9 +144,7 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
     # use_alter because campaigns is defined after assets
     campaign_id: Mapped[Optional[str]] = mapped_column(
         String(36),
@@ -174,9 +155,7 @@ class Asset(Base):
     )
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
-    file_size_bytes: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0, server_default=text("0")
-    )
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default=text("0"))
     mime_type: Mapped[str] = mapped_column(String(200), nullable=False)
     # 'image' | 'audio' | 'pdf' | 'video' | 'other'
     asset_type: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -185,15 +164,11 @@ class Asset(Base):
     width: Mapped[Optional[int]] = mapped_column(Integer)
     height: Mapped[Optional[int]] = mapped_column(Integer)
     duration_seconds: Mapped[Optional[float]] = mapped_column(Float)
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'")
     )
-    is_public: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -227,28 +202,18 @@ class Campaign(Base):
     __tablename__ = "campaigns"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     slug: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     system: Mapped[Optional[str]] = mapped_column(String(200))
-    status: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="active", server_default=text("'active'")
-    )
-    cover_asset_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("assets.id", ondelete="SET NULL")
-    )
-    settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'")
-    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="active", server_default=text("'active'"))
+    cover_asset_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("assets.id", ondelete="SET NULL"))
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
-    is_public: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -283,9 +248,7 @@ class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     device_info: Mapped[Optional[str]] = mapped_column(Text)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45))
@@ -310,9 +273,7 @@ class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -332,9 +293,7 @@ class UserSession(Base):
     __tablename__ = "user_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45))
     user_agent: Mapped[Optional[str]] = mapped_column(Text)
     last_seen_at: Mapped[datetime] = mapped_column(
@@ -368,18 +327,10 @@ class GroupMember(Base):
     __tablename__ = "group_members"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    role: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="member", server_default=text("'member'")
-    )
-    invited_by_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member", server_default=text("'member'"))
+    invited_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -400,21 +351,15 @@ class GroupInvite(Base):
     __tablename__ = "group_invites"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     max_uses: Mapped[Optional[int]] = mapped_column(Integer)
-    use_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -439,25 +384,17 @@ class CampaignInvite(Base):
     __tablename__ = "campaign_invites"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    campaign_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False
-    )
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     # role granted on redemption: 'gm' | 'player' | 'observer'
-    role: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="player", server_default=text("'player'")
-    )
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="player", server_default=text("'player'"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     max_uses: Mapped[Optional[int]] = mapped_column(Integer)
-    use_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -486,36 +423,20 @@ class Character(Base):
     __tablename__ = "characters"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    is_npc: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
-    is_alive: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
-    avatar_asset_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("assets.id", ondelete="SET NULL")
-    )
-    stats: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'")
-    )
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
+    is_npc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
+    is_alive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
+    avatar_asset_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("assets.id", ondelete="SET NULL"))
+    stats: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
     ai_memory: Mapped[Optional[str]] = mapped_column(Text)
-    sort_order: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -549,27 +470,17 @@ class CampaignMember(Base):
     __tablename__ = "campaign_members"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    campaign_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False
-    )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    role: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="player", server_default=text("'player'")
-    )
-    character_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("characters.id", ondelete="SET NULL")
-    )
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="player", server_default=text("'player'"))
+    character_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("characters.id", ondelete="SET NULL"))
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=datetime.utcnow,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    invited_by_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    invited_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
 
     __table_args__ = (
         UniqueConstraint("campaign_id", "user_id", name="uq_campaign_members_campaign_user"),
@@ -595,12 +506,8 @@ class CharacterRelationship(Base):
     )
     relationship_type: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    is_bidirectional: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    is_bidirectional: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -636,12 +543,8 @@ class NoteFolder(Base):
     __tablename__ = "note_folders"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     parent_folder_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("note_folders.id", ondelete="SET NULL")
     )
@@ -651,9 +554,7 @@ class NoteFolder(Base):
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     path: Mapped[Optional[str]] = mapped_column(Text)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    sort_order: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -681,40 +582,24 @@ class Note(Base):
     Freeform markdown note. Content stored inline (not on disk as in v1).
     linked_entity_type + linked_entity_id: polymorphic soft-link to any entity
     (character, location, faction, item, etc.) — indexed for reverse lookup.
-    Full-text search via PostgreSQL tsvector trigger or SQLite FTS5.
+    Full-text search via PostgreSQL tsvector trigger.
     """
 
     __tablename__ = "notes"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
-    folder_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("note_folders.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
+    folder_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("note_folders.id", ondelete="SET NULL"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
-    title: Mapped[str] = mapped_column(
-        String(500), nullable=False, default="", server_default=text("''")
-    )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, default="", server_default=text("''")
-    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default=text("''"))
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default=text("''"))
     ai_summary: Mapped[Optional[str]] = mapped_column(Text)
-    sort_order: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
-    is_pinned: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
     # polymorphic soft-link: 'character' | 'location' | 'faction' | 'item' | ...
     linked_entity_type: Mapped[Optional[str]] = mapped_column(String(100))
     linked_entity_id: Mapped[Optional[str]] = mapped_column(String(36))
@@ -749,14 +634,10 @@ class NoteTag(Base):
     __tablename__ = "note_tags"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     color: Mapped[Optional[str]] = mapped_column(String(20))
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -775,12 +656,8 @@ class NoteTagAssignment(Base):
 
     __tablename__ = "note_tag_assignments"
 
-    note_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True
-    )
-    tag_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("note_tags.id", ondelete="CASCADE"), primary_key=True
-    )
+    note_id: Mapped[str] = mapped_column(String(36), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True)
+    tag_id: Mapped[str] = mapped_column(String(36), ForeignKey("note_tags.id", ondelete="CASCADE"), primary_key=True)
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -828,9 +705,7 @@ class CharacterNote(Base):
     character_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False
     )
-    note_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("notes.id", ondelete="CASCADE"), nullable=False
-    )
+    note_id: Mapped[str] = mapped_column(String(36), ForeignKey("notes.id", ondelete="CASCADE"), nullable=False)
     # 'backstory' | 'session_note' | 'lore' | 'custom'
     relationship_type: Mapped[Optional[str]] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
@@ -861,30 +736,18 @@ class Map(Base):
     __tablename__ = "maps"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     map_type: Mapped[Optional[str]] = mapped_column(String(100))
-    asset_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("assets.id", ondelete="SET NULL")
-    )
-    settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'")
-    )
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
-    sort_order: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    asset_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("assets.id", ondelete="SET NULL"))
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -916,23 +779,15 @@ class MapLayer(Base):
     __tablename__ = "map_layers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    map_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("maps.id", ondelete="CASCADE"), nullable=False
-    )
+    map_id: Mapped[str] = mapped_column(String(36), ForeignKey("maps.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    layer_order: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
-    is_visible: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
+    layer_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
     is_restricted: Mapped[bool] = mapped_column(
         "is_gm_only", Boolean, nullable=False, default=False, server_default=text("0")
     )
-    settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'")
-    )
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -965,9 +820,7 @@ class PlaySession(Base):
     __tablename__ = "play_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    campaign_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False
-    )
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -978,16 +831,10 @@ class PlaySession(Base):
     summary: Mapped[Optional[str]] = mapped_column(Text)
     raw_notes: Mapped[Optional[str]] = mapped_column(Text)
     ai_recap: Mapped[Optional[str]] = mapped_column(Text)
-    xp_gained: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    xp_gained: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     loot_notes: Mapped[Optional[str]] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="planned", server_default=text("'planned'")
-    )
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="planned", server_default=text("'planned'"))
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1023,12 +870,8 @@ class SessionParticipant(Base):
     play_session_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("play_sessions.id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
-    character_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("characters.id", ondelete="SET NULL")
-    )
+    user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    character_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("characters.id", ondelete="SET NULL"))
     display_name: Mapped[Optional[str]] = mapped_column(String(200))
     xp_override: Mapped[Optional[int]] = mapped_column(Integer)
     notes: Mapped[Optional[str]] = mapped_column(Text)
@@ -1040,9 +883,7 @@ class SessionParticipant(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "play_session_id", "user_id", name="uq_session_participants_session_user"
-        ),
+        UniqueConstraint("play_session_id", "user_id", name="uq_session_participants_session_user"),
         Index("ix_session_participants_play_session_id", "play_session_id"),
     )
 
@@ -1061,21 +902,15 @@ class Timeline(Base):
     __tablename__ = "timelines"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     calendar_system: Mapped[Optional[str]] = mapped_column(String(200))
-    settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'")
-    )
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1108,24 +943,16 @@ class TimelineEvent(Base):
     __tablename__ = "timeline_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    timeline_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("timelines.id", ondelete="CASCADE"), nullable=False
-    )
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    timeline_id: Mapped[str] = mapped_column(String(36), ForeignKey("timelines.id", ondelete="CASCADE"), nullable=False)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     event_date_raw: Mapped[Optional[str]] = mapped_column(String(200))
     event_date_sort: Mapped[Optional[int]] = mapped_column(BigInteger)
     duration_raw: Mapped[Optional[str]] = mapped_column(String(200))
     event_type: Mapped[Optional[str]] = mapped_column(String(100))
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
-    linked_note_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("notes.id", ondelete="SET NULL")
-    )
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    linked_note_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("notes.id", ondelete="SET NULL"))
     linked_session_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("play_sessions.id", ondelete="SET NULL")
     )
@@ -1133,9 +960,7 @@ class TimelineEvent(Base):
         String(36), ForeignKey("characters.id", ondelete="SET NULL")
     )
     color: Mapped[Optional[str]] = mapped_column(String(20))
-    is_secret: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
+    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1170,12 +995,8 @@ class Faction(Base):
     __tablename__ = "factions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1183,15 +1004,9 @@ class Faction(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     alignment: Mapped[Optional[str]] = mapped_column(String(100))
     disposition: Mapped[Optional[str]] = mapped_column(String(100))
-    avatar_asset_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("assets.id", ondelete="SET NULL")
-    )
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
-    linked_note_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("notes.id", ondelete="SET NULL")
-    )
+    avatar_asset_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("assets.id", ondelete="SET NULL"))
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    linked_note_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("notes.id", ondelete="SET NULL"))
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'")
     )
@@ -1222,9 +1037,7 @@ class FactionMembership(Base):
     __tablename__ = "faction_memberships"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    faction_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("factions.id", ondelete="CASCADE"), nullable=False
-    )
+    faction_id: Mapped[str] = mapped_column(String(36), ForeignKey("factions.id", ondelete="CASCADE"), nullable=False)
     character_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False
     )
@@ -1241,9 +1054,7 @@ class FactionMembership(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "faction_id", "character_id", name="uq_faction_memberships_faction_char"
-        ),
+        UniqueConstraint("faction_id", "character_id", name="uq_faction_memberships_faction_char"),
         Index("ix_faction_memberships_faction_id", "faction_id"),
         Index("ix_faction_memberships_character_id", "character_id"),
     )
@@ -1264,12 +1075,8 @@ class Location(Base):
     __tablename__ = "locations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     parent_location_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("locations.id", ondelete="SET NULL")
     )
@@ -1280,18 +1087,10 @@ class Location(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     location_type: Mapped[Optional[str]] = mapped_column(String(100))
     population: Mapped[Optional[int]] = mapped_column(Integer)
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
-    avatar_asset_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("assets.id", ondelete="SET NULL")
-    )
-    linked_map_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("maps.id", ondelete="SET NULL")
-    )
-    linked_note_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("notes.id", ondelete="SET NULL")
-    )
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    avatar_asset_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("assets.id", ondelete="SET NULL"))
+    linked_map_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("maps.id", ondelete="SET NULL"))
+    linked_note_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("notes.id", ondelete="SET NULL"))
     metadata_: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'")
     )
@@ -1335,9 +1134,7 @@ class LocationConnection(Base):
     connection_type: Mapped[Optional[str]] = mapped_column(String(100))
     travel_time: Mapped[Optional[str]] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text)
-    is_bidirectional: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
+    is_bidirectional: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1367,12 +1164,8 @@ class Item(Base):
     __tablename__ = "items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[str] = mapped_column(String(36), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1382,18 +1175,10 @@ class Item(Base):
     rarity: Mapped[Optional[str]] = mapped_column(String(50))
     weight: Mapped[Optional[float]] = mapped_column(Float)
     value_gp: Mapped[Optional[float]] = mapped_column(Float)
-    properties: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default=text("'{}'")
-    )
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
-    linked_note_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("notes.id", ondelete="SET NULL")
-    )
-    avatar_asset_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("assets.id", ondelete="SET NULL")
-    )
+    properties: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    linked_note_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("notes.id", ondelete="SET NULL"))
+    avatar_asset_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("assets.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1424,15 +1209,9 @@ class CharacterItem(Base):
     character_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False
     )
-    item_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("items.id", ondelete="CASCADE"), nullable=False
-    )
-    quantity: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1, server_default=text("1")
-    )
-    is_equipped: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
+    item_id: Mapped[str] = mapped_column(String(36), ForeignKey("items.id", ondelete="CASCADE"), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    is_equipped: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     acquired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -1471,15 +1250,9 @@ class MapPin(Base):
     __tablename__ = "map_pins"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    map_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("maps.id", ondelete="CASCADE"), nullable=False
-    )
-    layer_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("map_layers.id", ondelete="SET NULL")
-    )
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    map_id: Mapped[str] = mapped_column(String(36), ForeignKey("maps.id", ondelete="CASCADE"), nullable=False)
+    layer_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("map_layers.id", ondelete="SET NULL"))
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     label: Mapped[Optional[str]] = mapped_column(String(300))
     description: Mapped[Optional[str]] = mapped_column(Text)
     pin_type: Mapped[Optional[str]] = mapped_column(String(100))
@@ -1490,9 +1263,7 @@ class MapPin(Base):
     is_restricted: Mapped[bool] = mapped_column(
         "is_gm_only", Boolean, nullable=False, default=False, server_default=text("0")
     )
-    linked_note_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("notes.id", ondelete="SET NULL")
-    )
+    linked_note_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("notes.id", ondelete="SET NULL"))
     linked_location_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("locations.id", ondelete="SET NULL")
     )
@@ -1537,9 +1308,7 @@ class StarredItem(Base):
     __tablename__ = "starred_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
     entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -1550,9 +1319,7 @@ class StarredItem(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "user_id", "entity_type", "entity_id", name="uq_starred_items_user_entity"
-        ),
+        UniqueConstraint("user_id", "entity_type", "entity_id", name="uq_starred_items_user_entity"),
         Index("ix_starred_items_user_id", "user_id"),
         Index("ix_starred_items_entity", "entity_type", "entity_id"),
     )
@@ -1574,31 +1341,19 @@ class AIConversation(Base):
     __tablename__ = "ai_conversations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    group_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="SET NULL")
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("groups.id", ondelete="SET NULL"))
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
     title: Mapped[Optional[str]] = mapped_column(String(500))
     context_type: Mapped[Optional[str]] = mapped_column(String(100))
     context_entity_id: Mapped[Optional[str]] = mapped_column(String(36))
     model_id: Mapped[Optional[str]] = mapped_column(String(200))
-    total_input_tokens: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
-    total_output_tokens: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    total_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    total_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     total_cost_usd: Mapped[Decimal] = mapped_column(
         Numeric(10, 6), nullable=False, default=Decimal("0"), server_default=text("0")
     )
-    is_archived: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1678,9 +1433,7 @@ class UserAISettings(Base):
     current_month_usage_usd: Mapped[Decimal] = mapped_column(
         Numeric(10, 6), nullable=False, default=Decimal("0"), server_default=text("0")
     )
-    current_month_token_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
+    current_month_token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     usage_reset_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -1713,12 +1466,8 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
-    group_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="SET NULL")
-    )
+    user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    group_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("groups.id", ondelete="SET NULL"))
     action: Mapped[str] = mapped_column(String(200), nullable=False)
     entity_type: Mapped[Optional[str]] = mapped_column(String(100))
     entity_id: Mapped[Optional[str]] = mapped_column(String(36))
@@ -1726,9 +1475,7 @@ class AuditLog(Base):
     user_agent: Mapped[Optional[str]] = mapped_column(Text)
     request_id: Mapped[Optional[str]] = mapped_column(String(100))
     changes: Mapped[Optional[dict]] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="success", server_default=text("'success'")
-    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="success", server_default=text("'success'"))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -1758,15 +1505,9 @@ class FeatureFlag(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    is_enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
-    rollout_percentage: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
-    )
-    enabled_for_user_ids: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'")
-    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
+    rollout_percentage: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    enabled_for_user_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
     enabled_for_group_ids: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'")
     )
@@ -1801,9 +1542,7 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     value: Mapped[dict] = mapped_column(JSONB, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    is_sensitive: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
-    )
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1835,15 +1574,9 @@ class Presence(Base):
     __tablename__ = "presence"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    campaign_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False
-    )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    status: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="online", server_default=text("'online'")
-    )
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="online", server_default=text("'online'"))
     current_view: Mapped[Optional[str]] = mapped_column(String(200))
     last_heartbeat_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -1884,14 +1617,10 @@ class Relationship(Base):
         String(30), nullable=False, default="bidirectional", server_default=text("'bidirectional'")
     )
     label: Mapped[Optional[str]] = mapped_column(Text)
-    weight: Mapped[float] = mapped_column(
-        Float, nullable=False, default=1.0, server_default=text("1.0")
-    )
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default=text("1.0"))
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False)
     vault_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    meta: Mapped[str] = mapped_column(
-        Text, nullable=False, default="{}", server_default=text("'{}'")
-    )
+    meta: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1905,9 +1634,7 @@ class Relationship(Base):
         onupdate=datetime.utcnow,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
 
     __table_args__ = (
         Index("idx_rel_source", "source_id", "vault_id"),
@@ -1927,15 +1654,9 @@ class ActivityFeed(Base):
     __tablename__ = "activity_feed"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    group_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("groups.id", ondelete="SET NULL")
-    )
-    campaign_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("campaigns.id", ondelete="SET NULL")
-    )
-    user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    group_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("groups.id", ondelete="SET NULL"))
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="SET NULL"))
+    user_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     activity_type: Mapped[str] = mapped_column(String(200), nullable=False)
     entity_type: Mapped[Optional[str]] = mapped_column(String(100))
     entity_id: Mapped[Optional[str]] = mapped_column(String(36))
