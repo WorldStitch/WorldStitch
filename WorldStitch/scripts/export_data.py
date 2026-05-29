@@ -1,4 +1,4 @@
-﻿"""
+"""
 export_data.py — Export or restore all WorldStitch user data.
 
 Usage
@@ -12,7 +12,7 @@ Restore from a previously exported zip:
 What is exported
 ----------------
 - All vault markdown files (notes, folders)
-- .dnd_meta/ structured model data (characters, maps, etc.)
+- .ws_meta/ structured model data (characters, maps, etc.)
 - config/settings.json
 - logs/audit.log
 - WorldStitch/ai/ai_usage_log.csv
@@ -67,16 +67,16 @@ def export_data(output_dir: Path) -> Path:
         # 1. Vault markdown files
         if vault_path.exists():
             for p in vault_path.rglob("*"):
-                if p.is_file() and not any(part.startswith(".") for part in p.parts if part not in (".dnd_meta",)):
+                if p.is_file() and not any(part.startswith(".") for part in p.parts if part not in (".ws_meta",)):
                     arc = "vault/" + str(p.relative_to(vault_path))
                     zf.write(p, arc)
                     file_count += 1
 
-            # 2. .dnd_meta structured data
-            dnd_meta = vault_path / ".dnd_meta"
-            if dnd_meta.exists():
-                for p in dnd_meta.rglob("*.json"):
-                    arc = "dnd_meta/" + str(p.relative_to(dnd_meta))
+            # 2. .ws_meta structured data
+            ws_meta = vault_path / ".ws_meta"
+            if ws_meta.exists():
+                for p in ws_meta.rglob("*.json"):
+                    arc = "ws_meta/" + str(p.relative_to(ws_meta))
                     zf.write(p, arc)
                     file_count += 1
 
@@ -149,10 +149,10 @@ def restore_data(zip_path: Path, target: Path) -> None:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(zf.read(name))
 
-        # Extract .dnd_meta
-        meta_target = vault_target / ".dnd_meta"
+        # Extract .ws_meta
+        meta_target = vault_target / ".ws_meta"
         for name in zf.namelist():
-            if name.startswith("dnd_meta/"):
+            if name.startswith("ws_meta/"):
                 dest = meta_target / name[9:]
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(zf.read(name))

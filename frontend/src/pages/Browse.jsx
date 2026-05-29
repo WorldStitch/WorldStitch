@@ -6,11 +6,7 @@ import { ChevronRight, ChevronLeft, FilePlus, FolderPlus, Upload, Download, Netw
 import Card from '@/components/Card';
 import FolderTree from '@/components/browse/FolderTree';
 import NoteEditor from '@/components/browse/NoteEditor';
-import TagPanel from '@/components/browse/TagPanel';
-import MetaPanel from '@/components/browse/MetaPanel';
-import PermissionsPanel from '@/components/browse/PermissionsPanel';
-import BacklinksPanel from '@/components/browse/BacklinksPanel';
-import RelationshipPanel from '@/components/browse/RelationshipPanel';
+import EntryDetailsPanel from '@/components/browse/EntryDetailsPanel';
 import Graph from '@/pages/Graph';
 import { notes, folders, ai, groups, users, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { useVault } from '@/context/VaultContext';
@@ -52,16 +48,8 @@ export default function Browse({ user }) {
   // ── Tag filter ───────────────────────────────────────────────────────────
   const [tagFilter, setTagFilter] = useState('');
 
-  // ── New tag input ────────────────────────────────────────────────────────
-  const [newTag, setNewTag] = useState('');
-
   // ── Move note ────────────────────────────────────────────────────────────
   const [showMoveDialog, setShowMoveDialog] = useState(false);
-
-  // ── Metadata editing ─────────────────────────────────────────────────────
-  const [showMetaEditor, setShowMetaEditor] = useState(false);
-  const [metaKey, setMetaKey] = useState('');
-  const [metaValue, setMetaValue] = useState('');
 
   // ── Toolbar modals ───────────────────────────────────────────────────────
   const [showNewNoteToolbar, setShowNewNoteToolbar] = useState(false);
@@ -286,7 +274,6 @@ export default function Browse({ user }) {
 
   const handleSelectNote = (noteItem) => {
     setIsEditing(false);
-    setShowMetaEditor(false);
     setShowMoveDialog(false);
     setSelectedNoteId(noteItem.id);
   };
@@ -370,11 +357,10 @@ export default function Browse({ user }) {
     deleteFolderMutation.mutate(folderId);
   };
 
-  const handleAddTag = async () => {
-    if (!selectedNote || !newTag.trim()) return;
+  const handleAddTag = async (tag) => {
+    if (!selectedNote || !tag) return;
     try {
-      await notes.addTag(selectedNote.id, newTag.trim());
-      setNewTag('');
+      await notes.addTag(selectedNote.id, tag);
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
       queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       toast.success('Tag added');
@@ -459,16 +445,14 @@ export default function Browse({ user }) {
     }
   };
 
-  const handleAddMeta = async () => {
-    if (!selectedNote || !metaKey.trim()) return;
+  const handleAddMeta = async (key, value) => {
+    if (!selectedNote || !key) return;
     try {
-      await notes.updateMeta(selectedNote.id, { [metaKey.trim()]: metaValue });
-      setMetaKey('');
-      setMetaValue('');
+      await notes.updateMeta(selectedNote.id, { [key]: value });
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
-      toast.success('Metadata updated');
+      toast.success('Property added');
     } catch (err) {
-      toast.error('Failed to update metadata: ' + err.message);
+      toast.error('Failed to add property: ' + err.message);
     }
   };
 
@@ -477,9 +461,9 @@ export default function Browse({ user }) {
     try {
       await notes.updateMeta(selectedNote.id, { [key]: '' });
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
-      toast.success('Metadata removed');
+      toast.success('Property removed');
     } catch (err) {
-      toast.error('Failed to remove metadata: ' + err.message);
+      toast.error('Failed to remove property: ' + err.message);
     }
   };
 
@@ -760,113 +744,40 @@ export default function Browse({ user }) {
                 }`}
               >
                 <Card className="w-[280px] h-full flex flex-col overflow-hidden p-0">
-                  <div className="px-4 py-3 border-b border-txt-muted/10 flex items-center justify-between flex-shrink-0">
-                    <h3 className="text-sm font-bold text-txt">Properties</h3>
+                  {/* Panel header with collapse button */}
+                  <div className="flex-shrink-0 flex items-center justify-end px-3 py-2 border-b border-txt-muted/[0.08]">
                     <button
                       onClick={() => setRightPanelOpen(false)}
-                      className="text-txt-muted hover:text-txt transition p-0.5 rounded"
+                      className="text-txt-muted/50 hover:text-txt transition p-1 rounded"
                       title="Collapse panel"
                     >
-                      <ChevronRight size={15} />
+                      <ChevronRight size={14} />
                     </button>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-3 space-y-4">
-                    <TagPanel
+                  {/* Scrollable content */}
+                  <div className="flex-1 overflow-y-auto">
+                    <EntryDetailsPanel
                       selectedNote={selectedNote}
-                      newTag={newTag}
-                      onNewTagChange={setNewTag}
+                      user={user}
+                      userList={userList}
+                      allFolders={allFolders}
+                      allNotes={allNotes}
+                      activeVaultId={activeVaultId}
+                      canEdit={canEdit}
+                      canManagePermissions={canManagePermissions}
+                      groupList={groupList}
+                      wordCount={wordCount}
                       onAddTag={handleAddTag}
                       onRemoveTag={handleRemoveTag}
                       onSuggestTags={handleSuggestTags}
-                    />
-
-                    <PermissionsPanel
-                      selectedNote={selectedNote}
-                      allFolders={allFolders}
-                      onSetGroup={handleSetGroup}
-                      groups={groupList}
-                      users={userList}
-                      canEdit={canEdit}
-                      onSetPermission={handleSetPermission}
-                      onToggleGmOnly={handleToggleGmOnly}
-                    />
-
-                    <MetaPanel
-                      selectedNote={selectedNote}
-                      showMetaEditor={showMetaEditor}
-                      onToggleMetaEditor={() => setShowMetaEditor((v) => !v)}
-                      metaKey={metaKey}
-                      metaValue={metaValue}
-                      onMetaKeyChange={setMetaKey}
-                      onMetaValueChange={setMetaValue}
                       onAddMeta={handleAddMeta}
                       onRemoveMeta={handleRemoveMeta}
+                      onSetGroup={handleSetGroup}
+                      onSetPermission={handleSetPermission}
+                      onToggleGmOnly={handleToggleGmOnly}
+                      onNavigate={handleNavigateByLink}
                     />
-
-                    <div className="border-t border-txt-muted/10 pt-4">
-                      <BacklinksPanel
-                        noteId={selectedNote.id}
-                        onNavigate={handleNavigateByLink}
-                      />
-                    </div>
-
-                    <div className="border-t border-txt-muted/10 pt-4">
-                      <RelationshipPanel
-                        entityId={selectedNote.id}
-                        vaultId={activeVaultId}
-                        allNotes={allNotes}
-                        onNavigate={(noteId) => {
-                          const note = allNotes.find(n => n.id === noteId);
-                          if (note) handleSelectNote(note);
-                        }}
-                      />
-                    </div>
-
-                    {selectedNote.ai_summary && (
-                      <div>
-                        <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">
-                          AI Summary
-                        </p>
-                        <p className="text-xs text-txt-secondary">{selectedNote.ai_summary}</p>
-                      </div>
-                    )}
-
-                    <div className="border-t border-txt-muted/10 pt-3">
-                      <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-2">
-                        Info
-                      </p>
-                      <div className="space-y-1 text-xs text-txt-muted">
-                        <div className="flex justify-between">
-                          <span>Created</span>
-                          <span className="text-txt">
-                            {new Date(selectedNote.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Modified</span>
-                          <span className="text-txt">
-                            {new Date(selectedNote.last_modified).toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Words</span>
-                          <span className="text-txt">{wordCount(selectedNote.content)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Owner</span>
-                          <span className="text-txt truncate ml-2">
-                            {selectedNote.owner_id || 'N/A'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>ID</span>
-                          <span className="text-txt truncate ml-2 font-mono text-[10px]">
-                            {selectedNote.id}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 </Card>
               </div>

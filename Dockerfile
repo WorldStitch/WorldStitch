@@ -17,7 +17,7 @@ FROM python:3.11-slim
 # ── System deps ──────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
-        libsqlite3-dev \
+        libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Working directory ─────────────────────────────────────────────────────────

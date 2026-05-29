@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a FastAPI backend server that wraps the existing WorldStitch Python backend and exposes it as REST endpoints for the Electron/React frontend.
+This is a FastAPI backend server that wraps the WorldStitch Python layer and exposes it as REST endpoints for the React frontend.
 
 The server initializes an `AppContext` on startup, which provides access to all services (config, storage, auth, managers, AI, etc.) in a single service locator pattern.
 
@@ -166,7 +166,7 @@ async def example(
 
 ## Token Management
 
-Tokens are stored in memory via `TokenStore` in `deps.py`. For a local desktop app, this is sufficient.
+Tokens are stored in memory via `TokenStore` in `deps.py`. For a single-server deployment this is sufficient; for multi-process or clustered deployments use Redis or a database-backed store.
 
 Key methods:
 - `store(token, user_id)` — Map a token to a user

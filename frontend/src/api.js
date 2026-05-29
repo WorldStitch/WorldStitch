@@ -1,12 +1,4 @@
-/**
- * WorldStitch API Client
- * Talks to the FastAPI backend on localhost:8741.
- */
-
-const BASE =
-  typeof window !== "undefined" && window.electronAPI
-    ? "http://127.0.0.1:8741"
-    : (import.meta.env.VITE_API_URL || "");
+const BASE = import.meta.env.VITE_API_URL || "";
 
 export function getApiBase() {
   return BASE;
@@ -304,6 +296,10 @@ export const vaults = {
   create: (data) => request("POST", "/vaults/", data),
   update: (id, data) => request("PUT", `/vaults/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}`),
+  getAiKeyStatus: (id) => request("GET", `/vaults/${encodeURIComponent(id)}/ai-key/status`),
+  saveAiKey: (id, api_key) => request("POST", `/vaults/${encodeURIComponent(id)}/ai-key`, { api_key }),
+  removeAiKey: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}/ai-key`),
+  setAiSharing: (id, shared) => request("PUT", `/vaults/${encodeURIComponent(id)}/ai-key/sharing`, { shared }),
   exportZip: async (id) => {
     const headers = {};
     if (_token) headers["Authorization"] = `Bearer ${_token}`;

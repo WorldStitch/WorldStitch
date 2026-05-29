@@ -50,8 +50,8 @@ python -m PyInstaller ^
   --hidden-import anyio._backends._asyncio ^
   --hidden-import email.mime.multipart ^
   --hidden-import email.mime.text ^
-  --hidden-import sqlalchemy.dialects.sqlite ^
-  --hidden-import aiosqlite ^
+  --hidden-import sqlalchemy.dialects.postgresql ^
+  --hidden-import psycopg2 ^
   scripts\server_entry.py
 
 if %ERRORLEVEL% neq 0 (

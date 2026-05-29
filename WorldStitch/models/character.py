@@ -1,12 +1,11 @@
-﻿"""
-Character model — PCs, NPCs, monsters, and any named entity in the world.
+"""
+Character model — player characters, NPCs, monsters, and any named entity in the world.
 
-Characters belong to a Vault and are always owned by a User (even NPCs
-are owned by the GM's user account). The is_npc flag distinguishes
-player characters from GM-controlled entities.
+Characters belong to a Vault and are always owned by a User. The is_npc flag
+distinguishes player characters from other characters (NPCs, supporting cast, etc.).
 
 Multiuser: group_id and permissions support party-level visibility,
-e.g., a GM can mark an NPC's secrets as GM-only.
+e.g., a vault owner can mark an NPC's secrets as owner-only.
 """
 
 from typing import Any, Dict, List, Optional
@@ -35,11 +34,11 @@ class Character(CoreModel):
     )
     is_npc: bool = Field(
         default=False,
-        description="True if GM-controlled NPC; False if player character.",
+        description="True if not a player character (NPC, supporting cast, etc.).",
     )
     stats: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Flexible key-value stats: HP, AC, skills, attributes, etc.",
+        description="Flexible key-value stats: system-specific attributes, skills, traits, etc.",
     )
     tags: List[str] = Field(default_factory=list, description="Tags for search, AI context, and grouping.")
     note_ids: List[str] = Field(default_factory=list, description="IDs of notes attached to this character.")

@@ -1,19 +1,18 @@
-﻿"""
+"""
 Vector Index Location Strategy for WorldStitch.
 
 Provides a location-agnostic interface for building and querying a vector
-index over vault notes. The index can live in memory, in SQLite-VSS, on
-disk via FAISS, or be managed by LlamaIndex — controlled by VectorIndexConfig.
+index over vault notes. The index can live in memory, on disk via FAISS,
+or be managed by LlamaIndex — controlled by VectorIndexConfig.
 
 Wire-in:
   - Once sentence_transformers is confirmed available, instantiate
-    VectorIndexManager in SQLiteBackend.__init__() (see the placeholder
-    comment there) and expose it via AppContext.
+    VectorIndexManager in the storage backend __init__() and expose it
+    via AppContext.
   - Replace the current IndexManager (ai/core/index_manager.py) gradually:
     route OpenAI-backed semantic search through LLAMAINDEX_LOCAL and use
     IN_MEMORY for lightweight offline search without an API key.
-  - For production: switch to DISK_FAISS or SQLITE_VSS so the index
-    survives process restarts.
+  - For production: switch to DISK_FAISS so the index survives restarts.
 
 Current status: enabled=False by default so no packages are required at
 startup. is_available() does all dependency checks lazily at runtime.
@@ -25,7 +24,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Configuration types
 # ---------------------------------------------------------------------------
@@ -35,7 +33,6 @@ class VectorIndexLocation(Enum):
     """Where the vector index lives at runtime."""
 
     IN_MEMORY = "in_memory"
-    SQLITE_VSS = "sqlite_vss"
     DISK_FAISS = "disk_faiss"
     LLAMAINDEX_LOCAL = "llamaindex_local"
 
@@ -94,7 +91,6 @@ class VectorIndexManager:
             except ImportError:
                 return False
 
-        # SQLITE_VSS requires the sqlite-vss native extension — not checked yet.
         return False
 
     def build_index(self, notes: list[dict]) -> None:
