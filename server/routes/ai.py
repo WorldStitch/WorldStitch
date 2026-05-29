@@ -1,7 +1,7 @@
 """
 AI endpoints.
 
-GET  /ai/status          — readiness check (no auth required)
+GET  /ai/status          — readiness check (auth optional; returns user_can_use_ai when authenticated)
 POST /ai/ask             — ask the AI a question with vault context
 POST /ai/ask/stream      — streaming SSE version of ask
 POST /ai/summarize       — summarize text
@@ -22,7 +22,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -255,16 +255,26 @@ def _get_ai_for_user(
             logger.exception("Failed to resolve vault AI key for vault %s", vault_id)
 
     # 3. Platform key (privileged roles only)
-    if user_system_role in PLATFORM_KEY_ROLES and ctx.has_ai():
-        if store is not None:
-            store.check_and_increment(user_id)
-        return ctx.require_ai()
+    if user_system_role in PLATFORM_KEY_ROLES:
+        if ctx.has_ai():
+            if store is not None:
+                store.check_and_increment(user_id)
+            return ctx.require_ai()
+        # Role qualifies but platform key is not configured on the server
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "No platform AI key is configured on this server. "
+                "Add your personal OpenAI key in Settings → AI, or ask the "
+                "platform owner to set the OPENAI_API_KEY environment variable."
+            ),
+        )
 
-    # 4. Friendly error -- not a 503
+    # 4. Regular user — no key available
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=(
-            "No AI key is available. Add your OpenAI key in Settings -> AI, "
+            "No AI key is available. Add your OpenAI key in Settings → AI, "
             "or ask your vault owner to enable key sharing."
         ),
     )
@@ -276,10 +286,47 @@ def _get_ai_for_user(
 
 
 @router.get("/status")
-async def ai_status(ctx: AppContext = Depends(get_ctx)):
+async def ai_status(
+    ctx: AppContext = Depends(get_ctx),
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Platform AI readiness check.  Auth is optional — when a valid token is
+    supplied the response also includes ``user_can_use_ai`` reflecting whether
+    *this* user can actually make AI requests (personal key, platform key via
+    privileged role, etc.).  Used by the frontend to suppress false-positive
+    "AI not configured" banners for users who have a personal key configured.
+    """
+    platform_ready = ctx.has_ai()
+    # Default: if the platform has a key, assume any authenticated user can use it
+    user_can_use_ai = platform_ready
+
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            from server.auth_utils import decode_jwt
+
+            token = authorization.removeprefix("Bearer ").strip()
+            payload = decode_jwt(token)
+            user_id = payload.get("sub")
+            if user_id:
+                store = getattr(ctx.storage, "user_api_keys", None)
+                # Personal key → always works regardless of platform key
+                if store is not None and store.get_personal_key(user_id):
+                    user_can_use_ai = True
+                elif platform_ready:
+                    # Platform key present — only privileged roles may use it
+                    user_obj = ctx.users.get_user(user_id)
+                    role = getattr(user_obj, "system_role", "user") if user_obj else "user"
+                    user_can_use_ai = role in PLATFORM_KEY_ROLES
+                else:
+                    user_can_use_ai = False
+        except Exception:
+            pass  # malformed token — fall back to platform_ready
+
     return {
-        "ready": ctx.has_ai(),
-        "index_built": getattr(ctx.ai, "_index_ready", False) if ctx.has_ai() else False,
+        "ready": platform_ready,
+        "user_can_use_ai": user_can_use_ai,
+        "index_built": getattr(ctx.ai, "_index_ready", False) if platform_ready else False,
     }
 
 
