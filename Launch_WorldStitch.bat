@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 title WorldStitch
 cd /d "%~dp0"
 call :main
@@ -28,10 +28,6 @@ if errorlevel 1 (
 )
 echo [OK] FastAPI ready
 
-echo [..] Testing server...
-"%PYTHON%" -c "import sys; sys.path.insert(0,'.'); from server.app import app; print('Server OK')"
-echo [OK] Server works
-
 where node >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Node.js not found
@@ -55,11 +51,12 @@ echo [OK] API running
 
 echo.
 echo =============================================
-echo   Launching WorldStitch...
+echo   Launching WorldStitch (Vite dev server)...
+echo   Open http://localhost:5173 in your browser.
 echo =============================================
 echo.
 pushd frontend
-call npm run electron:dev
+call npm run dev
 popd
 
 taskkill /FI "WINDOWTITLE eq WorldStitch-API" /F >nul 2>&1
@@ -70,10 +67,6 @@ pushd frontend
 if not exist "node_modules\vite" (
     echo [SETUP] Installing npm packages...
     call npm install
-)
-if not exist "node_modules\electron" (
-    echo [SETUP] Installing Electron...
-    call npm install electron@30 concurrently wait-on --save-dev
 )
 popd
 exit /b 0

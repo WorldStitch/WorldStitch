@@ -274,7 +274,7 @@ export default function Chat() {
   //     even if the platform key is absent (personal key always works).
   const userCanUseAi =
     aiStatus?.user_can_use_ai ??          // new field from updated backend
-    (aiStatus?.ready || keyStatus?.has_personal_key ?? false);  // legacy fallback
+    ((aiStatus?.ready || keyStatus?.has_personal_key) ?? false);  // legacy fallback
 
   return (
     <div className="p-10 space-y-6 flex flex-col h-full">

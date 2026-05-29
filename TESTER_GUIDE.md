@@ -1,6 +1,6 @@
 # WorldStitch — External Tester Guide
 
-**Build stage:** Alpha · **Platform:** Windows (primary), macOS/Linux (dev only)
+**Build stage:** Alpha · **Platform:** Web (any modern browser)
 
 Thank you for testing WorldStitch! This guide walks you through setup, a tour of every feature, and concrete things to try (and break).
 
@@ -8,16 +8,14 @@ Thank you for testing WorldStitch! This guide walks you through setup, a tour of
 
 ## What Is WorldStitch?
 
-WorldStitch is a desktop application for vault owners and world builders. It lets you:
+WorldStitch is a web-based worldbuilding platform for vault owners and creators. It lets you:
 
 - **Write and organize notes** about your world or project
-- **Track characters** (player characters and characters) with stat blocks
+- **Track characters** with stat blocks and attached notes
 - **Log session recaps** and generate AI summaries
 - **Manage maps** with typed markers
-- **Chat with an AI** that can reference your campaign notes
+- **Chat with an AI** that can reference your notes
 - **Collaborate** through vaults, groups, and invite-based access
-
-The app runs as an Electron window. A small Python/FastAPI server runs in the background — you don't interact with it directly.
 
 ---
 
@@ -48,8 +46,6 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
-
-> If you see a red error about `PyQt6`, ignore it — it's an optional GUI dependency not needed for the server.
 
 ### 3 — Set up your `.env` file
 
@@ -85,12 +81,9 @@ cd ..
 
 ## Launching the App
 
-### Option A — Double-click launcher (easiest)
+### Option A — Convenience launcher (easiest)
 
-Run `Launch_WorldStitch.bat` from the project root. It:
-1. Verifies Python venv and Node.js
-2. Starts the FastAPI backend in a minimized window
-3. Opens the Electron app
+Run `Launch_WorldStitch.bat` from the project root. It starts both the backend and the Vite dev server, then opens your browser.
 
 ### Option B — Manual (for developers)
 
@@ -102,8 +95,10 @@ python -m uvicorn server.app:app --host 127.0.0.1 --port 8741
 In another terminal:
 ```powershell
 cd frontend
-npm run electron:dev
+npm run dev
 ```
+
+Then open `http://localhost:5173` in your browser.
 
 ---
 
@@ -138,7 +133,7 @@ Hierarchical note editor. Create folders and markdown notes, attach tags, and li
 - [ ] Edit the note — write some markdown, save
 - [ ] Use **Suggest Tags** (AI button) — should propose tags based on note content
 - [ ] Use **Propose Links** — should suggest connections to other notes
-- [ ] Rename and move a note via the right-click/context menu
+- [ ] Rename and move a note via the context menu
 - [ ] Delete a note (confirm it disappears from the tree)
 - [ ] Search using the search bar above the note list
 
@@ -146,11 +141,10 @@ Hierarchical note editor. Create folders and markdown notes, attach tags, and li
 
 ### Characters
 
-Manage player characters and characters with full stat blocks.
+Manage characters with full stat blocks.
 
 **Try:**
-- [ ] Click **New** and create a Player Character — fill in name, race, class, level, and some ability scores
-- [ ] Create a character
+- [ ] Click **New** and create a character — fill in name, race, class, level, and some ability scores
 - [ ] Use the All / Players / Characters filter tabs
 - [ ] Search by character name
 - [ ] Attach a note to a character (in the "Attached Notes" section)
@@ -161,7 +155,7 @@ Manage player characters and characters with full stat blocks.
 
 ### Sessions
 
-Session log. Write raw session notes and optionally generate an AI recap.
+Session log. Write raw notes and optionally generate an AI recap.
 
 **Try:**
 - [ ] Click **+ New Session** and fill in a title, date, and participants
@@ -169,13 +163,13 @@ Session log. Write raw session notes and optionally generate an AI recap.
 - [ ] Click **Create Session** to save
 - [ ] Click **✨ Generate Recap** (requires OpenAI key) — should produce a formatted summary
 - [ ] Edit and re-save the session
-- [ ] Delete a session via the **Delete** button (should show a confirmation toast — no browser popup)
+- [ ] Delete a session via the **Delete** button
 
 ---
 
 ### Maps
 
-Manage world maps, dungeon layouts, city plans, etc.
+Manage world maps and location layouts.
 
 **Try:**
 - [ ] Click **New** and create a Region map
@@ -183,13 +177,13 @@ Manage world maps, dungeon layouts, city plans, etc.
 - [ ] Click **Add Marker**, fill in label + X/Y coordinates, click Add
 - [ ] Verify the marker appears in the marker list
 - [ ] Save the map
-- [ ] Filter the map list by type (Region, Dungeon, City, World)
+- [ ] Filter the map list by type
 
 ---
 
 ### Chat (AI)
 
-Conversational AI with optional campaign context.
+Conversational AI with optional vault context.
 
 **Try (requires OpenAI key):**
 - [ ] Ask a general question: "What are the main factions in my story?"
@@ -201,7 +195,7 @@ Conversational AI with optional campaign context.
 
 ### Vaults
 
-Vaults are top-level containers. One vault = one campaign (or workspace).
+Vaults are top-level containers. One vault = one project or workspace.
 
 **Try:**
 - [ ] Create a second vault
@@ -216,7 +210,7 @@ Vaults are top-level containers. One vault = one campaign (or workspace).
 Groups let you assign roles to sets of users within a vault.
 
 **Try:**
-- [ ] Create a group ("Players", "Observers")
+- [ ] Create a group
 - [ ] Invite a user to the group
 - [ ] Verify group members appear correctly
 
@@ -236,10 +230,8 @@ Groups let you assign roles to sets of users within a vault.
 | Area | Status |
 |------|--------|
 | Map image rendering | Image paths are stored but not yet displayed; the image viewer is a placeholder |
-| Electron packaged build | `npm run electron:build` produces an `.exe` but it's not yet signed — Windows Defender may warn |
 | AI features offline | Chat, recap, and tag suggestion require an active internet connection and a valid OpenAI key |
 | Multi-user real-time sync | Presence indicators exist but full conflict resolution is not implemented |
-| Mobile / web | The app is desktop-only; the web dev server (`npm run dev`) works for development but is not supported for testing |
 
 ---
 
@@ -252,11 +244,11 @@ When filing a bug, include:
 1. **Steps to reproduce** — what did you click / type?
 2. **Expected vs. actual behavior**
 3. **Screenshot or screen recording** if the UI looks wrong
-4. **Console logs** — in the Electron app, open DevTools with `Ctrl+Shift+I` → Console tab, copy any red errors
+4. **Console logs** — open browser DevTools with `F12` → Console tab, copy any red errors
 
 ### Log files
 
-The backend writes logs to `logs/app.log` in the project root. If the app crashed or the API didn't start, this file is the first place to look.
+The backend writes logs to `logs/app.log` in the project root. If the API didn't start, this file is the first place to look.
 
 ---
 
@@ -265,12 +257,11 @@ The backend writes logs to `logs/app.log` in the project root. If the app crashe
 | Symptom | Fix |
 |---------|-----|
 | "Python not found" at launch | Install Python 3.11+ and ensure it's on `PATH`, or re-run `python -m venv .venv` |
-| App opens but shows loading spinner forever | Check that uvicorn started — look at the minimized "WorldStitch-API" terminal window |
+| Browser shows "Cannot connect" | Check that uvicorn is running and `VITE_API_URL` (or proxy config) points to port 8741 |
 | Login fails with "Invalid credentials" | Double-check `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env` |
 | AI features return errors | Verify `OPENAI_API_KEY` in `.env` is valid and has available credits |
 | "No vault selected" on Characters/Maps/Sessions | Go to `/vaults` and create or select a vault |
-| Blank white Electron window | Wait 10–15 seconds — Vite dev server may still be compiling |
 
 ---
 
-*Last updated: 2026-05-13*
+*Last updated: 2026-05-29*

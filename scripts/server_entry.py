@@ -1,9 +1,8 @@
-﻿"""
+"""
 PyInstaller entry point for the WorldStitch FastAPI server.
 
 Build with: scripts\build-backend.bat
-The resulting dist\server\ directory is bundled into the Electron installer
-as an extraResource and launched by electron/main.cjs at runtime.
+The resulting dist\server\ directory can be used for packaged deployments.
 """
 
 import os
@@ -12,17 +11,16 @@ from pathlib import Path
 
 # ── Frozen (packaged) setup ───────────────────────────────────────────────────
 if getattr(sys, "frozen", False):
-    # Electron passes the user-data directory so all relative paths
-    # (vault, logs, DB, settings.json) resolve to a writable location
-    # instead of the read-only Program Files install directory.
-    _data_dir_str = os.environ.get("MYTHOS_DATA_DIR")
+    # When running as a frozen/packaged binary, WS_DATA_DIR is used to point
+    # all relative paths (vault, logs, DB, settings.json) to a writable location.
+    _data_dir_str = os.environ.get("WS_DATA_DIR")
     if _data_dir_str:
         _data_dir = Path(_data_dir_str)
         _data_dir.mkdir(parents=True, exist_ok=True)
         os.chdir(str(_data_dir))
 
-        # Redirect Config._path to the user-data dir so settings persist
-        # across launches.  Must happen before any Config() is instantiated.
+        # Redirect Config._path to the data dir so settings persist across launches.
+        # Must happen before any Config() is instantiated.
         from WorldStitch.config import config as _cfg_module
 
         _settings_path = _data_dir / "config" / "settings.json"

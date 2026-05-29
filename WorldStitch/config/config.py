@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -8,7 +8,7 @@ from typing import Any, Optional
 CONFIG_FILENAME = "settings.json"
 DEFAULT_CONFIG = {
     "VAULT_PATH": "./Obsidian",
-    "VAULT_TYPE": "sqlite",
+    "VAULT_TYPE": "postgresql",
     "CORE_DATA_PATH": "./WorldStitch/data",
     "OPENAI_API_KEY": "",
     "EMBEDDING_MODEL": "text-embedding-3-small",
@@ -101,7 +101,7 @@ class Config:
             self.log_error(f"Failed to save config: {e}")
 
     def _init_logger(self):
-        self.logger = logging.getLogger("MythosLogger")
+        self.logger = logging.getLogger("WorldStitchLogger")
         self.logger.setLevel(logging.DEBUG)
 
         log_file = self._data.get("LOG_FILE", "logs/app.log")
@@ -155,7 +155,7 @@ class Config:
 
 
 def log_exception(e: Exception, context: str = ""):
-    logger = logging.getLogger("MythosLogger")
+    logger = logging.getLogger("WorldStitchLogger")
     if context:
         logger.exception("%s — unhandled exception: %s", context, e)
     else:
@@ -171,9 +171,9 @@ def load_note_templates():
 
     builtins = {
         "Blank Note": {"description": "Empty note", "content": "# Title\n\n"},
-        "NPC": {
-            "description": "D&D non-player character",
-            "content": "# NPC Name\n\n## Appearance\n\n## Personality\n\n## Background\n",
+        "Character": {
+            "description": "Non-player character",
+            "content": "# Character Name\n\n## Appearance\n\n## Personality\n\n## Background\n",
         },
         "Place": {
             "description": "Location/setting",
