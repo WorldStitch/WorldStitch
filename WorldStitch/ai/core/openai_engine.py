@@ -1,4 +1,4 @@
-﻿# WorldStitch/ai/core/openai_engine.py
+# WorldStitch/ai/core/openai_engine.py
 from typing import List, Tuple
 
 from openai import OpenAI
@@ -39,10 +39,14 @@ class OpenaiAI(AIInterface):
         self.embedding_model = embedding_model
         self.model = completion_model
 
-    def ask(self, prompt: str) -> Tuple[str, int, int]:
-        prompt_tokens = count_tokens(prompt, self.model) or 0
+    def ask(self, prompt: str, system_prompt: str = "") -> Tuple[str, int, int]:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        prompt_tokens = count_tokens((system_prompt + "\n" if system_prompt else "") + prompt, self.model) or 0
         try:
-            resp = self.client.chat.completions.create(model=self.model, messages=[{"role": "user", "content": prompt}])
+            resp = self.client.chat.completions.create(model=self.model, messages=messages)
             text = resp.choices[0].message.content.strip()
             resp_tokens = getattr(resp.usage, "completion_tokens", 0) or 0
             cost = estimate_cost(self.model, prompt_tokens, resp_tokens)
@@ -101,4 +105,6 @@ class OpenaiAI(AIInterface):
         self.max_tokens = max_tokens
 
     def search_context(self, query: str, top_k: int = 10) -> List[str]:
-        raise RuntimeError("OpenaiAI does not perform retrieval. Route 'search_context' through ModelRouter to the LoreAI backend.")
+        raise RuntimeError(
+            "OpenaiAI does not perform retrieval. Route 'search_context' through ModelRouter to the LoreAI backend."
+        )
