@@ -251,7 +251,9 @@ class EdgeRecord(Base):
     source_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     target_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     relationship_type: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    direction: Mapped[str] = mapped_column(String(30), nullable=False, default="bidirectional", server_default="bidirectional")
+    direction: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="bidirectional", server_default="bidirectional"
+    )
     label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1.0")
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
@@ -278,6 +280,105 @@ class AnalyticsEventRecord(Base):
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     event_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class AIConversationRecord(Base):
+    """Persisted AI chat conversation — messages stored as a JSON array."""
+
+    __tablename__ = "ai_conversations"
+    __table_args__ = (
+        Index("ix_ai_conversations_vault_id", "vault_id"),
+        Index("ix_ai_conversations_user_id", "user_id"),
+        Index("ix_ai_conversations_updated_at", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="Untitled")
+    messages: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON array
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class ConversationStore:
+    """CRUD helper for ai_conversations table."""
+
+    def __init__(self, engine):
+        self._engine = engine
+
+    def upsert(
+        self,
+        conv_id: Optional[str],
+        vault_id: str,
+        user_id: str,
+        title: str,
+        messages: list,
+    ) -> str:
+        """Create or update a conversation. Returns the conversation id."""
+        now = datetime.utcnow()
+        with Session(self._engine) as session:
+            if conv_id:
+                record = session.get(AIConversationRecord, conv_id)
+                if record and record.user_id == user_id:
+                    record.title = title
+                    record.messages = json.dumps(messages)
+                    record.updated_at = now
+                    session.commit()
+                    return conv_id
+            # Create new
+            new_id = str(uuid.uuid4())
+            record = AIConversationRecord(
+                id=new_id,
+                vault_id=vault_id,
+                user_id=user_id,
+                title=title,
+                messages=json.dumps(messages),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            session.commit()
+            return new_id
+
+    def list(self, vault_id: str, user_id: str) -> list:
+        """Return conversations for a vault/user, newest first."""
+        with Session(self._engine) as session:
+            rows = session.scalars(
+                select(AIConversationRecord)
+                .where(
+                    AIConversationRecord.vault_id == vault_id,
+                    AIConversationRecord.user_id == user_id,
+                )
+                .order_by(AIConversationRecord.updated_at.desc())
+                .limit(100)
+            ).all()
+            return [_conversation_to_dict(r) for r in rows]
+
+    def get(self, conv_id: str) -> Optional[dict]:
+        """Return one conversation dict, or None if not found."""
+        with Session(self._engine) as session:
+            record = session.get(AIConversationRecord, conv_id)
+            return _conversation_to_dict(record) if record else None
+
+    def delete(self, conv_id: str) -> None:
+        with Session(self._engine) as session:
+            record = session.get(AIConversationRecord, conv_id)
+            if record:
+                session.delete(record)
+                session.commit()
+
+
+def _conversation_to_dict(record: AIConversationRecord) -> dict:
+    return {
+        "id": record.id,
+        "vault_id": record.vault_id,
+        "user_id": record.user_id,
+        "title": record.title,
+        "messages": json.loads(record.messages or "[]"),
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+    }
 
 
 def _session_log_to_dict(record: SessionLogRecord) -> dict:
@@ -404,6 +505,9 @@ class SQLiteBackend(StorageBackend):
         # Vector index — in-memory semantic search; builds lazily on first write.
         self.vector_index = VectorIndexManager(VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True))
 
+        # AI conversation history — persisted per-vault chat sessions.
+        self.ai_conversations = ConversationStore(self.engine)
+
     def _session(self) -> Session:
         """Get a new database session."""
         return Session(self.engine)
@@ -415,14 +519,19 @@ class SQLiteBackend(StorageBackend):
     def _setup_postgres_fts(self) -> None:
         """Set up Postgres full-text search using tsvector column and GIN index."""
         with self.engine.begin() as conn:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 ALTER TABLE notes ADD COLUMN IF NOT EXISTS search_vector tsvector
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 CREATE INDEX IF NOT EXISTS ix_notes_search_vector
                 ON notes USING GIN(search_vector)
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 CREATE OR REPLACE FUNCTION notes_search_vector_update() RETURNS trigger AS $$
                 BEGIN
                     NEW.search_vector := to_tsvector('english',
@@ -433,22 +542,29 @@ class SQLiteBackend(StorageBackend):
                     RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 DROP TRIGGER IF EXISTS notes_search_vector_trigger ON notes
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 CREATE TRIGGER notes_search_vector_trigger
                 BEFORE INSERT OR UPDATE ON notes
                 FOR EACH ROW EXECUTE FUNCTION notes_search_vector_update()
-            """))
-            conn.execute(text("""
+            """)
+            )
+            conn.execute(
+                text("""
                 UPDATE notes SET search_vector = to_tsvector('english',
                     COALESCE(title, '') || ' ' ||
                     COALESCE(content, '') || ' ' ||
                     COALESCE(tags, '')
                 ) WHERE search_vector IS NULL
-            """))
+            """)
+            )
 
     def _setup_fts(self, conn) -> None:
         """Create the FTS5 virtual table and sync triggers on the raw SQLite connection."""
@@ -538,15 +654,9 @@ class SQLiteBackend(StorageBackend):
                 data TEXT NOT NULL DEFAULT '{}'
             )
         """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id, vault_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, vault_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_rel_vault ON relationships(vault_id, is_active)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id, vault_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, vault_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_vault ON relationships(vault_id, is_active)")
 
     def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
@@ -985,9 +1095,7 @@ class SQLiteBackend(StorageBackend):
             q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)  # noqa: E712
             if filter_id:
                 # Prefer campaign_id column; fall back to vault_id column for legacy rows
-                q = q.filter(
-                    or_(NoteRecord.campaign_id == filter_id, NoteRecord.vault_id == filter_id)
-                )
+                q = q.filter(or_(NoteRecord.campaign_id == filter_id, NoteRecord.vault_id == filter_id))
             if folder:
                 q = q.filter(NoteRecord.folder == folder)
             records = q.order_by(NoteRecord.created_at.desc()).all()
@@ -1164,7 +1272,9 @@ class SQLiteBackend(StorageBackend):
                 record.campaign_id = campaign_id or record.campaign_id
                 record.data = character.model_dump_json()
             else:
-                record = CharacterRecord(id=character.id, vault_id=vault_id, campaign_id=campaign_id, data=character.model_dump_json())
+                record = CharacterRecord(
+                    id=character.id, vault_id=vault_id, campaign_id=campaign_id, data=character.model_dump_json()
+                )
                 session.add(record)
             session.commit()
 
@@ -1197,9 +1307,7 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             q = session.query(CharacterRecord)
             if filter_id:
-                q = q.filter(
-                    or_(CharacterRecord.campaign_id == filter_id, CharacterRecord.vault_id == filter_id)
-                )
+                q = q.filter(or_(CharacterRecord.campaign_id == filter_id, CharacterRecord.vault_id == filter_id))
             for rec in q.all():
                 try:
                     char = Character.model_validate_json(rec.data)
@@ -1239,7 +1347,9 @@ class SQLiteBackend(StorageBackend):
                 record.campaign_id = campaign_id or record.campaign_id
                 record.data = map_obj.model_dump_json()
             else:
-                record = MapRecord(id=map_obj.id, vault_id=vault_id, campaign_id=campaign_id, data=map_obj.model_dump_json())
+                record = MapRecord(
+                    id=map_obj.id, vault_id=vault_id, campaign_id=campaign_id, data=map_obj.model_dump_json()
+                )
                 session.add(record)
             session.commit()
 
@@ -1272,9 +1382,7 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             q = session.query(MapRecord)
             if filter_id:
-                q = q.filter(
-                    or_(MapRecord.campaign_id == filter_id, MapRecord.vault_id == filter_id)
-                )
+                q = q.filter(or_(MapRecord.campaign_id == filter_id, MapRecord.vault_id == filter_id))
             for record in q.all():
                 try:
                     map_obj = Map.model_validate_json(record.data)
@@ -2099,9 +2207,14 @@ class SQLiteBackend(StorageBackend):
     def get_relationship(self, rel_id: str) -> Optional[Relationship]:
         """Retrieve a Relationship by ID. Returns None if not found or inactive."""
         with self._session() as session:
-            record = session.query(EdgeRecord).filter(
-                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
-            ).first()
+            record = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.id == rel_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
             if record:
                 return self._edge_to_relationship(record)
         return None
@@ -2110,11 +2223,15 @@ class SQLiteBackend(StorageBackend):
         """Return all active relationships where source_id OR target_id == entity_id."""
         results: List[Relationship] = []
         with self._session() as session:
-            records = session.query(EdgeRecord).filter(
-                or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
-                EdgeRecord.vault_id == vault_id,
-                EdgeRecord.is_active == True,  # noqa: E712
-            ).all()
+            records = (
+                session.query(EdgeRecord)
+                .filter(
+                    or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
+                    EdgeRecord.vault_id == vault_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
             for rec in records:
                 try:
                     results.append(self._edge_to_relationship(rec))
@@ -2126,10 +2243,14 @@ class SQLiteBackend(StorageBackend):
         """Return all active relationships for a vault."""
         results: List[Relationship] = []
         with self._session() as session:
-            records = session.query(EdgeRecord).filter(
-                EdgeRecord.vault_id == vault_id,
-                EdgeRecord.is_active == True,  # noqa: E712
-            ).all()
+            records = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.vault_id == vault_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
             for rec in records:
                 try:
                     results.append(self._edge_to_relationship(rec))
@@ -2151,9 +2272,14 @@ class SQLiteBackend(StorageBackend):
     def update_relationship(self, rel_id: str, updates: dict) -> Optional[Relationship]:
         """Apply updates dict to a relationship and return the updated record."""
         with self._session() as session:
-            record = session.query(EdgeRecord).filter(
-                EdgeRecord.id == rel_id, EdgeRecord.is_active == True  # noqa: E712
-            ).first()
+            record = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.id == rel_id,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
             if not record:
                 return None
             rel = self._edge_to_relationship(record)
@@ -2176,13 +2302,17 @@ class SQLiteBackend(StorageBackend):
     def relationship_exists(self, source_id: str, target_id: str, vault_id: str, rel_type: str) -> bool:
         """Return True if an active relationship with these params already exists."""
         with self._session() as session:
-            record = session.query(EdgeRecord).filter(
-                EdgeRecord.source_id == source_id,
-                EdgeRecord.target_id == target_id,
-                EdgeRecord.vault_id == vault_id,
-                EdgeRecord.relationship_type == rel_type,
-                EdgeRecord.is_active == True,  # noqa: E712
-            ).first()
+            record = (
+                session.query(EdgeRecord)
+                .filter(
+                    EdgeRecord.source_id == source_id,
+                    EdgeRecord.target_id == target_id,
+                    EdgeRecord.vault_id == vault_id,
+                    EdgeRecord.relationship_type == rel_type,
+                    EdgeRecord.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
             return record is not None
 
     # ========================================================================
@@ -2233,9 +2363,7 @@ class SQLiteBackend(StorageBackend):
 
         cutoff = datetime.utcnow() - timedelta(days=days)
         with self._session() as session:
-            q = session.query(AnalyticsEventRecord).filter(
-                AnalyticsEventRecord.created_at >= cutoff
-            )
+            q = session.query(AnalyticsEventRecord).filter(AnalyticsEventRecord.created_at >= cutoff)
             if user_id:
                 q = q.filter(AnalyticsEventRecord.user_id == user_id)
             if event_type:
@@ -2274,6 +2402,7 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 conn.execute(
                     _text(
@@ -2282,8 +2411,16 @@ class SQLiteBackend(StorageBackend):
                         "created_by_user_id, created_at, updated_at) VALUES "
                         "(:id, :gid, :name, :slug, :desc, :sys, 'active', :uid, :now, :now)"
                     ),
-                    dict(id=campaign_id, gid=group_id, name=name, slug=slug,
-                         desc=description or "", sys=system or "", uid=owner_user_id, now=now),
+                    dict(
+                        id=campaign_id,
+                        gid=group_id,
+                        name=name,
+                        slug=slug,
+                        desc=description or "",
+                        sys=system or "",
+                        uid=owner_user_id,
+                        now=now,
+                    ),
                 )
                 conn.commit()
         except Exception as exc:
@@ -2309,6 +2446,7 @@ class SQLiteBackend(StorageBackend):
         """Fetch a single campaign by ID; returns None if not found or deleted."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 row = conn.execute(
                     _text(
@@ -2328,6 +2466,7 @@ class SQLiteBackend(StorageBackend):
         """Return all active campaigns for a group, ordered by name."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
                     _text(
@@ -2349,6 +2488,7 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 # Upsert: delete existing then insert (SQLite lacks ON CONFLICT UPDATE cleanly)
                 conn.execute(
@@ -2371,6 +2511,7 @@ class SQLiteBackend(StorageBackend):
         """Return all members of a campaign."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
                     _text(
@@ -2380,8 +2521,13 @@ class SQLiteBackend(StorageBackend):
                     {"cid": campaign_id},
                 ).fetchall()
             return [
-                {"id": r[0], "campaign_id": r[1], "user_id": r[2], "role": r[3],
-                 "joined_at": r[4].isoformat() if r[4] else None}
+                {
+                    "id": r[0],
+                    "campaign_id": r[1],
+                    "user_id": r[2],
+                    "role": r[3],
+                    "joined_at": r[4].isoformat() if r[4] else None,
+                }
                 for r in rows
             ]
         except Exception as exc:
@@ -2398,6 +2544,7 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 conn.execute(
                     _text("DELETE FROM group_members WHERE group_id = :gid AND user_id = :uid"),
@@ -2419,17 +2566,20 @@ class SQLiteBackend(StorageBackend):
         """Return all members of a group from the group_members table."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
-                    _text(
-                        "SELECT id, group_id, user_id, role, joined_at "
-                        "FROM group_members WHERE group_id = :gid"
-                    ),
+                    _text("SELECT id, group_id, user_id, role, joined_at FROM group_members WHERE group_id = :gid"),
                     {"gid": group_id},
                 ).fetchall()
             return [
-                {"id": r[0], "group_id": r[1], "user_id": r[2], "role": r[3],
-                 "joined_at": r[4].isoformat() if r[4] else None}
+                {
+                    "id": r[0],
+                    "group_id": r[1],
+                    "user_id": r[2],
+                    "role": r[3],
+                    "joined_at": r[4].isoformat() if r[4] else None,
+                }
                 for r in rows
             ]
         except Exception as exc:
@@ -2440,6 +2590,7 @@ class SQLiteBackend(StorageBackend):
         """Return all groups a user belongs to (via group_members table)."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 rows = conn.execute(
                     _text(
@@ -2452,9 +2603,13 @@ class SQLiteBackend(StorageBackend):
                     {"uid": user_id},
                 ).fetchall()
             return [
-                {"group_id": r[0], "role": r[1],
-                 "joined_at": r[2].isoformat() if r[2] else None,
-                 "name": r[3], "owner_id": r[4]}
+                {
+                    "group_id": r[0],
+                    "role": r[1],
+                    "joined_at": r[2].isoformat() if r[2] else None,
+                    "name": r[3],
+                    "owner_id": r[4],
+                }
                 for r in rows
             ]
         except Exception as exc:
@@ -2489,20 +2644,32 @@ class SQLiteBackend(StorageBackend):
         now = datetime.utcnow()
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 existing = conn.execute(
                     _text("SELECT id FROM play_sessions WHERE id = :id"),
                     {"id": session_id},
                 ).fetchone()
                 if existing:
-                    updatable = ["title", "session_number", "session_date", "summary",
-                                 "raw_notes", "ai_recap", "xp_gained", "loot_notes", "status"]
+                    updatable = [
+                        "title",
+                        "session_number",
+                        "session_date",
+                        "summary",
+                        "raw_notes",
+                        "ai_recap",
+                        "xp_gained",
+                        "loot_notes",
+                        "status",
+                    ]
                     sets = ", ".join(f"{f} = :{f}" for f in updatable if f in data)
                     if sets:
                         params = {f: data[f] for f in updatable if f in data}
                         params["id"] = session_id
                         params["now"] = now
-                        conn.execute(_text(f"UPDATE play_sessions SET {sets}, updated_at = :now WHERE id = :id"), params)
+                        conn.execute(
+                            _text(f"UPDATE play_sessions SET {sets}, updated_at = :now WHERE id = :id"), params
+                        )
                 else:
                     conn.execute(
                         _text(
@@ -2514,7 +2681,8 @@ class SQLiteBackend(StorageBackend):
                             ":ai_recap, :xp, :loot, :status, :now, :now)"
                         ),
                         {
-                            "id": session_id, "cid": campaign_id,
+                            "id": session_id,
+                            "cid": campaign_id,
                             "uid": data.get("created_by_user_id", ""),
                             "title": data.get("title", ""),
                             "snum": data.get("session_number"),
@@ -2537,6 +2705,7 @@ class SQLiteBackend(StorageBackend):
         """Fetch a single play session; enforces campaign isolation if campaign_id is given."""
         try:
             from sqlalchemy import text as _text
+
             sql = (
                 "SELECT id, campaign_id, created_by_user_id, title, session_number, "
                 "session_date, summary, raw_notes, ai_recap, xp_gained, loot_notes, "
@@ -2559,6 +2728,7 @@ class SQLiteBackend(StorageBackend):
         """Return play sessions for a campaign, sorted newest first."""
         try:
             from sqlalchemy import text as _text
+
             with self.engine.connect() as conn:
                 total_row = conn.execute(
                     _text("SELECT COUNT(*) FROM play_sessions WHERE campaign_id = :cid AND deleted_at IS NULL"),
@@ -2585,6 +2755,7 @@ class SQLiteBackend(StorageBackend):
         """Soft-delete a play session by setting deleted_at."""
         try:
             from sqlalchemy import text as _text
+
             now = datetime.utcnow()
             sql = "UPDATE play_sessions SET deleted_at = :now WHERE id = :id"
             params: dict = {"now": now, "id": session_id}

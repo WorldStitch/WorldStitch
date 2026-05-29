@@ -1,13 +1,18 @@
 """
 AI endpoints.
 
-GET  /ai/status          — readiness check (no auth required)
-POST /ai/ask             — ask the AI a question with vault context
-POST /ai/ask/stream      — streaming SSE version of ask
-POST /ai/summarize       — summarize text
-POST /ai/suggest-tags    — suggest tags for text
-POST /ai/propose-links   — propose internal wiki links for a note
-GET  /ai/usage           — current-month token usage for the logged-in user
+GET  /ai/status                  — readiness check (no auth required)
+POST /ai/ask                     — ask the AI a question with vault context
+POST /ai/ask/stream              — streaming SSE version of ask
+POST /ai/summarize               — summarize text
+POST /ai/suggest-tags            — suggest tags for text
+POST /ai/propose-links           — propose internal wiki links for a note
+GET  /ai/usage                   — current-month token usage for the logged-in user
+
+GET  /ai/conversations/          — list saved conversations for active vault
+POST /ai/conversations/          — create or update a saved conversation
+GET  /ai/conversations/{id}      — fetch one saved conversation
+DELETE /ai/conversations/{id}    — delete a saved conversation
 """
 
 import asyncio
@@ -40,9 +45,29 @@ def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) 
 router = APIRouter(prefix="/ai", tags=["ai"])
 logger = logging.getLogger(__name__)
 
+# ── AI mode addenda ────────────────────────────────────────────────────────────
+
+_MODE_ADDENDA = {
+    "lore": (
+        "You are in **Lore Assistant** mode. Focus on world consistency, answer lore questions "
+        "precisely, and actively suggest connections between entities in the vault. When answering, "
+        "cite relevant notes when possible and flag any lore contradictions you notice."
+    ),
+    "writing": (
+        "You are in **Writing Helper** mode. Focus on narrative craft, character voice, scene "
+        "structure, and prose suggestions. Help the user write evocative descriptions, compelling "
+        "dialogue, and strong scene arcs. Draw on vault lore to keep fiction consistent."
+    ),
+    "gm": (
+        "You are in **GM Prep** mode. Focus on session planning, encounter design, NPC motivations, "
+        "pacing, and player hooks. Help the GM prepare memorable moments, interesting complications, "
+        "and satisfying session arcs grounded in the vault's existing lore."
+    ),
+}
+
 
 # ============================================================================
-# Request/Response models
+# Request / Response models
 # ============================================================================
 
 
@@ -50,12 +75,15 @@ class AskRequest(BaseModel):
     prompt: str
     vault_id: Optional[str] = None
     history: Optional[list[dict]] = None
+    mode: Optional[str] = "lore"
+    conversation_id: Optional[str] = None
 
 
 class AskResponse(BaseModel):
     response: str
     prompt_tokens: int
     completion_tokens: int
+    conversation_id: Optional[str] = None
 
 
 class SummarizeRequest(BaseModel):
@@ -90,9 +118,64 @@ class ProposeLinksResponse(BaseModel):
     completion_tokens: int
 
 
+class ConversationMessage(BaseModel):
+    role: str
+    content: str
+    tokens: Optional[int] = None
+    cost: Optional[float] = None
+    timestamp: Optional[str] = None
+
+
+class SaveConversationRequest(BaseModel):
+    vault_id: str
+    title: Optional[str] = None
+    messages: list[ConversationMessage]
+    id: Optional[str] = None
+
+
+class ConversationResponse(BaseModel):
+    id: str
+    vault_id: str
+    user_id: str
+    title: str
+    messages: list[dict]
+    created_at: str
+    updated_at: str
+
+
 # ============================================================================
 # Helpers
 # ============================================================================
+
+
+def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], mode: Optional[str]) -> str:
+    """
+    Build the WorldStitch identity system prompt.
+    Injected as a system message before every AI call — never skipped.
+    """
+    username = getattr(user, "username", None) or getattr(user, "email", "explorer")
+    vault_name = "your vault"
+
+    if vault_id:
+        try:
+            vault = ctx.storage.get_vault_by_id(vault_id)
+            if vault:
+                vault_name = vault.name
+        except Exception:
+            pass
+
+    base = (
+        f"You are the WorldStitch AI Assistant — a specialized worldbuilding companion built into "
+        f"the WorldStitch platform. You are currently helping **{username}** with their vault called "
+        f'**"{vault_name}"**. Your purpose is to help them develop their world, lore, characters, '
+        f"stories, and campaign notes. You have access to their vault's notes and lore index to answer "
+        f"questions about their world. Always respond as a knowledgeable worldbuilding assistant. "
+        f"Never forget your role or act as a generic AI assistant."
+    )
+
+    mode_key = (mode or "lore").lower()
+    addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
+    return base + "\n\n" + addendum
 
 
 def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
@@ -108,7 +191,7 @@ def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> st
 
 
 def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) -> str:
-    """Fetch recent notes from vault and prepend as context block."""
+    """Fetch relevant notes from vault and prepend as context block."""
     if not vault_id:
         return prompt
     try:
@@ -236,6 +319,11 @@ def _get_ai_for_user(user_id: str, ctx: AppContext):
     return ctx.require_ai()
 
 
+def _get_conversation_store(ctx: AppContext):
+    """Return the conversation store from the storage backend, or None if unavailable."""
+    return getattr(ctx.storage, "ai_conversations", None)
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
@@ -293,22 +381,62 @@ async def ask(
     """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set."""
     try:
         _apply_preferred_model(ctx)
-        ai = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
         full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
-        response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
+        response, prompt_tokens, completion_tokens = ai_engine.ask(full_prompt, system_prompt=system_prompt)
         cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
         ctx.analytics.track(
             "ai.request_completed",
             user_id=user.id,
-            data={"operation": "ask", "cost_usd": cost_usd, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            data={
+                "operation": "ask",
+                "cost_usd": cost_usd,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            },
         )
+
+        # Auto-save conversation to database
+        conv_id = req.conversation_id
+        try:
+            store = _get_conversation_store(ctx)
+            if store is not None and req.vault_id:
+                user_msg = {
+                    "role": "user",
+                    "content": req.prompt,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                ai_msg = {
+                    "role": "assistant",
+                    "content": response,
+                    "tokens": prompt_tokens + completion_tokens,
+                    "cost": cost_usd,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                # Reconstruct full message list from history + new exchange
+                existing_messages = list(req.history or [])
+                existing_messages.append(user_msg)
+                existing_messages.append(ai_msg)
+                # Auto-title from first user message
+                title = (req.prompt[:60] + "…") if len(req.prompt) > 60 else req.prompt
+                conv_id = store.upsert(
+                    conv_id=conv_id,
+                    vault_id=req.vault_id,
+                    user_id=str(user.id),
+                    title=title,
+                    messages=existing_messages,
+                )
+        except Exception:
+            logger.exception("Failed to auto-save conversation")
 
         return AskResponse(
             response=response,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            conversation_id=conv_id,
         )
     except HTTPException:
         raise
@@ -327,21 +455,54 @@ async def stream_ask(
     user: User = Depends(get_current_user),
 ):
     """Streaming SSE version of /ai/ask. Yields tokens word-by-word."""
-    # Resolve the AI client and check quota before entering the generator
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
     except HTTPException:
         raise
+
+    system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
 
     async def generate():
         try:
             full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
-            response, _, _ = ai.ask(full_prompt)
+            response, prompt_tokens, completion_tokens = ai_engine.ask(full_prompt, system_prompt=system_prompt)
 
             words = response.split(" ")
             for i, word in enumerate(words):
                 token = word + (" " if i < len(words) - 1 else "")
                 yield f"data: {json.dumps({'token': token})}\n\n"
+
+            # Auto-save streamed conversation
+            try:
+                store = _get_conversation_store(ctx)
+                if store is not None and req.vault_id:
+                    cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
+                    user_msg = {
+                        "role": "user",
+                        "content": req.prompt,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                    ai_msg = {
+                        "role": "assistant",
+                        "content": response,
+                        "tokens": prompt_tokens + completion_tokens,
+                        "cost": cost_usd,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                    existing_messages = list(req.history or [])
+                    existing_messages.append(user_msg)
+                    existing_messages.append(ai_msg)
+                    title = (req.prompt[:60] + "…") if len(req.prompt) > 60 else req.prompt
+                    conv_id = store.upsert(
+                        conv_id=req.conversation_id,
+                        vault_id=req.vault_id,
+                        user_id=str(user.id),
+                        title=title,
+                        messages=existing_messages,
+                    )
+                    yield f"data: {json.dumps({'conversation_id': conv_id})}\n\n"
+            except Exception:
+                logger.exception("Failed to auto-save streamed conversation")
 
             yield "data: [DONE]\n\n"
         except Exception:
@@ -361,8 +522,8 @@ async def summarize(
 ):
     """Summarize the provided text."""
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
-        summary, prompt_tokens, completion_tokens = ai.summarize(req.text)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        summary, prompt_tokens, completion_tokens = ai_engine.summarize(req.text)
 
         return SummarizeResponse(
             summary=summary,
@@ -388,10 +549,9 @@ async def suggest_tags(
 ):
     """Suggest tags for text, filtering out existing ones."""
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
-        raw_tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        raw_tags, prompt_tokens, completion_tokens = ai_engine.suggest_tags(req.text)
 
-        # AI returns comma-separated string — parse to list
         tags = _parse_comma_list(raw_tags) if isinstance(raw_tags, str) else list(raw_tags)
 
         if req.existing_tags:
@@ -422,14 +582,11 @@ async def propose_links(
 ):
     """Suggest internal [[wiki links]] for the given note content."""
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
-        raw_links, prompt_tokens, completion_tokens = ai.propose_links(
-            req.text, req.note_names
-        )
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        raw_links, prompt_tokens, completion_tokens = ai_engine.propose_links(req.text, req.note_names)
 
         links = _parse_comma_list(raw_links) if isinstance(raw_links, str) else list(raw_links)
 
-        # Only keep links that match one of the provided note names (case-insensitive)
         if req.note_names:
             names_lower = {n.lower(): n for n in req.note_names}
             filtered = []
@@ -438,17 +595,15 @@ async def propose_links(
                 if match:
                     filtered.append(match)
                 else:
-                    # Include even if not exact match — AI may abbreviate
                     filtered.append(link)
             links = filtered
 
-        # Deduplicate
         seen = set()
         unique_links = []
-        for l in links:
-            if l.lower() not in seen:
-                seen.add(l.lower())
-                unique_links.append(l)
+        for lnk in links:
+            if lnk.lower() not in seen:
+                seen.add(lnk.lower())
+                unique_links.append(lnk)
 
         return ProposeLinksResponse(
             links=unique_links,
@@ -462,3 +617,94 @@ async def propose_links(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Link proposal failed: {str(e)}",
         )
+
+
+# ============================================================================
+# Conversation history endpoints
+# ============================================================================
+
+
+@router.get("/conversations/")
+async def list_conversations(
+    vault_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """List all saved AI conversations for a vault, newest first."""
+    store = _get_conversation_store(ctx)
+    if store is None:
+        return []
+    try:
+        return store.list(vault_id=vault_id, user_id=str(user.id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list conversations: {e}")
+
+
+@router.post("/conversations/")
+async def save_conversation(
+    req: SaveConversationRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Create or update a saved conversation."""
+    store = _get_conversation_store(ctx)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Conversation storage not available")
+    try:
+        title = req.title or (
+            (req.messages[0].content[:60] + "…" if len(req.messages[0].content) > 60 else req.messages[0].content)
+            if req.messages
+            else "Untitled conversation"
+        )
+        conv_id = store.upsert(
+            conv_id=req.id,
+            vault_id=req.vault_id,
+            user_id=str(user.id),
+            title=title,
+            messages=[m.model_dump() for m in req.messages],
+        )
+        return {"id": conv_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save conversation: {e}")
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(
+    conversation_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Fetch a single saved conversation."""
+    store = _get_conversation_store(ctx)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Conversation storage not available")
+    try:
+        conv = store.get(conversation_id)
+        if conv is None or conv.get("user_id") != str(user.id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return conv
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch conversation: {e}")
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Delete a saved conversation."""
+    store = _get_conversation_store(ctx)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Conversation storage not available")
+    try:
+        conv = store.get(conversation_id)
+        if conv is None or conv.get("user_id") != str(user.id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        store.delete(conversation_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {e}")
