@@ -1,7 +1,7 @@
 """
 AI endpoints.
 
-GET  /ai/status          — readiness check (no auth required)
+GET  /ai/status          — readiness check (auth optional; returns user_can_use_ai when authenticated)
 POST /ai/ask             — ask the AI a question with vault context
 POST /ai/ask/stream      — streaming SSE version of ask
 POST /ai/summarize       — summarize text
