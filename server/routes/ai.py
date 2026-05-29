@@ -8,6 +8,12 @@ POST /ai/summarize       — summarize text
 POST /ai/suggest-tags    — suggest tags for text
 POST /ai/propose-links   — propose internal wiki links for a note
 GET  /ai/usage           — current-month token usage for the logged-in user
+
+Key resolution order (most-to-least specific):
+  1. User's own OpenAI key (stored in user_api_settings)
+  2. Vault owner's key (if vault_id supplied and ai_key_shared is True)
+  3. Platform key (if user's system_role is in PLATFORM_KEY_ROLES and key configured)
+  4. Friendly 403 -- not a raw 503
 """
 
 import asyncio
@@ -23,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from server.analytics import track as analytics_track
-from server.deps import get_ctx, get_current_user
+from server.deps import PLATFORM_KEY_ROLES, get_ctx, get_current_user
 from server.limiter import limiter
 from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
 from WorldStitch.context.app_context import AppContext
@@ -60,6 +66,7 @@ class AskResponse(BaseModel):
 
 class SummarizeRequest(BaseModel):
     text: str
+    vault_id: Optional[str] = None
 
 
 class SummarizeResponse(BaseModel):
@@ -71,6 +78,7 @@ class SummarizeResponse(BaseModel):
 class SuggestTagsRequest(BaseModel):
     text: str
     existing_tags: list[str] = Field(default_factory=list)
+    vault_id: Optional[str] = None
 
 
 class SuggestTagsResponse(BaseModel):
@@ -82,6 +90,7 @@ class SuggestTagsResponse(BaseModel):
 class ProposeLinksRequest(BaseModel):
     text: str
     note_names: list[str] = Field(default_factory=list)
+    vault_id: Optional[str] = None
 
 
 class ProposeLinksResponse(BaseModel):
@@ -201,39 +210,64 @@ def _parse_comma_list(raw: str) -> list[str]:
     return items
 
 
-def _get_ai_for_user(user_id: str, ctx: AppContext):
+def _make_engine_with_key(ctx: AppContext, api_key: str):
+    """Return a fresh OpenaiAI instance configured with the given key."""
+    from WorldStitch.ai.core.openai_engine import OpenaiAI
+
+    engine = OpenaiAI(ctx.config)
+    engine.update_api_key(api_key)
+    return engine
+
+
+def _get_ai_for_user(
+    user_id: str,
+    ctx: AppContext,
+    vault_id: Optional[str] = None,
+    user_system_role: str = "user",
+):
     """
-    Return an AI engine instance appropriate for this user.
+    Resolve an AI engine for this request using the key hierarchy:
 
-    - If the user has a personal OpenAI key stored, create a fresh engine
-      instance using that key (no quota consumed).
-    - Otherwise check + increment the user's monthly server-key quota, then
-      return the shared ctx.ai engine.
+    1. User personal key  -> fresh engine, no platform quota consumed
+    2. Vault owner key    -> if vault_id supplied and ai_key_shared is True
+    3. Platform key       -> if role is in PLATFORM_KEY_ROLES and ctx.has_ai()
+    4. Friendly 403       -> clear message, never a raw 503
 
-    Raises HTTP 503 if no AI engine is configured, or HTTP 429 if the
-    server-key quota is exceeded.
+    Raises HTTP 429 if over monthly quota on the platform key.
     """
-    if not ctx.has_ai():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI engine not available",
-        )
-
     store = getattr(ctx.storage, "user_api_keys", None)
 
+    # 1. User own key
     if store is not None:
         personal_key = store.get_personal_key(user_id)
         if personal_key:
-            from WorldStitch.ai.core.openai_engine import OpenaiAI
+            return _make_engine_with_key(ctx, personal_key)
 
-            user_ai = OpenaiAI(ctx.config)
-            user_ai.update_api_key(personal_key)
-            return user_ai
+    # 2. Vault owner shared key
+    if vault_id and hasattr(ctx.storage, "get_vault_ai_key"):
+        try:
+            vault = ctx.vaults.get_vault(vault_id)
+            if vault and getattr(vault, "ai_key_shared", False):
+                vault_key = ctx.storage.get_vault_ai_key(vault_id)
+                if vault_key:
+                    return _make_engine_with_key(ctx, vault_key)
+        except Exception:
+            logger.exception("Failed to resolve vault AI key for vault %s", vault_id)
 
-        # No personal key — check and increment server-key quota (raises 429 if over limit)
-        store.check_and_increment(user_id)
+    # 3. Platform key (privileged roles only)
+    if user_system_role in PLATFORM_KEY_ROLES and ctx.has_ai():
+        if store is not None:
+            store.check_and_increment(user_id)
+        return ctx.require_ai()
 
-    return ctx.require_ai()
+    # 4. Friendly error -- not a 503
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "No AI key is available. Add your OpenAI key in Settings -> AI, "
+            "or ask your vault owner to enable key sharing."
+        ),
+    )
 
 
 # ============================================================================
@@ -290,10 +324,10 @@ async def ask(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set."""
+    """Ask the AI with optional conversation history."""
     try:
         _apply_preferred_model(ctx)
-        ai = _get_ai_for_user(str(user.id), ctx)
+        ai = _get_ai_for_user(str(user.id), ctx, vault_id=req.vault_id, user_system_role=user.system_role)
         full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
@@ -302,22 +336,19 @@ async def ask(
         ctx.analytics.track(
             "ai.request_completed",
             user_id=user.id,
-            data={"operation": "ask", "cost_usd": cost_usd, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            data={
+                "operation": "ask",
+                "cost_usd": cost_usd,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            },
         )
-
-        return AskResponse(
-            response=response,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
+        return AskResponse(response=response, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     except HTTPException:
         raise
     except Exception as e:
         ctx.analytics.track("ai.request_failed", user_id=user.id, data={"operation": "ask", "error": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"AI request failed: {str(e)}",
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"AI request failed: {str(e)}")
 
 
 @router.post("/ask/stream")
@@ -326,10 +357,9 @@ async def stream_ask(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Streaming SSE version of /ai/ask. Yields tokens word-by-word."""
-    # Resolve the AI client and check quota before entering the generator
+    """Streaming SSE version of /ai/ask."""
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
+        ai = _get_ai_for_user(str(user.id), ctx, vault_id=req.vault_id, user_system_role=user.system_role)
     except HTTPException:
         raise
 
@@ -337,12 +367,10 @@ async def stream_ask(
         try:
             full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
             response, _, _ = ai.ask(full_prompt)
-
             words = response.split(" ")
             for i, word in enumerate(words):
                 token = word + (" " if i < len(words) - 1 else "")
                 yield f"data: {json.dumps({'token': token})}\n\n"
-
             yield "data: [DONE]\n\n"
         except Exception:
             logger.exception("Streaming AI ask failed")
@@ -361,21 +389,13 @@ async def summarize(
 ):
     """Summarize the provided text."""
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
+        ai = _get_ai_for_user(str(user.id), ctx, vault_id=req.vault_id, user_system_role=user.system_role)
         summary, prompt_tokens, completion_tokens = ai.summarize(req.text)
-
-        return SummarizeResponse(
-            summary=summary,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
+        return SummarizeResponse(summary=summary, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Summarization failed: {str(e)}",
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Summarization failed: {str(e)}")
 
 
 @router.post("/suggest-tags", response_model=SuggestTagsResponse)
@@ -388,27 +408,18 @@ async def suggest_tags(
 ):
     """Suggest tags for text, filtering out existing ones."""
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
+        ai = _get_ai_for_user(str(user.id), ctx, vault_id=req.vault_id, user_system_role=user.system_role)
         raw_tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
-
-        # AI returns comma-separated string — parse to list
         tags = _parse_comma_list(raw_tags) if isinstance(raw_tags, str) else list(raw_tags)
-
         if req.existing_tags:
             existing_lower = {t.lower() for t in req.existing_tags}
             tags = [t for t in tags if t.lower() not in existing_lower]
-
-        return SuggestTagsResponse(
-            tags=tags,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
+        return SuggestTagsResponse(tags=tags, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Tag suggestion failed: {str(e)}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Tag suggestion failed: {str(e)}"
         )
 
 
@@ -420,45 +431,28 @@ async def propose_links(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Suggest internal [[wiki links]] for the given note content."""
+    """Suggest internal wiki links for the given note content."""
     try:
-        ai = _get_ai_for_user(str(user.id), ctx)
-        raw_links, prompt_tokens, completion_tokens = ai.propose_links(
-            req.text, req.note_names
-        )
-
+        ai = _get_ai_for_user(str(user.id), ctx, vault_id=req.vault_id, user_system_role=user.system_role)
+        raw_links, prompt_tokens, completion_tokens = ai.propose_links(req.text, req.note_names)
         links = _parse_comma_list(raw_links) if isinstance(raw_links, str) else list(raw_links)
-
-        # Only keep links that match one of the provided note names (case-insensitive)
         if req.note_names:
             names_lower = {n.lower(): n for n in req.note_names}
             filtered = []
             for link in links:
                 match = names_lower.get(link.lower())
-                if match:
-                    filtered.append(match)
-                else:
-                    # Include even if not exact match — AI may abbreviate
-                    filtered.append(link)
+                filtered.append(match if match else link)
             links = filtered
-
-        # Deduplicate
         seen = set()
         unique_links = []
-        for l in links:
-            if l.lower() not in seen:
-                seen.add(l.lower())
-                unique_links.append(l)
-
+        for lnk in links:
+            if lnk.lower() not in seen:
+                seen.add(lnk.lower())
+                unique_links.append(lnk)
         return ProposeLinksResponse(
-            links=unique_links,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
+            links=unique_links, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
         )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Link proposal failed: {str(e)}",
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Link proposal failed: {str(e)}")

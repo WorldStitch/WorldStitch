@@ -92,6 +92,9 @@ class VaultRecord(Base):
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     members_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
+    # AI key columns — managed separately from the JSON blob to keep keys encrypted at rest
+    ai_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_key_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
 
 
 class FolderRecord(Base):
@@ -429,6 +432,98 @@ class SQLiteBackend(StorageBackend):
             """)
             )
 
+    def _setup_fts(self, conn) -> None:
+        """Create the FTS5 virtual table and sync triggers on the raw SQLite connection."""
+        # Add missing notes columns for legacy databases.
+        # This makes startup resilient when an older DB predates Alembic or
+        # when migration stamping skipped table-alter migrations.
+        for statement in (
+            "ALTER TABLE notes ADD COLUMN created_at DATETIME",
+            "ALTER TABLE notes ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE notes ADD COLUMN folder TEXT DEFAULT ''",
+            "ALTER TABLE notes ADD COLUMN title TEXT DEFAULT ''",
+            "ALTER TABLE notes ADD COLUMN content TEXT DEFAULT ''",
+            "ALTER TABLE notes ADD COLUMN tags TEXT DEFAULT ''",
+        ):
+            try:
+                conn.execute(statement)
+            except Exception:
+                pass  # column already exists
+
+        for statement in (
+            "ALTER TABLE characters ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE maps ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                conn.execute(statement)
+            except Exception:
+                pass  # column already exists
+
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
+            USING fts5(id UNINDEXED, title, content, tags, tokenize='porter ascii')
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS notes_fts_insert AFTER INSERT ON notes BEGIN
+                INSERT INTO notes_fts(id, title, content, tags)
+                VALUES (new.id, new.title, new.content, new.tags);
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS notes_fts_update AFTER UPDATE ON notes BEGIN
+                UPDATE notes_fts SET title=new.title, content=new.content, tags=new.tags
+                WHERE id=new.id;
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS notes_fts_delete AFTER DELETE ON notes BEGIN
+                DELETE FROM notes_fts WHERE id=old.id;
+            END
+        """)
+
+    def _setup_analytics(self, conn) -> None:
+        """Add analytics_consent column to users table for legacy databases."""
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN analytics_consent INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # column already exists
+
+    def _setup_campaign_columns(self, conn) -> None:
+        """Add campaign_id column to characters, maps, and notes if not already present."""
+        for statement in (
+            "ALTER TABLE characters ADD COLUMN campaign_id TEXT",
+            "ALTER TABLE maps ADD COLUMN campaign_id TEXT",
+            "ALTER TABLE notes ADD COLUMN campaign_id TEXT",
+        ):
+            try:
+                conn.execute(statement)
+            except Exception:
+                pass  # column already exists
+
+    def _setup_relationships_table(self, conn) -> None:
+        """Create the relationships table and indexes for legacy databases."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS relationships (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                relationship_type TEXT NOT NULL,
+                direction TEXT NOT NULL DEFAULT 'bidirectional',
+                label TEXT,
+                weight REAL NOT NULL DEFAULT 1.0,
+                owner_id TEXT NOT NULL,
+                vault_id TEXT NOT NULL,
+                meta TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                data TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id, vault_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, vault_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_vault ON relationships(vault_id, is_active)")
+
     def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
         d = self.vault_path / ".dnd_meta" / subfolder
@@ -530,6 +625,8 @@ class SQLiteBackend(StorageBackend):
             for rec in session.query(VaultRecord).all():
                 try:
                     vault = Vault.model_validate_json(rec.data)
+                    # Sync ai_key_shared from the dedicated column (authoritative source)
+                    vault.ai_key_shared = bool(rec.ai_key_shared)
                     members = json.loads(rec.members_json or "[]")
                     if not getattr(vault, "is_active", True):
                         continue
@@ -622,18 +719,21 @@ class SQLiteBackend(StorageBackend):
 
     def save_vault(self, vault: Vault) -> None:
         """Save or update a Vault record."""
+        ai_key_shared = bool(getattr(vault, "ai_key_shared", False))
         with self._session() as session:
             record = session.query(VaultRecord).filter(VaultRecord.id == vault.id).first()
             if record:
                 record.owner_id = vault.owner_id
                 record.members_json = json.dumps(vault.members)
                 record.data = vault.model_dump_json()
+                record.ai_key_shared = ai_key_shared
             else:
                 record = VaultRecord(
                     id=vault.id,
                     owner_id=vault.owner_id,
                     members_json=json.dumps(vault.members),
                     data=vault.model_dump_json(),
+                    ai_key_shared=ai_key_shared,
                 )
                 session.add(record)
             session.commit()
@@ -644,6 +744,8 @@ class SQLiteBackend(StorageBackend):
             record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
             if record:
                 vault = Vault.model_validate_json(record.data)
+                # Sync ai_key_shared from the dedicated column (authoritative source)
+                vault.ai_key_shared = bool(record.ai_key_shared)
                 members = json.loads(record.members_json or "[]")
                 if not self._can_access(vault.owner_id, vault.permissions, members):
                     return None
@@ -655,6 +757,51 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             session.query(VaultRecord).filter(VaultRecord.id == vault_id).delete()
             session.commit()
+
+    # ── Vault AI key management ───────────────────────────────────────────────
+
+    def get_vault_ai_key(self, vault_id: str) -> Optional[str]:
+        """Return the decrypted vault AI key, or None if not set."""
+        from WorldStitch.ai.user_api_keys import _decrypt as _decrypt_key
+
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record and record.ai_api_key:
+                return _decrypt_key(record.ai_api_key)
+        return None
+
+    def save_vault_ai_key(self, vault_id: str, api_key: str) -> None:
+        """Encrypt and save an AI key for the vault."""
+        from WorldStitch.ai.user_api_keys import _encrypt as _encrypt_key
+
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record:
+                record.ai_api_key = _encrypt_key(api_key)
+                session.commit()
+
+    def remove_vault_ai_key(self, vault_id: str) -> None:
+        """Clear the vault AI key."""
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record:
+                record.ai_api_key = None
+                session.commit()
+
+    def set_vault_ai_sharing(self, vault_id: str, shared: bool) -> None:
+        """Toggle the ai_key_shared flag on the vault record."""
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if record:
+                record.ai_key_shared = shared
+                # Keep the JSON blob in sync so Vault.model_validate_json stays consistent
+                try:
+                    data = json.loads(record.data or "{}")
+                    data["ai_key_shared"] = shared
+                    record.data = json.dumps(data)
+                except Exception:
+                    pass
+                session.commit()
 
     # ========================================================================
     # Folders

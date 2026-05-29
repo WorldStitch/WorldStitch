@@ -1,4 +1,4 @@
-﻿"""
+"""
 Vault model — the top-level container for a campaign or world.
 
 A Vault holds all notes, characters, maps, folders, and assets for one
@@ -47,4 +47,8 @@ class Vault(CoreModel):
     record_version: int = Field(
         default=1,
         description="Incremented on every save — used for optimistic locking and sync.",
+    )
+    ai_key_shared: bool = Field(
+        default=False,
+        description="When True, vault members can use the vault owner's AI key.",
     )
