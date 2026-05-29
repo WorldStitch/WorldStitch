@@ -7,10 +7,12 @@ import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { TextArea } from '@/components/Input';
-import { ai, notes, settings, getApiBase, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
+import { ai, aiSettings, notes, settings, getApiBase, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { useVault } from '@/context/VaultContext';
 
 const COST_PER_TOKEN = 0.000003;
+// Max messages kept in localStorage to avoid quota errors (~200 messages ≈ a few KB)
+const MAX_STORED_MESSAGES = 200;
 
 const MODES = [
   { key: 'lore',    label: 'Lore Assistant' },
@@ -51,6 +53,9 @@ export default function Chat() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { activeVaultId, vaults = [] } = useVault();
+  const activeVault = vaults.find((v) => v.id === activeVaultId);
+  const vaultName = activeVault?.name || 'your vault';
+  const storageKey = `ws_chat_${activeVaultId || 'global'}`;
 
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
@@ -64,10 +69,47 @@ export default function Chat() {
   const [pinnedMsg, setPinnedMsg] = useState(null);
   const chatEndRef = useRef(null);
 
-  const activeVault = vaults.find((v) => v.id === activeVaultId);
-  const vaultName = activeVault?.name || 'your vault';
+  // Ref used to skip persisting messages immediately after a localStorage load
+  // (prevents an empty-array save from racing with the loaded data on mount/
+  // vault-switch).
+  const skipNextSaveRef = useRef(true);
 
-  // ── Settings query ────────────────────────────────────────────────────────
+  // Keep a ref to the current storageKey so the persist effect always uses the
+  // latest value without being listed as a dependency (avoids the vault-switch
+  // cross-contamination problem).
+  const storageKeyRef = useRef(storageKey);
+  storageKeyRef.current = storageKey;
+
+  // Load history from localStorage whenever the active vault changes (incl. mount)
+  useEffect(() => {
+    skipNextSaveRef.current = true;
+    try {
+      const saved = localStorage.getItem(storageKey);
+      setMessages(saved ? JSON.parse(saved) : []);
+    } catch {
+      setMessages([]);
+    }
+    setSessionTokens(0);
+  }, [storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist messages on every change — but skip the very first run after a load
+  // to avoid overwriting good data with the stale empty-array initial state.
+  useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(
+        storageKeyRef.current,
+        JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)),
+      );
+    } catch {
+      // Quota exceeded — silently ignore; chat still works, just won't persist
+    }
+  }, [messages]);
+
+  // ── Remote data ────────────────────────────────────────────────────────────
   const { data: settingsData } = useQuery({
     queryKey: ['settings'],
     queryFn: settings.get,
@@ -77,6 +119,14 @@ export default function Chat() {
     queryKey: ['ai-status'],
     queryFn: ai.status,
     staleTime: 60_000,
+    retry: false,
+  });
+
+  // Also check whether the current user has a personal key stored; used to
+  // suppress the "AI not configured" banner when the user can actually use AI.
+  const { data: keyStatus } = useQuery({
+    queryKey: ['ai-key-settings'],
+    queryFn: aiSettings.get,
     retry: false,
   });
 
@@ -108,6 +158,7 @@ export default function Chat() {
 
   const nextId = () => `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+  // ── Ask handlers ───────────────────────────────────────────────────────────
   // ── New chat ──────────────────────────────────────────────────────────────
   const handleNewChat = () => {
     setMessages([]);
@@ -210,7 +261,15 @@ export default function Chat() {
         setMessages((prev) => prev.filter((m) => m.id !== assistantId).slice(0, -1));
         return;
       }
-      if (!res.ok) throw new Error(`Stream error: ${res.status}`);
+      if (!res.ok) {
+        // Try to pull a meaningful detail string from the JSON error body
+        let detail = `Stream error: ${res.status}`;
+        try {
+          const errBody = await res.json();
+          if (errBody?.detail) detail = errBody.detail;
+        } catch { /* ignore */ }
+        throw new Error(detail);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -320,6 +379,16 @@ export default function Chat() {
   };
 
   const sessionCost = sessionTokens * COST_PER_TOKEN;
+
+  // ── Banner logic ────────────────────────────────────────────────────────────
+  // Show "AI not configured" only when the user genuinely can't use AI:
+  //   - The new user_can_use_ai field (from the updated /ai/status endpoint) takes
+  //     priority when present — it already factors in personal keys and role.
+  //   - Legacy fallback: hide the banner if the user has a personal key saved,
+  //     even if the platform key is absent (personal key always works).
+  const userCanUseAi =
+    aiStatus?.user_can_use_ai ??          // new field from updated backend
+    ((aiStatus?.ready || keyStatus?.has_personal_key) ?? false);  // legacy fallback
 
   return (
     <div className="flex h-full overflow-hidden">

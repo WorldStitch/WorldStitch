@@ -21,14 +21,14 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from server.analytics import track as analytics_track
-from server.deps import get_ctx, get_current_user
+from server.deps import PLATFORM_KEY_ROLES, get_ctx, get_current_user
 from server.limiter import limiter
 from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
 from WorldStitch.context.app_context import AppContext
@@ -284,39 +284,74 @@ def _parse_comma_list(raw: str) -> list[str]:
     return items
 
 
-def _get_ai_for_user(user_id: str, ctx: AppContext):
+def _make_engine_with_key(ctx: AppContext, api_key: str):
+    """Return a fresh OpenaiAI instance configured with the given key."""
+    from WorldStitch.ai.core.openai_engine import OpenaiAI
+
+    engine = OpenaiAI(ctx.config)
+    engine.update_api_key(api_key)
+    return engine
+
+
+def _get_ai_for_user(
+    user_id: str,
+    ctx: AppContext,
+    vault_id: Optional[str] = None,
+    user_system_role: str = "user",
+):
     """
-    Return an AI engine instance appropriate for this user.
+    Resolve an AI engine for this request using the key hierarchy:
 
-    - If the user has a personal OpenAI key stored, create a fresh engine
-      instance using that key (no quota consumed).
-    - Otherwise check + increment the user's monthly server-key quota, then
-      return the shared ctx.ai engine.
+    1. User personal key  -> fresh engine, no platform quota consumed
+    2. Vault owner key    -> if vault_id supplied and ai_key_shared is True
+    3. Platform key       -> if role is in PLATFORM_KEY_ROLES and ctx.has_ai()
+    4. Friendly 403       -> clear message, never a raw 503
 
-    Raises HTTP 503 if no AI engine is configured, or HTTP 429 if the
-    server-key quota is exceeded.
+    Raises HTTP 429 if over monthly quota on the platform key.
     """
-    if not ctx.has_ai():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI engine not available",
-        )
-
     store = getattr(ctx.storage, "user_api_keys", None)
 
+    # 1. User own key
     if store is not None:
         personal_key = store.get_personal_key(user_id)
         if personal_key:
-            from WorldStitch.ai.core.openai_engine import OpenaiAI
+            return _make_engine_with_key(ctx, personal_key)
 
-            user_ai = OpenaiAI(ctx.config)
-            user_ai.update_api_key(personal_key)
-            return user_ai
+    # 2. Vault owner shared key
+    if vault_id and hasattr(ctx.storage, "get_vault_ai_key"):
+        try:
+            vault = ctx.vaults.get_vault(vault_id)
+            if vault and getattr(vault, "ai_key_shared", False):
+                vault_key = ctx.storage.get_vault_ai_key(vault_id)
+                if vault_key:
+                    return _make_engine_with_key(ctx, vault_key)
+        except Exception:
+            logger.exception("Failed to resolve vault AI key for vault %s", vault_id)
 
-        # No personal key — check and increment server-key quota (raises 429 if over limit)
-        store.check_and_increment(user_id)
+    # 3. Platform key (privileged roles only)
+    if user_system_role in PLATFORM_KEY_ROLES:
+        if ctx.has_ai():
+            if store is not None:
+                store.check_and_increment(user_id)
+            return ctx.require_ai()
+        # Role qualifies but platform key is not configured on the server
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "No platform AI key is configured on this server. "
+                "Add your personal OpenAI key in Settings → AI, or ask the "
+                "platform owner to set the OPENAI_API_KEY environment variable."
+            ),
+        )
 
-    return ctx.require_ai()
+    # 4. Regular user — no key available
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "No AI key is available. Add your OpenAI key in Settings → AI, "
+            "or ask your vault owner to enable key sharing."
+        ),
+    )
 
 
 def _get_conversation_store(ctx: AppContext):
@@ -330,10 +365,47 @@ def _get_conversation_store(ctx: AppContext):
 
 
 @router.get("/status")
-async def ai_status(ctx: AppContext = Depends(get_ctx)):
+async def ai_status(
+    ctx: AppContext = Depends(get_ctx),
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Platform AI readiness check.  Auth is optional — when a valid token is
+    supplied the response also includes ``user_can_use_ai`` reflecting whether
+    *this* user can actually make AI requests (personal key, platform key via
+    privileged role, etc.).  Used by the frontend to suppress false-positive
+    "AI not configured" banners for users who have a personal key configured.
+    """
+    platform_ready = ctx.has_ai()
+    # Default: if the platform has a key, assume any authenticated user can use it
+    user_can_use_ai = platform_ready
+
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            from server.auth_utils import decode_jwt
+
+            token = authorization.removeprefix("Bearer ").strip()
+            payload = decode_jwt(token)
+            user_id = payload.get("sub")
+            if user_id:
+                store = getattr(ctx.storage, "user_api_keys", None)
+                # Personal key → always works regardless of platform key
+                if store is not None and store.get_personal_key(user_id):
+                    user_can_use_ai = True
+                elif platform_ready:
+                    # Platform key present — only privileged roles may use it
+                    user_obj = ctx.users.get_user(user_id)
+                    role = getattr(user_obj, "system_role", "user") if user_obj else "user"
+                    user_can_use_ai = role in PLATFORM_KEY_ROLES
+                else:
+                    user_can_use_ai = False
+        except Exception:
+            pass  # malformed token — fall back to platform_ready
+
     return {
-        "ready": ctx.has_ai(),
-        "index_built": getattr(ctx.ai, "_index_ready", False) if ctx.has_ai() else False,
+        "ready": platform_ready,
+        "user_can_use_ai": user_can_use_ai,
+        "index_built": getattr(ctx.ai, "_index_ready", False) if platform_ready else False,
     }
 
 
