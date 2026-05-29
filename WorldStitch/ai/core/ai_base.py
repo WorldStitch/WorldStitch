@@ -1,4 +1,4 @@
-﻿# WorldStitch/ai/ai_base.py
+# WorldStitch/ai/ai_base.py
 
 from abc import ABC, abstractmethod
 from typing import List, Tuple
@@ -16,10 +16,13 @@ class AIInterface(ABC):
     """
 
     @abstractmethod
-    def ask(self, prompt: str) -> Tuple[str, int, int]:
+    def ask(self, prompt: str, system_prompt: str = "") -> Tuple[str, int, int]:
         """
         Send a free-form prompt to the AI and return a tuple of:
         (response_text, prompt_tokens, response_tokens).
+
+        system_prompt — if non-empty, prepended as a system role message before
+        the user content. Use this to inject WorldStitch identity and vault context.
         """
         pass
 

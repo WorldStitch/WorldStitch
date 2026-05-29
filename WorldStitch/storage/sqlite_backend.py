@@ -280,6 +280,105 @@ class AnalyticsEventRecord(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class AIConversationRecord(Base):
+    """Persisted AI chat conversation — messages stored as a JSON array."""
+
+    __tablename__ = "ai_conversations"
+    __table_args__ = (
+        Index("ix_ai_conversations_vault_id", "vault_id"),
+        Index("ix_ai_conversations_user_id", "user_id"),
+        Index("ix_ai_conversations_updated_at", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="Untitled")
+    messages: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON array
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class ConversationStore:
+    """CRUD helper for ai_conversations table."""
+
+    def __init__(self, engine):
+        self._engine = engine
+
+    def upsert(
+        self,
+        conv_id: Optional[str],
+        vault_id: str,
+        user_id: str,
+        title: str,
+        messages: list,
+    ) -> str:
+        """Create or update a conversation. Returns the conversation id."""
+        now = datetime.utcnow()
+        with Session(self._engine) as session:
+            if conv_id:
+                record = session.get(AIConversationRecord, conv_id)
+                if record and record.user_id == user_id:
+                    record.title = title
+                    record.messages = json.dumps(messages)
+                    record.updated_at = now
+                    session.commit()
+                    return conv_id
+            # Create new
+            new_id = str(uuid.uuid4())
+            record = AIConversationRecord(
+                id=new_id,
+                vault_id=vault_id,
+                user_id=user_id,
+                title=title,
+                messages=json.dumps(messages),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            session.commit()
+            return new_id
+
+    def list(self, vault_id: str, user_id: str) -> list:
+        """Return conversations for a vault/user, newest first."""
+        with Session(self._engine) as session:
+            rows = session.scalars(
+                select(AIConversationRecord)
+                .where(
+                    AIConversationRecord.vault_id == vault_id,
+                    AIConversationRecord.user_id == user_id,
+                )
+                .order_by(AIConversationRecord.updated_at.desc())
+                .limit(100)
+            ).all()
+            return [_conversation_to_dict(r) for r in rows]
+
+    def get(self, conv_id: str) -> Optional[dict]:
+        """Return one conversation dict, or None if not found."""
+        with Session(self._engine) as session:
+            record = session.get(AIConversationRecord, conv_id)
+            return _conversation_to_dict(record) if record else None
+
+    def delete(self, conv_id: str) -> None:
+        with Session(self._engine) as session:
+            record = session.get(AIConversationRecord, conv_id)
+            if record:
+                session.delete(record)
+                session.commit()
+
+
+def _conversation_to_dict(record: AIConversationRecord) -> dict:
+    return {
+        "id": record.id,
+        "vault_id": record.vault_id,
+        "user_id": record.user_id,
+        "title": record.title,
+        "messages": json.loads(record.messages or "[]"),
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+    }
+
+
 def _session_log_to_dict(record: SessionLogRecord) -> dict:
     """Convert a SessionLogRecord ORM row to a plain dict."""
     return {
@@ -377,6 +476,9 @@ class SQLiteBackend(StorageBackend):
 
         # Vector index — in-memory semantic search; builds lazily on first write.
         self.vector_index = VectorIndexManager(VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True))
+
+        # AI conversation history — persisted per-vault chat sessions.
+        self.ai_conversations = ConversationStore(self.engine)
 
     def _session(self) -> Session:
         """Get a new database session."""

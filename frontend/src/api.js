@@ -240,13 +240,26 @@ export const folders = {
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
   status: () => request("GET", "/ai/status"),
-  ask: (prompt, history = [], vaultId = null) => request("POST", "/ai/ask", { prompt, history, vault_id: vaultId }),
+  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null) =>
+    request("POST", "/ai/ask", {
+      prompt,
+      history,
+      vault_id: vaultId,
+      mode,
+      conversation_id: conversationId,
+    }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
     request("POST", "/ai/suggest-tags", { text, existing_tags: existingTags }),
   proposeLinks: (text, noteNames = []) =>
     request("POST", "/ai/propose-links", { text, note_names: noteNames }),
   usage: () => request("GET", "/ai/usage"),
+  // Conversation history
+  listConversations: (vaultId) =>
+    request("GET", `/ai/conversations/?vault_id=${encodeURIComponent(vaultId)}`),
+  getConversation: (id) => request("GET", `/ai/conversations/${encodeURIComponent(id)}`),
+  deleteConversation: (id) => request("DELETE", `/ai/conversations/${encodeURIComponent(id)}`),
+  saveConversation: (data) => request("POST", "/ai/conversations/", data),
 };
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
