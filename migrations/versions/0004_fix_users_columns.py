@@ -9,12 +9,12 @@ Problem
 Older databases were created before the users table had individual columns for
 ``email``, ``password_hash``, ``role``, and ``is_active``.  Those databases
 only have ``id`` and ``data`` (a JSON blob), so any ORM query that references
-``users.email`` raises ``sqlite3.OperationalError: no such column: users.email``.
+``users.email`` fails with a missing column error.
 
 Fix
 ---
 1. Add each missing column with a safe ``ALTER TABLE … ADD COLUMN`` guarded by
-   a column-existence check (SQLite PRAGMA table_info).  The check makes this
+   a column-existence check via information_schema.  The check makes this
    migration idempotent — safe to run against both old and new databases.
 2. For every row whose ``email`` column is NULL after step 1, parse the ``data``
    JSON blob and copy ``email``, ``password_hash``, ``role``, and ``is_active``
@@ -44,19 +44,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
-    """Return True if *column* already exists on *table*."""
-    if conn.dialect.name == "postgresql":
-        result = conn.execute(
-            text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = 'public' AND table_name = :table AND column_name = :col"
-            ),
-            {"table": table, "col": column},
-        )
-        return result.fetchone() is not None
-    else:
-        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-        return any(row[1] == column for row in rows)
+    """Return True if *column* already exists on *table* (PostgreSQL)."""
+    result = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = :table AND column_name = :col"
+        ),
+        {"table": table, "col": column},
+    )
+    return result.fetchone() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -77,21 +73,15 @@ def upgrade() -> None:
         conn.execute(text("ALTER TABLE users ADD COLUMN password_hash TEXT"))
 
     if not _column_exists(conn, "users", "role"):
-        conn.execute(
-            text("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'viewer'")
-        )
+        conn.execute(text("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'viewer'"))
 
     if not _column_exists(conn, "users", "is_active"):
-        conn.execute(
-            text("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
-        )
+        conn.execute(text("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"))
 
     # ------------------------------------------------------------------
     # 2. Migrate data from JSON blob for rows where email IS NULL
     # ------------------------------------------------------------------
-    rows = conn.execute(
-        text("SELECT id, data FROM users WHERE email IS NULL")
-    ).fetchall()
+    rows = conn.execute(text("SELECT id, data FROM users WHERE email IS NULL")).fetchall()
 
     for row in rows:
         user_id: str = row[0]
@@ -131,8 +121,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # SQLite did not support DROP COLUMN until 3.35.0 (2021-03-12).
-    # Rather than add a version guard, we simply leave the columns in place
-    # on downgrade.  The old code only reads ``id`` and ``data``, so the
-    # extra columns are harmless.
+    # Leave added columns in place on downgrade; the old code only reads
+    # ``id`` and ``data``, so the extra columns are harmless.
     pass

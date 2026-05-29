@@ -1,4 +1,4 @@
-﻿"""
+"""
 Dashboard routes for WorldStitch FastAPI server.
 
 Endpoints
@@ -9,9 +9,9 @@ GET /dashboard/recent — most-recently-modified notes
 
 from fastapi import APIRouter, Depends, Query
 
+from server.deps import get_ctx, get_current_user
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-from server.deps import get_ctx, get_current_user
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -72,31 +72,33 @@ def recent(
 ):
     """Return the 10 most recently modified notes for the given vault."""
     try:
-        if hasattr(ctx.storage, '_session'):
-            from WorldStitch.storage.sqlite_backend import NoteRecord
+        if hasattr(ctx.storage, "_session"):
             import json as _json
+
+            from WorldStitch.storage.sqlite_backend import NoteRecord
+
             with ctx.storage._session() as session:
-                q = session.query(NoteRecord).filter(
-                    NoteRecord.is_deleted.is_not(True)
-                )
+                q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
                 if vault_id:
                     q = q.filter(NoteRecord.vault_id == vault_id)
-                if not getattr(ctx.storage, '_is_admin', False):
+                if not getattr(ctx.storage, "_is_admin", False):
                     q = q.filter(NoteRecord.owner_id == user.id)
                 records = q.order_by(NoteRecord.created_at.desc()).limit(10).all()
                 items = []
                 for rec in records:
                     data = {}
                     try:
-                        data = _json.loads(rec.data or '{}')
+                        data = _json.loads(rec.data or "{}")
                     except Exception:
                         pass
-                    items.append({
-                        "id": rec.id,
-                        "title": rec.title or data.get("title", "Untitled"),
-                        "last_modified": rec.created_at.isoformat() if rec.created_at else None,
-                        "vault_id": rec.vault_id,
-                    })
+                    items.append(
+                        {
+                            "id": rec.id,
+                            "title": rec.title or data.get("title", "Untitled"),
+                            "last_modified": rec.created_at.isoformat() if rec.created_at else None,
+                            "vault_id": rec.vault_id,
+                        }
+                    )
                 return items
     except Exception:
         pass
@@ -107,11 +109,13 @@ def recent(
     for p in paths:
         try:
             meta = ctx.storage.get_note_metadata(p)
-            items.append({
-                "id": p,
-                "title": p.split("/")[-1].removesuffix(".md"),
-                "last_modified": meta.get("modified"),
-            })
+            items.append(
+                {
+                    "id": p,
+                    "title": p.split("/")[-1].removesuffix(".md"),
+                    "last_modified": meta.get("modified"),
+                }
+            )
         except Exception:
             items.append({"id": p, "title": p.split("/")[-1].removesuffix(".md"), "last_modified": None})
     items.sort(key=lambda x: x.get("last_modified") or "", reverse=True)
@@ -122,7 +126,7 @@ def recent(
 
 
 def _count_meta(ctx: AppContext, subfolder: str) -> int:
-    """Count JSON files in a .dnd_meta subfolder (HybridStorage / SQLiteBackend)."""
+    """Count JSON files in a .dnd_meta subfolder."""
     try:
         from pathlib import Path
 

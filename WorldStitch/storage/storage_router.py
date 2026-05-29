@@ -1,20 +1,21 @@
-﻿# WorldStitch/storage/storage_router.py
+# WorldStitch/storage/storage_router.py
 """
 StorageRouter — dynamically loads the storage backend specified in config.
 
 ``VAULT_TYPE`` in settings.json controls which backend is instantiated:
-  - ``"sqlite"``   →  SQLiteBackend(db_path, vault_path)   [default]
-  - ``"hybrid"``   →  HybridStorage(vault_path)
-  - ``"obsidian"`` →  ObsidianStorage(vault_path)
+  - ``"postgresql"`` → PostgreSQLBackend (via sqlite_backend.SQLiteBackend, PostgreSQL mode)
+  - ``"hybrid"``     → HybridStorage(vault_path)
+  - ``"obsidian"``   → ObsidianStorage(vault_path)
   - Any other type whose module follows the pattern
     ``WorldStitch.storage.<type>_storage.<Type>Storage``
+
+DATABASE_URL environment variable is required for the postgresql backend.
 
 The router proxies all attribute access to the active backend, so callers
 can use it as a drop-in replacement for any StorageBackend.
 """
 
 import importlib
-from pathlib import Path
 
 from WorldStitch.storage.storage_base import StorageBackend
 
@@ -25,7 +26,7 @@ class StorageRouter:
         self.backend = self._load_backend()
 
     def _load_backend(self) -> StorageBackend:
-        storage_type = getattr(self._config, "VAULT_TYPE", "sqlite").lower()
+        storage_type = getattr(self._config, "VAULT_TYPE", "postgresql").lower()
         vault_path = getattr(self._config, "VAULT_PATH", None)
         if not vault_path:
             raise ValueError("VAULT_PATH must be set in config.")
@@ -33,7 +34,7 @@ class StorageRouter:
         # Map type → (module_suffix, class_name) for backends that don't follow
         # the default "{type}_storage" / "{Type}Storage" naming convention.
         _overrides = {
-            "sqlite": ("sqlite_backend", "SQLiteBackend"),
+            "postgresql": ("sqlite_backend", "SQLiteBackend"),
         }
         if storage_type in _overrides:
             module_suffix, cls_name = _overrides[storage_type]
@@ -46,12 +47,7 @@ class StorageRouter:
             module = importlib.import_module(module_name)
             backend_cls = getattr(module, cls_name)
 
-            # SQLite needs both db_path and vault_path
-            if storage_type == "sqlite":
-                db_path = str(Path(vault_path).resolve().parent / "worldstitch.db")
-                instance = backend_cls(db_path=db_path, vault_path=vault_path)
-            else:
-                instance = backend_cls(vault_path)
+            instance = backend_cls(vault_path=vault_path)
 
             if not isinstance(instance, StorageBackend):
                 raise TypeError(f"{cls_name} does not implement StorageBackend")
@@ -59,7 +55,7 @@ class StorageRouter:
         except (ModuleNotFoundError, AttributeError, TypeError) as e:
             raise ImportError(
                 f"Could not load storage backend '{storage_type}': {e}\n"
-                "Valid VAULT_TYPE values: sqlite, hybrid, obsidian"
+                "Valid VAULT_TYPE values: postgresql, hybrid, obsidian"
             )
 
     def reload_backend(self, config=None):
