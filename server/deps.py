@@ -1,4 +1,4 @@
-﻿"""
+"""
 FastAPI dependency providers for WorldStitch server.
 
 All route handlers receive AppContext and the current User via these
@@ -9,14 +9,35 @@ from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, status
 
+from server.auth_utils import decode_jwt
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-from server.auth_utils import decode_jwt
 
 _ctx: Optional[AppContext] = None
 
+# ── Platform role sets ────────────────────────────────────────────────────────
+# All nine platform roles:
+#   owner    — platform super-admin (Evan / founding team)
+#   admin    — platform admin
+#   mod      — moderator
+#   support  — support staff (read-heavy, limited write)
+#   tester   — internal/beta tester
+#   beta     — early-access user tier between tester and user
+#   user     — standard registered user
+#   guest    — reserved for future read-only no-account access
+#   system   — bots and automated processes
+
+PLATFORM_ROLES = {"owner", "admin", "mod", "support", "tester", "beta", "user", "guest", "system"}
+
+# Users who can perform platform-level admin actions
 PLATFORM_ADMIN = {"owner", "admin"}
-MOD_AND_ABOVE = {"owner", "admin", "moderator"}
+
+# Users who can perform moderation-level actions
+MOD_AND_ABOVE = {"owner", "admin", "mod"}
+
+# Users who are eligible to use the platform-level OpenAI key as fallback
+# (privileged internal accounts — not general beta/user/guest)
+PLATFORM_KEY_ROLES = {"owner", "admin", "mod", "support", "tester", "system"}
 
 
 def set_app_context(ctx: AppContext) -> None:
