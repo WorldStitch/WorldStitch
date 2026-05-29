@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { relationships as relApi } from "@/api";
 
-// Groups types by category for the <select> optgroups.
 function groupByCategory(types) {
 	const map = {};
 	for (const t of types) {
@@ -38,6 +37,7 @@ export default function RelationshipForm({
 	const [weight, setWeight] = useState(existing?.weight ?? 1.0);
 	const [error, setError] = useState("");
 	const [saving, setSaving] = useState(false);
+	const [activeCategory, setActiveCategory] = useState(null);
 
 	const { data: types = [] } = useQuery({
 		queryKey: ["relationship-types"],
@@ -45,7 +45,15 @@ export default function RelationshipForm({
 		staleTime: Infinity,
 	});
 
-	// When type changes, auto-set the default direction from the registry.
+	// Set initial category once types load.
+	useEffect(() => {
+		if (types.length > 0 && !activeCategory) {
+			const grouped = groupByCategory(types);
+			setActiveCategory(Object.keys(grouped)[0]);
+		}
+	}, [types, activeCategory]);
+
+	// Auto-set direction from type registry.
 	useEffect(() => {
 		if (!isEdit && relType) {
 			const entry = types.find((t) => t.type === relType);
@@ -54,15 +62,20 @@ export default function RelationshipForm({
 	}, [relType, isEdit, types]);
 
 	const grouped = groupByCategory(types);
+	const categories = Object.keys(grouped);
+	const typesInCategory = activeCategory ? (grouped[activeCategory] || []) : [];
+
+	const sourceNote = allNotes?.find((n) => n.id === entityId);
+	const sourceTitle = sourceNote?.title || entityId;
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
 		if (!targetId.trim()) {
-			setError("Target entity is required.");
+			setError("Please select a note to connect to.");
 			return;
 		}
 		if (!relType) {
-			setError("Relationship type is required.");
+			setError("Please select a relationship type.");
 			return;
 		}
 		setError("");
@@ -94,29 +107,20 @@ export default function RelationshipForm({
 		}
 	};
 
-	const selectedEntry = types.find((t) => t.type === relType);
-	const inverseHint = selectedEntry?.inverse
-		? `inverse: "${selectedEntry.inverse}"`
-		: null;
-
 	return (
 		<form onSubmit={handleSubmit} className="space-y-3 pt-2">
-			{/* Source — read-only */}
-			<div>
-				<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-					Source
-				</p>
-				<div className="text-xs text-txt bg-elevated rounded-lg px-2 py-1.5 border border-txt-muted/10 font-mono truncate">
-					{entityId}
-				</div>
+			{/* Source pill */}
+			<div className="text-xs text-txt-muted">
+				Connecting from:{" "}
+				<span className="text-txt font-medium">{sourceTitle}</span>
 			</div>
 
-			{/* Target */}
+			{/* Connect to */}
 			{!isEdit && (
 				<div>
-					<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-						Target entity
-					</p>
+					<label className="text-[10px] uppercase tracking-widest text-txt-muted font-bold block mb-1">
+						Connect to
+					</label>
 					{allNotes && allNotes.length > 0 ? (
 						<>
 							<input
@@ -126,13 +130,9 @@ export default function RelationshipForm({
 									const val = e.target.value;
 									setTargetInput(val);
 									const match = allNotes.find((n) => n.title === val);
-									if (match) {
-										setTargetId(match.id);
-									} else {
-										setTargetId(val);
-									}
+									setTargetId(match ? match.id : val);
 								}}
-								placeholder="Search note by title…"
+								placeholder="🔍 Search notes…"
 								className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
 							/>
 							<datalist id="relationship-target-notes">
@@ -142,128 +142,157 @@ export default function RelationshipForm({
 										<option key={n.id} value={n.title} />
 									))}
 							</datalist>
-							<p className="text-[10px] text-txt-muted mt-0.5 px-0.5">
-								Type or pick a note title — the UUID is stored automatically.
-							</p>
 						</>
 					) : (
 						<input
 							value={targetId}
 							onChange={(e) => setTargetId(e.target.value)}
-							placeholder="Entity ID or name…"
+							placeholder="🔍 Search notes…"
 							className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
 						/>
 					)}
 				</div>
 			)}
 
-			{/* Type grouped select */}
+			{/* Relationship type — category tabs + pills */}
 			<div>
-				<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-					Type
-				</p>
-				<select
-					value={relType}
-					onChange={(e) => setRelType(e.target.value)}
-					className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-				>
-					<option value="">Select type…</option>
-					{Object.entries(grouped).map(([cat, entries]) => (
-						<optgroup key={cat} label={cat}>
-							{entries.map((t) => (
-								<option key={t.type} value={t.type}>
-									{t.type}
-									{t.inverse ? ` (${t.inverse})` : ""}
-								</option>
+				<label className="text-[10px] uppercase tracking-widest text-txt-muted font-bold block mb-1">
+					Relationship type
+				</label>
+				{categories.length > 0 ? (
+					<>
+						{/* Category tabs */}
+						<div className="flex flex-wrap gap-1 mb-2">
+							{categories.map((cat) => (
+								<button
+									key={cat}
+									type="button"
+									onClick={() => setActiveCategory(cat)}
+									className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
+										activeCategory === cat
+											? "bg-accent text-white border-accent"
+											: "border-txt-muted/20 text-txt-muted hover:border-accent/50"
+									}`}
+								>
+									{cat}
+								</button>
 							))}
-						</optgroup>
-					))}
-				</select>
-				{inverseHint && (
-					<p className="text-[10px] text-txt-muted mt-0.5 px-0.5">
-						{inverseHint}
-					</p>
+						</div>
+						{/* Type pills */}
+						<div className="flex flex-wrap gap-1">
+							{typesInCategory.map((t) => (
+								<button
+									key={t.type}
+									type="button"
+									onClick={() => setRelType(t.type)}
+									className={`text-xs px-2.5 py-1 rounded-lg border transition ${
+										relType === t.type
+											? "bg-accent text-white border-accent"
+											: "border-txt-muted/20 text-txt hover:border-accent/50 hover:bg-accent/5"
+									}`}
+								>
+									{t.type}
+								</button>
+							))}
+						</div>
+					</>
+				) : (
+					<p className="text-xs text-txt-muted">Loading types…</p>
 				)}
 			</div>
 
-			{/* Direction */}
-			<div>
-				<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-					Direction
-				</p>
-				<div className="flex gap-4">
-					{["bidirectional", "unidirectional"].map((d) => (
-						<label
-							key={d}
-							className="flex items-center gap-1.5 text-xs text-txt cursor-pointer"
-						>
-							<input
-								type="radio"
-								name="direction"
-								value={d}
-								checked={direction === d}
-								onChange={() => setDirection(d)}
-								className="accent-[var(--color-accent)]"
-							/>
-							{d}
-						</label>
-					))}
+			{/* Advanced options — collapsed by default */}
+			<details className="mb-1">
+				<summary className="text-[10px] text-txt-muted cursor-pointer hover:text-txt select-none">
+					Advanced options ▾
+				</summary>
+				<div className="mt-2 space-y-2 pl-2 border-l border-txt-muted/10">
+					{/* Direction */}
+					<div>
+						<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
+							Direction
+						</p>
+						<div className="flex gap-2">
+							<button
+								type="button"
+								onClick={() => setDirection("bidirectional")}
+								className={`text-xs px-2.5 py-1 rounded-lg border transition ${
+									direction === "bidirectional"
+										? "bg-accent text-white border-accent"
+										: "border-txt-muted/20 text-txt hover:border-accent/50"
+								}`}
+							>
+								↔ Both ways
+							</button>
+							<button
+								type="button"
+								onClick={() => setDirection("unidirectional")}
+								className={`text-xs px-2.5 py-1 rounded-lg border transition ${
+									direction === "unidirectional"
+										? "bg-accent text-white border-accent"
+										: "border-txt-muted/20 text-txt hover:border-accent/50"
+								}`}
+							>
+								→ One way
+							</button>
+						</div>
+					</div>
+
+					{/* Label */}
+					<div>
+						<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
+							Label{" "}
+							<span className="normal-case font-normal">(optional)</span>
+						</p>
+						<input
+							value={label}
+							onChange={(e) => setLabel(e.target.value)}
+							placeholder="Custom display label…"
+							className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+						/>
+					</div>
+
+					{/* Weight */}
+					<div>
+						<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
+							Weight{" "}
+							<span className="normal-case font-normal text-txt-muted">
+								{weight.toFixed(2)}
+							</span>
+						</p>
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.05"
+							value={weight}
+							onChange={(e) => setWeight(parseFloat(e.target.value))}
+							className="w-full accent-[var(--color-accent)]"
+						/>
+					</div>
 				</div>
-			</div>
+			</details>
 
-			{/* Label override */}
-			<div>
-				<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-					Label{" "}
-					<span className="normal-case font-normal">(optional override)</span>
-				</p>
-				<input
-					value={label}
-					onChange={(e) => setLabel(e.target.value)}
-					placeholder="Custom display label…"
-					className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-				/>
-			</div>
-
-			{/* Weight slider */}
-			<div>
-				<div className="flex items-center justify-between mb-1">
-					<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold">
-						Weight
-					</p>
-					<span className="text-[10px] text-txt-muted tabular-nums">
-						{weight.toFixed(2)}
-					</span>
-				</div>
-				<input
-					type="range"
-					min="0"
-					max="1"
-					step="0.05"
-					value={weight}
-					onChange={(e) => setWeight(parseFloat(e.target.value))}
-					className="w-full accent-[var(--color-accent)]"
-				/>
-			</div>
-
+			{/* Error */}
 			{error && (
 				<p className="text-xs text-danger bg-danger/10 rounded-lg px-2 py-1.5">
 					{error}
 				</p>
 			)}
 
+			{/* Buttons */}
 			<div className="flex gap-2 pt-1">
 				<button
 					type="submit"
 					disabled={saving}
-					className="flex-1 bg-accent text-white text-xs font-semibold rounded-lg px-3 py-1.5 hover:bg-accent/80 transition disabled:opacity-50"
+					className="flex-1 bg-accent text-white text-xs font-semibold py-1.5 rounded-lg hover:bg-accent/90 transition disabled:opacity-50"
 				>
-					{saving ? "Saving…" : isEdit ? "Update" : "Add"}
+					{saving ? "Saving…" : isEdit ? "Save changes" : "Add connection"}
 				</button>
 				<button
 					type="button"
 					onClick={onCancel}
-					className="flex-1 bg-elevated text-txt text-xs font-semibold rounded-lg px-3 py-1.5 hover:bg-hover transition"
+					className="text-xs text-txt-muted hover:text-txt px-3 py-1.5 rounded-lg hover:bg-hover transition"
 				>
 					Cancel
 				</button>
