@@ -195,7 +195,7 @@ class Asset(Base):
 class Campaign(Base):
     """
     A single ongoing TTRPG game. Scoped to a group.
-    system: free-text game system name ('D&D 5e', 'Pathfinder 2e', etc.)
+    system: free-text game/project system name ('Pathfinder 2e', 'homebrew', etc.)
     status: 'active' | 'paused' | 'completed' | 'archived'
     """
 
@@ -386,7 +386,7 @@ class CampaignInvite(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
-    # role granted on redemption: 'gm' | 'player' | 'observer'
+    # role granted on redemption: 'gm' (storyteller/GM) | 'player' | 'observer'
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="player", server_default=text("'player'"))
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -417,7 +417,7 @@ class Character(Base):
     """
     Player character or NPC within a campaign (or group-level world asset).
     campaign_id=NULL means the character belongs to the group's shared world.
-    stats is a JSONB blob for system-specific data (HP, AC, ability scores, etc.)
+    stats is a JSONB blob for system-specific data (stats, attributes, traits, etc.)
     """
 
     __tablename__ = "characters"
@@ -463,8 +463,8 @@ class Character(Base):
 class CampaignMember(Base):
     """
     User's membership in a campaign.
-    role: 'gm' | 'player' | 'observer'
-    character_id links the player to their PC for this campaign.
+    role: 'gm' (storyteller) | 'player' | 'observer'
+    character_id links the member to their character for this campaign.
     """
 
     __tablename__ = "campaign_members"
@@ -814,7 +814,7 @@ class PlaySession(Base):
     """
     A single in-person or online game session.
     status: 'planned' | 'completed' | 'cancelled'
-    session_number is GM-assigned (not auto-incremented) to allow retroactive logging.
+    session_number is user-assigned (not auto-incremented) to allow retroactive logging.
     """
 
     __tablename__ = "play_sessions"
@@ -861,7 +861,7 @@ class SessionParticipant(Base):
     """
     Who attended a play session and with which character.
     display_name is a fallback for players who aren't registered users.
-    xp_override lets the GM award different XP per player.
+    xp_override lets the session creator award different XP per participant.
     """
 
     __tablename__ = "session_participants"
@@ -937,7 +937,7 @@ class TimelineEvent(Base):
     A single event on a timeline.
     event_date_raw: flexible string for in-game dates ('Year 42, Month 3', 'The Third Age').
     event_date_sort: integer representation for ordering (app-defined scale).
-    is_secret=True means only the GM sees this event.
+    is_secret=True means only the vault owner/creator sees this event.
     """
 
     __tablename__ = "timeline_events"

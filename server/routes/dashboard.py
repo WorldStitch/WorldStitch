@@ -126,13 +126,13 @@ def recent(
 
 
 def _count_meta(ctx: AppContext, subfolder: str) -> int:
-    """Count JSON files in a .dnd_meta subfolder."""
+    """Count JSON files in a .ws_meta subfolder (HybridStorage / SQLiteBackend)."""
     try:
         from pathlib import Path
 
         vault_path = getattr(ctx.storage, "vault_path", None)
         if vault_path:
-            d = Path(vault_path) / ".dnd_meta" / subfolder
+            d = Path(vault_path) / ".ws_meta" / subfolder
             if d.is_dir():
                 return len(list(d.glob("*.json")))
     except Exception:

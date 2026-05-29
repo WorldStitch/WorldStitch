@@ -186,7 +186,7 @@ class SessionRecord(Base):
 
 
 class SessionLogRecord(Base):
-    """ORM model for D&D session log — normalized columns for queryability."""
+    """ORM model for session log — normalized columns for queryability."""
 
     __tablename__ = "session_logs"
     __table_args__ = (Index("ix_session_logs_vault_id", "vault_id"),)
@@ -524,9 +524,9 @@ class SQLiteBackend(StorageBackend):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, vault_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_vault ON relationships(vault_id, is_active)")
 
-    def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
+    def _meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
-        d = self.vault_path / ".dnd_meta" / subfolder
+        d = self.vault_path / ".ws_meta" / subfolder
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{obj_id}.json"
 
@@ -1400,7 +1400,7 @@ class SQLiteBackend(StorageBackend):
             session.commit()
 
     # ========================================================================
-    # Session Logs (D&D campaign session records)
+    # Session Logs
     # ========================================================================
 
     def list_session_logs(self, vault_id: str, skip: int = 0, limit: int = 50) -> Tuple[List[dict], int]:

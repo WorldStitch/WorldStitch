@@ -1,4 +1,4 @@
-﻿"""
+"""
 CRUD smoke tests for all WorldStitch data models.
 
 These tests verify:
@@ -91,7 +91,7 @@ class TestCharacterModel:
     def test_npc_flag(self):
         from WorldStitch.models.character import Character
 
-        npc = Character(owner_id=OWNER, vault_id=VAULT, name="Goblin", is_npc=True)
+        npc = Character(owner_id=OWNER, vault_id=VAULT, name="Innkeeper", is_npc=True)
         assert npc.is_npc is True
 
     def test_json_roundtrip(self):
@@ -211,8 +211,8 @@ class TestAssetModels:
     def test_map_create(self):
         from WorldStitch.models.map import Map
 
-        m = Map(owner_id=OWNER, vault_id=VAULT, name="Dungeon Map", file_path="maps/dungeon.png")
-        assert m.name == "Dungeon Map"
+        m = Map(owner_id=OWNER, vault_id=VAULT, name="Region Map", file_path="maps/region.png")
+        assert m.name == "Region Map"
         assert_core_fields(m)
 
     def test_image_create(self):

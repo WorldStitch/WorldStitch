@@ -1,17 +1,14 @@
 """
 AppContext — the single service locator for the entire WorldStitch application.
 
-Every controller and view should receive an AppContext instance rather than
-importing managers or storage directly. This keeps dependencies explicit,
-makes testing easy (swap out storage/managers via constructor), and gives
-a clear picture of what services exist at runtime.
+Every route handler should receive an AppContext instance (via FastAPI
+dependency injection) rather than importing managers or storage directly.
+This keeps dependencies explicit, makes testing easy (swap out storage/managers
+via constructor), and gives a clear picture of what services exist at runtime.
 
 Multiuser design:
 - All managers share the same StorageBackend instance so writes are consistent.
-- The AI engine is set after construction (main.py wires it up) so startup
-  order remains flexible.
-- A 'current_user_id' slot is provided for single-user mode; the full auth
-  flow will replace this with proper session-based identity later.
+- The AI engine is set after construction so startup order remains flexible.
 """
 
 from __future__ import annotations
@@ -42,17 +39,6 @@ class AppContext:
     """
     Central service locator — holds every service the app needs.
 
-    Usage
-    -----
-    Construct once in main.py and pass to every controller/view:
-
-        ctx = AppContext(config)
-        ctx.ai = get_model_backend(config, storage=ctx.storage)
-
-    Then inject into GUI:
-
-        window = LoreMainApp(ctx=ctx)
-
     Attributes
     ----------
     config : Config
@@ -60,10 +46,9 @@ class AppContext:
     storage : StorageBackend
         Primary storage backend. All managers share this instance.
     ai : AIInterface | None
-        AI engine — set by main.py after AppContext is constructed.
+        AI engine — wired up after construction.
     current_user_id : str | None
-        Active user for single-user mode. Replace with session-based
-        identity when full auth is implemented.
+        Active user ID; set per-request from the validated JWT.
     users : UserManager
     notes : NoteManager
     vaults : VaultManager
@@ -83,10 +68,10 @@ class AppContext:
         # A custom backend may be injected via constructor — used in tests.
         self.storage: StorageBackend = storage or StorageRouter(config)
 
-        # AI engine — wired up by main.py after construction.
+        # AI engine — wired up by server/app.py after construction.
         self.ai: Optional[AIInterface] = None
 
-        # Active user — set from login dialog in main.py.
+        # Active user — set per-request from the validated JWT token.
         self.current_user_id: Optional[str] = None
 
         # --- Managers — all share the same storage instance ---
@@ -105,10 +90,6 @@ class AppContext:
         # Auth — session lifecycle + login/logout logic
         self._auth_sessions = AuthSessionManager(self.storage)
         self.auth = AuthManager(self.storage, self._auth_sessions)
-
-    # ------------------------------------------------------------------
-    # Convenience helpers
-    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Auth helpers
@@ -133,7 +114,7 @@ class AppContext:
 
     @property
     def cost_tracker(self):
-        """Return the CostTracker from the storage backend, or None if unavailable."""
+        """Return the CostTracker from the SQLite backend, or None if unavailable."""
         return getattr(self.storage, "cost_tracker", None)
 
     @property

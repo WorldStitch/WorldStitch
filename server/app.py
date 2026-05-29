@@ -1,4 +1,4 @@
-﻿"""
+"""
 WorldStitch FastAPI application.
 
 Creates the FastAPI app, wires up AppContext, and registers all route
@@ -8,8 +8,6 @@ Start from the project root (the directory containing both
 ``WorldStitch/`` and ``server/``):
 
     uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
-
-The Electron ``main.cjs`` starts this automatically in production.
 """
 
 import logging
@@ -35,8 +33,6 @@ sys.path.insert(0, str(_parent))
 
 from fastapi.responses import JSONResponse
 
-from WorldStitch.config.config import Config
-from WorldStitch.context.app_context import AppContext
 from server.deps import set_app_context
 from server.limiter import limiter
 from server.middleware.analytics import AnalyticsMiddleware
@@ -61,6 +57,8 @@ from server.routes import (
     vaults,
     ws,
 )
+from WorldStitch.config.config import Config
+from WorldStitch.context.app_context import AppContext
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +88,7 @@ async def lifespan(application: FastAPI):
     cfg = Config()
 
     if not cfg.API_KEY_ENCRYPTION_SECRET:
-        logger.warning(
-            "WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext"
-        )
+        logger.warning("WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext")
 
     ctx = AppContext(cfg)
 
@@ -133,7 +129,7 @@ async def lifespan(application: FastAPI):
 app = FastAPI(
     title="WorldStitch API",
     version="1.0.0",
-    description="REST API for the WorldStitch D&D campaign management platform.",
+    description="REST API for the WorldStitch creative worldbuilding platform.",
     lifespan=lifespan,
 )
 
@@ -144,7 +140,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(AnalyticsMiddleware)
 app.add_middleware(LoggingMiddleware)
 
-# Allow the Vite dev server (port 5173) and production Electron renderer
+# Allow the Vite dev server (port 5173) and same-origin production requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -227,7 +223,7 @@ app.include_router(relationships.router, prefix="/relationships", tags=["relatio
 
 @app.get("/health", tags=["health"])
 def health():
-    """Liveness probe used by the Electron launcher to detect API readiness."""
+    """Liveness probe."""
     return {"status": "ok", "service": "WorldStitch"}
 
 
@@ -236,7 +232,9 @@ def health():
 # A mount is checked AFTER all FastAPI routes, so API endpoints are never
 # shadowed and non-GET methods (POST /vaults/, etc.) work correctly.
 from pathlib import Path as _Path
+
 _frontend_dist = _Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if _frontend_dist.exists():
     from fastapi.staticfiles import StaticFiles
+
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")

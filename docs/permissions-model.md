@@ -1,6 +1,6 @@
 # Permissions Model
 
-MythosEngine uses a layered permission system: a platform-level `system_role` on each user account, and a resource-level ACL (owner + explicit grants) enforced by `PermissionChecker`.
+WorldStitch uses a layered permission system: a platform-level `system_role` on each user account, and a resource-level ACL (owner + explicit grants) enforced by `PermissionChecker`.
 
 ---
 
@@ -51,7 +51,7 @@ Only the resource owner (matched via `owner_id`) or the system actor (`user_id =
 ## Usage in Managers
 
 ```python
-from MythosEngine.auth.permission_checker import permissions
+from WorldStitch.auth.permission_checker import permissions
 
 # Raise PermissionError if user cannot write
 permissions.require_write(note, user_id=ctx.current_user_id)
