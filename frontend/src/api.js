@@ -1,12 +1,4 @@
-/**
- * WorldStitch API Client
- * Talks to the FastAPI backend on localhost:8741.
- */
-
-const BASE =
-  typeof window !== "undefined" && window.electronAPI
-    ? "http://127.0.0.1:8741"
-    : (import.meta.env.VITE_API_URL || "");
+const BASE = import.meta.env.VITE_API_URL || "";
 
 export function getApiBase() {
   return BASE;

@@ -1,12 +1,11 @@
-﻿# WorldStitch/auth/auth_manager.py
+# WorldStitch/auth/auth_manager.py
 """
 AuthManager — single point of entry for all authentication operations.
 
-Consolidates login, logout, and auto-login so callers (main.py, logout button)
-never need to touch session_token.py or bcrypt directly.
+Consolidates login, logout, and auto-login so callers never need to touch
+session_token.py or bcrypt directly.
 
-Calls all callbacks registered on `session_ended` when logout completes so that
-main.py / LoreMainApp can react (hide the window, show LoginDialog, etc.).
+Calls all callbacks registered on `session_ended` when logout completes.
 """
 
 import logging
