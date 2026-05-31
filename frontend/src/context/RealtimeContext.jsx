@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { getToken, getWsBase } from '@/api';
+import { getToken, getWsBase, auth } from '@/api';
 
 const RealtimeContext = createContext(null);
 
@@ -16,9 +16,10 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
     let cancelled = false;
     let attempt = 0;
     let timeoutId = null;
+    let pingId = null;
     let currentSocket = null;
 
-    const connect = () => {
+    const connect = async () => {
       const token = getToken();
       if (!token || cancelled) return;
 
@@ -31,6 +32,12 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       socket.onopen = () => {
         attempt = 0;
         setIsConnected(true);
+        // Ping every 25s so Railway's 30-minute idle-connection timeout never fires.
+        pingId = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 25000);
       };
 
       socket.onmessage = (event) => {
@@ -46,16 +53,39 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
         }
       };
 
-      socket.onclose = () => {
+      socket.onerror = (err) => {
+        console.warn('WebSocket error', err);
+      };
+
+      socket.onclose = async (event) => {
+        clearInterval(pingId);
+        pingId = null;
         setIsConnected(false);
         if (socketRef.current === socket) socketRef.current = null;
         setOnlineUsers([]);
         setEditing([]);
-        if (!cancelled) {
-          const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
-          attempt += 1;
-          timeoutId = setTimeout(connect, delay);
+
+        if (cancelled) return;
+
+        // Code 1008 = Policy Violation — the server rejected the token.
+        // This happens when the 1-hour JWT has expired. Try to get a new one
+        // via the 30-day refresh token before scheduling the next reconnect.
+        // Without this check the frontend loops forever: reconnect → 1008 →
+        // reconnect → 1008 … because every attempt uses the same dead token.
+        if (event.code === 1008) {
+          try {
+            await auth.refresh();
+          } catch {
+            // Refresh token also expired — force a full logout.
+            window.dispatchEvent(new CustomEvent('auth:logout'));
+            return;
+          }
+          if (cancelled) return; // guard: component may have unmounted during refresh
         }
+
+        const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
+        attempt += 1;
+        timeoutId = setTimeout(connect, delay);
       };
     };
 
@@ -64,6 +94,7 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
     return () => {
       cancelled = true;
       clearTimeout(timeoutId);
+      clearInterval(pingId);
       if (currentSocket) currentSocket.close();
       if (socketRef.current === currentSocket) socketRef.current = null;
       setOnlineUsers([]);
