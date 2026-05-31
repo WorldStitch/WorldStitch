@@ -315,6 +315,7 @@ def _get_ai_for_user(
     if store is not None:
         personal_key = store.get_personal_key(user_id)
         if personal_key:
+            logger.debug("ai_key_path user=%s path=personal_key", user_id)
             return _make_engine_with_key(ctx, personal_key)
 
     # 2. Vault owner shared key
@@ -324,15 +325,23 @@ def _get_ai_for_user(
             if vault and getattr(vault, "ai_key_shared", False):
                 vault_key = ctx.storage.get_vault_ai_key(vault_id)
                 if vault_key:
+                    logger.debug("ai_key_path user=%s path=vault_key vault=%s", user_id, vault_id)
                     return _make_engine_with_key(ctx, vault_key)
         except Exception:
             logger.exception("Failed to resolve vault AI key for vault %s", vault_id)
 
     # 3. Platform key (privileged roles only)
+    logger.debug(
+        "ai_key_path user=%s role=%s has_ai=%s path=platform_key_check",
+        user_id,
+        user_system_role,
+        ctx.has_ai(),
+    )
     if user_system_role in PLATFORM_KEY_ROLES:
         if ctx.has_ai():
             if store is not None:
                 store.check_and_increment(user_id)
+            logger.debug("ai_key_path user=%s path=platform_key", user_id)
             return ctx.require_ai()
         # Role qualifies but platform key is not configured on the server
         raise HTTPException(
@@ -453,7 +462,7 @@ async def ask(
     """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set."""
     try:
         _apply_preferred_model(ctx)
-        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
         system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
         full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
@@ -528,7 +537,7 @@ async def stream_ask(
 ):
     """Streaming SSE version of /ai/ask. Yields tokens word-by-word."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
     except HTTPException:
         raise
 
@@ -594,7 +603,7 @@ async def summarize(
 ):
     """Summarize the provided text."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
         summary, prompt_tokens, completion_tokens = ai_engine.summarize(req.text)
 
         return SummarizeResponse(
@@ -621,7 +630,7 @@ async def suggest_tags(
 ):
     """Suggest tags for text, filtering out existing ones."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
         raw_tags, prompt_tokens, completion_tokens = ai_engine.suggest_tags(req.text)
 
         tags = _parse_comma_list(raw_tags) if isinstance(raw_tags, str) else list(raw_tags)
@@ -654,7 +663,7 @@ async def propose_links(
 ):
     """Suggest internal [[wiki links]] for the given note content."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
         raw_links, prompt_tokens, completion_tokens = ai_engine.propose_links(req.text, req.note_names)
 
         links = _parse_comma_list(raw_links) if isinstance(raw_links, str) else list(raw_links)
