@@ -14,11 +14,15 @@ const COST_PER_TOKEN = 0.000003;
 // Max messages kept in localStorage to avoid quota errors (~200 messages ≈ a few KB)
 const MAX_STORED_MESSAGES = 200;
 
-const MODES = [
+const DEVELOPER_ROLES = new Set(['owner', 'admin', 'tester']);
+
+const BASE_MODES = [
   { key: 'lore',    label: 'Lore Assistant' },
   { key: 'writing', label: 'Writing Helper' },
   { key: 'gm',      label: 'GM Prep' },
 ];
+
+const DEVELOPER_MODE = { key: 'developer', label: '⚙ Developer' };
 
 // ── Export helpers ────────────────────────────────────────────────────────────
 
@@ -47,15 +51,53 @@ function downloadFile(content, filename, mimeType) {
   URL.revokeObjectURL(url);
 }
 
+// ── Tool call summary pill ────────────────────────────────────────────────────
+
+function ToolCallSummary({ toolCalls }) {
+  const [open, setOpen] = useState(false);
+  if (!toolCalls || toolCalls.length === 0) return null;
+
+  const summary = toolCalls.map((tc) => {
+    if (tc.name === 'bulk_create_notes') return `Created ${tc.result?.created ?? 0} notes`;
+    if (tc.name === 'create_note') return `Note: "${tc.result?.title ?? tc.args?.title}"`;
+    if (tc.name === 'create_folder') return `Folder: "${tc.result?.name ?? tc.args?.name}"`;
+    if (tc.name === 'create_character') return `Character: "${tc.result?.name ?? tc.args?.name}"`;
+    return tc.name;
+  });
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-xs text-txt-muted hover:text-txt transition-colors"
+      >
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400" />
+        {toolCalls.length} action{toolCalls.length !== 1 ? 's' : ''} taken
+        <span className="ml-0.5">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <ul className="mt-1.5 space-y-1 pl-3 border-l-2 border-green-500/30">
+          {summary.map((s, i) => (
+            <li key={i} className="text-xs text-green-400">{s}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function Chat() {
+export default function Chat({ user }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { activeVaultId, vaults = [] } = useVault();
   const activeVault = vaults.find((v) => v.id === activeVaultId);
   const vaultName = activeVault?.name || 'your vault';
   const storageKey = `ws_chat_${activeVaultId || 'global'}`;
+
+  const isDeveloper = DEVELOPER_ROLES.has(user?.system_role);
+  const MODES = isDeveloper ? [...BASE_MODES, DEVELOPER_MODE] : BASE_MODES;
 
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
@@ -79,6 +121,13 @@ export default function Chat() {
   // cross-contamination problem).
   const storageKeyRef = useRef(storageKey);
   storageKeyRef.current = storageKey;
+
+  // If user loses developer access, fall back to lore mode
+  useEffect(() => {
+    if (mode === 'developer' && !isDeveloper) {
+      setMode('lore');
+    }
+  }, [isDeveloper, mode]);
 
   // Load history from localStorage whenever the active vault changes (incl. mount)
   useEffect(() => {
@@ -175,6 +224,7 @@ export default function Chat() {
         role: m.role,
         content: m.content,
         tokens: m.tokens,
+        toolCalls: m.tool_calls,
       }))
     );
     setConversationId(conv.id);
@@ -194,7 +244,8 @@ export default function Chat() {
     setPrompt('');
     setLoading(true);
 
-    if (streamingMode) {
+    // Developer mode never uses streaming — tool calls need the full response
+    if (streamingMode && mode !== 'developer') {
       await handleStreamingAsk(prompt, history);
     } else {
       await handleRegularAsk(prompt, history);
@@ -210,6 +261,12 @@ export default function Chat() {
         setConversationId(response.conversation_id);
         queryClient.invalidateQueries({ queryKey: ['ai-conversations', activeVaultId] });
       }
+      // Invalidate browse notes/folders if developer mode made changes
+      if (response.tool_calls?.length) {
+        queryClient.invalidateQueries({ queryKey: ['notes'] });
+        queryClient.invalidateQueries({ queryKey: ['folders'] });
+        queryClient.invalidateQueries({ queryKey: ['characters'] });
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -217,6 +274,7 @@ export default function Chat() {
           role: 'assistant',
           content: response.response,
           tokens: msgTokens,
+          toolCalls: response.tool_calls,
         },
       ]);
     } catch (err) {
@@ -463,15 +521,17 @@ export default function Chat() {
             />
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <label className="flex items-center gap-1.5 text-xs text-txt-muted cursor-pointer">
-              <input
-                type="checkbox"
-                checked={streamingMode}
-                onChange={(e) => setStreamingMode(e.target.checked)}
-                className="w-3.5 h-3.5 rounded bg-elevated border border-txt-muted accent-accent"
-              />
-              Stream
-            </label>
+            {mode !== 'developer' && (
+              <label className="flex items-center gap-1.5 text-xs text-txt-muted cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={streamingMode}
+                  onChange={(e) => setStreamingMode(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded bg-elevated border border-txt-muted accent-accent"
+                />
+                Stream
+              </label>
+            )}
             {saveStatus && (
               <span className="text-accent text-xs font-medium bg-accent/10 px-2 py-1 rounded-lg">
                 {saveStatus}
@@ -514,14 +574,18 @@ export default function Chat() {
         )}
 
         {/* Mode selector */}
-        <div className="flex gap-1 flex-shrink-0">
+        <div className="flex gap-1 flex-shrink-0 flex-wrap">
           {MODES.map((m) => (
             <button
               key={m.key}
               onClick={() => setMode(m.key)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 mode === m.key
-                  ? 'bg-accent text-white'
+                  ? m.key === 'developer'
+                    ? 'bg-orange-500 text-white'
+                    : 'bg-accent text-white'
+                  : m.key === 'developer'
+                  ? 'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
                   : 'bg-elevated text-txt-muted hover:text-txt hover:bg-card'
               }`}
             >
@@ -530,16 +594,36 @@ export default function Chat() {
           ))}
         </div>
 
+        {/* Developer mode notice */}
+        {mode === 'developer' && (
+          <div className="flex-shrink-0 px-3 py-2 bg-orange-500/10 border border-orange-500/20 rounded-xl text-xs text-orange-300">
+            <span className="font-semibold">Developer Mode</span> — AI can create notes, folders, and characters directly in this vault.
+            Streaming is disabled. Requires an active vault.
+          </div>
+        )}
+
         {/* Chat History */}
         <div className="flex-1 overflow-y-auto space-y-3 pr-1">
           {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
-                <div className="text-5xl mb-4">✦</div>
-                <p className="text-txt-secondary text-lg font-medium">Ask anything about your world</p>
-                <p className="text-txt-muted text-sm mt-1">
-                  Characters, lore, locations, history — your AI knows your vault.
-                </p>
+                {mode === 'developer' ? (
+                  <>
+                    <div className="text-5xl mb-4">⚙</div>
+                    <p className="text-txt-secondary text-lg font-medium">Developer Mode active</p>
+                    <p className="text-txt-muted text-sm mt-1">
+                      Try: "Create 10 test notes across 3 folders" or "Create 5 NPCs for a fantasy setting."
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-5xl mb-4">✦</div>
+                    <p className="text-txt-secondary text-lg font-medium">Ask anything about your world</p>
+                    <p className="text-txt-muted text-sm mt-1">
+                      Characters, lore, locations, history — your AI knows your vault.
+                    </p>
+                  </>
+                )}
               </div>
             </div>
           ) : (
@@ -582,6 +666,11 @@ export default function Chat() {
                     )}
                   </div>
 
+                  {/* Tool call summary for developer mode */}
+                  {msg.role === 'assistant' && msg.toolCalls?.length > 0 && (
+                    <ToolCallSummary toolCalls={msg.toolCalls} />
+                  )}
+
                   {/* Per-message token count */}
                   {msg.role === 'assistant' && msg.tokens > 0 && (
                     <p className="text-[10px] text-txt-muted mt-0.5 px-1">
@@ -593,12 +682,14 @@ export default function Chat() {
             ))
           )}
 
-          {loading && !streamingMode && (
+          {loading && (mode !== 'developer' ? !streamingMode : true) && (
             <div className="flex justify-start">
               <Card className="px-4 py-3 max-w-xs lg:max-w-md">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 bg-accent rounded-full animate-pulse" />
-                  <p className="text-txt-secondary text-sm">Thinking...</p>
+                  <p className="text-txt-secondary text-sm">
+                    {mode === 'developer' ? 'Executing...' : 'Thinking...'}
+                  </p>
                 </div>
               </Card>
             </div>
@@ -616,7 +707,11 @@ export default function Chat() {
         {/* Input */}
         <Card className="p-4 space-y-3 flex-shrink-0">
           <TextArea
-            placeholder="Ask about your world..."
+            placeholder={
+              mode === 'developer'
+                ? 'Create 20 test notes across 5 folders, or ask anything…'
+                : 'Ask about your world...'
+            }
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -631,7 +726,9 @@ export default function Chat() {
               className="flex-1"
               title="Ctrl+Enter to send"
             >
-              {loading ? 'Thinking...' : '✦ Ask AI'}
+              {loading
+                ? mode === 'developer' ? 'Executing...' : 'Thinking...'
+                : mode === 'developer' ? '⚙ Execute' : '✦ Ask AI'}
             </Button>
             <Button variant="ghost" onClick={handleNewChat} disabled={loading}>
               Clear

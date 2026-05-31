@@ -13,6 +13,10 @@ GET  /ai/conversations/          — list saved conversations for active vault
 POST /ai/conversations/          — create or update a saved conversation
 GET  /ai/conversations/{id}      — fetch one saved conversation
 DELETE /ai/conversations/{id}    — delete a saved conversation
+
+Developer mode (mode="developer"):
+  Restricted to owner/admin/tester roles.  Uses OpenAI function-calling so the
+  AI can take real actions in the vault: create notes, folders, and characters.
 """
 
 import asyncio
@@ -45,6 +49,9 @@ def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) 
 router = APIRouter(prefix="/ai", tags=["ai"])
 logger = logging.getLogger(__name__)
 
+# Roles allowed to use Developer mode (tool-calling)
+_DEVELOPER_ROLES = {"owner", "admin", "tester"}
+
 # ── AI mode addenda ────────────────────────────────────────────────────────────
 
 _MODE_ADDENDA = {
@@ -65,6 +72,113 @@ _MODE_ADDENDA = {
     ),
 }
 
+_DEVELOPER_SYSTEM_PROMPT = (
+    "You are in **Developer Mode** for WorldStitch. You are helping a developer test and debug the app. "
+    "You can create test data in bulk, diagnose issues, and take direct actions in the vault. "
+    "Be technical, direct, and thorough. When asked to create test content, create realistic "
+    "worldbuilding data — varied notes, characters, locations, lore entries. "
+    "Always confirm what you created at the end."
+)
+
+# ── Developer mode tool definitions ──────────────────────────────────────────
+
+_DEVELOPER_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "create_note",
+            "description": "Create a new note in the vault's Browse section.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Note title"},
+                    "content": {"type": "string", "description": "Markdown content"},
+                    "folder_path": {
+                        "type": "string",
+                        "description": "Folder name to place note in (created if missing). Leave empty for root.",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of tags",
+                    },
+                },
+                "required": ["title", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_folder",
+            "description": "Create a folder in the vault.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Folder name"},
+                    "parent_path": {
+                        "type": "string",
+                        "description": "Parent folder name (leave empty for root folder)",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_character",
+            "description": "Create a character (NPC or player) in the vault.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Character name"},
+                    "description": {"type": "string", "description": "Backstory or description"},
+                    "char_type": {
+                        "type": "string",
+                        "enum": ["npc", "player"],
+                        "description": "Whether this is an NPC or player character",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tags (stored in ai_memory)",
+                    },
+                },
+                "required": ["name", "description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bulk_create_notes",
+            "description": "Create multiple notes at once for seeding test data.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "notes": {
+                        "type": "array",
+                        "description": "List of notes to create",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "content": {"type": "string"},
+                                "folder_path": {"type": "string"},
+                                "tags": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["title", "content"],
+                        },
+                    }
+                },
+                "required": ["notes"],
+            },
+        },
+    },
+]
+
 
 # ============================================================================
 # Request / Response models
@@ -84,6 +198,7 @@ class AskResponse(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     conversation_id: Optional[str] = None
+    tool_calls: Optional[list[dict]] = None
 
 
 class SummarizeRequest(BaseModel):
@@ -164,6 +279,14 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
         except Exception:
             pass
 
+    mode_key = (mode or "lore").lower()
+
+    if mode_key == "developer":
+        return (
+            f"You are the WorldStitch AI Assistant in Developer Mode, helping **{username}** "
+            f'with the vault **"{vault_name}"**. ' + _DEVELOPER_SYSTEM_PROMPT
+        )
+
     base = (
         f"You are the WorldStitch AI Assistant — a specialized worldbuilding companion built into "
         f"the WorldStitch platform. You are currently helping **{username}** with their vault called "
@@ -173,9 +296,101 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
         f"Never forget your role or act as a generic AI assistant."
     )
 
-    mode_key = (mode or "lore").lower()
     addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
     return base + "\n\n" + addendum
+
+
+def _make_tool_executor(ctx: AppContext, user: User, vault_id: str):
+    """
+    Return a callable that executes developer-mode tool calls server-side.
+
+    The executor creates notes, folders, and characters directly in the storage
+    layer using the same managers/storage methods the normal routes use.
+    """
+    import uuid
+    from datetime import datetime as _dt
+
+    # Cache for folder name → id mapping within one request
+    _folder_cache: dict = {}
+
+    def _resolve_folder(folder_path: Optional[str]) -> Optional[str]:
+        if not folder_path:
+            return None
+        if folder_path in _folder_cache:
+            return _folder_cache[folder_path]
+        # Look up by name in existing folders
+        if hasattr(ctx.storage, "list_all_folders"):
+            for f in ctx.storage.list_all_folders(vault_id=vault_id):
+                if getattr(f, "name", "").lower() == folder_path.lower():
+                    _folder_cache[folder_path] = f.id
+                    return f.id
+        # Create it via FolderManager
+        folder = ctx.folders.create_folder(
+            vault_id=vault_id,
+            owner_id=str(user.id),
+            name=folder_path,
+        )
+        _folder_cache[folder_path] = folder.id
+        return folder.id
+
+    def _create_note(args: dict) -> dict:
+        from WorldStitch.models.note import Note
+
+        folder_id = _resolve_folder(args.get("folder_path"))
+        note = Note(
+            id=str(uuid.uuid4()),
+            title=args["title"],
+            content=args.get("content", ""),
+            vault_id=vault_id,
+            folder_id=folder_id,
+            tags=args.get("tags") or [],
+            owner_id=str(user.id),
+            created_at=_dt.utcnow(),
+            last_modified=_dt.utcnow(),
+        )
+        ctx.storage.save_note(note)
+        return {"id": note.id, "title": note.title, "folder": args.get("folder_path")}
+
+    def executor(fn_name: str, args: dict) -> dict:
+        if fn_name == "create_note":
+            return _create_note(args)
+
+        if fn_name == "create_folder":
+            folder_id = _resolve_folder(args["name"])
+            return {"id": folder_id, "name": args["name"]}
+
+        if fn_name == "create_character":
+            from WorldStitch.models.character import Character
+
+            char = Character(
+                id=str(uuid.uuid4()),
+                vault_id=vault_id,
+                campaign_id=vault_id,
+                owner_id=str(user.id),
+                name=args["name"],
+                description=args.get("description", ""),
+                is_npc=(args.get("char_type", "npc") == "npc"),
+                stats={},
+                tags=args.get("tags") or [],
+                note_ids=[],
+                created_at=_dt.utcnow(),
+                last_modified=_dt.utcnow(),
+            )
+            ctx.storage.save_character(char)
+            return {"id": char.id, "name": char.name}
+
+        if fn_name == "bulk_create_notes":
+            results = []
+            for note_args in args.get("notes") or []:
+                try:
+                    results.append(_create_note(note_args))
+                except Exception as e:
+                    results.append({"error": str(e), "title": note_args.get("title", "?")})
+            return {"created": len(results), "notes": results}
+
+        return {"error": f"Unknown tool: {fn_name}"}
+
+    return executor
 
 
 def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
@@ -450,15 +665,51 @@ async def ask(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set."""
+    """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set.
+
+    When mode='developer' the request is routed through the tool-calling path so the
+    AI can take real actions in the vault.  Restricted to owner/admin/tester roles.
+    """
     try:
         _apply_preferred_model(ctx)
         ai_engine = _get_ai_for_user(str(user.id), ctx)
         system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
-        full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
-        response, prompt_tokens, completion_tokens = ai_engine.ask(full_prompt, system_prompt=system_prompt)
+
+        tool_calls_made: list = []
+
+        if (req.mode or "").lower() == "developer":
+            # Enforce role gating
+            user_role = getattr(user, "system_role", "user") or "user"
+            if user_role not in _DEVELOPER_ROLES:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Developer mode requires owner, admin, or tester role.",
+                )
+            if not req.vault_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Developer mode requires a vault_id so tools can create content.",
+                )
+            if not hasattr(ai_engine, "ask_with_tools"):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="The configured AI engine does not support tool-calling.",
+                )
+            executor = _make_tool_executor(ctx, user, req.vault_id)
+            full_prompt = _build_prompt_with_history(req.prompt, req.history)
+            response, prompt_tokens, completion_tokens, tool_calls_made = ai_engine.ask_with_tools(
+                prompt=full_prompt,
+                system_prompt=system_prompt,
+                tools=_DEVELOPER_TOOLS,
+                tool_executor=executor,
+                history=None,  # history already baked into full_prompt
+            )
+        else:
+            full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
+            response, prompt_tokens, completion_tokens = ai_engine.ask(full_prompt, system_prompt=system_prompt)
+
         cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
         ctx.analytics.track(
             "ai.request_completed",
@@ -488,6 +739,8 @@ async def ask(
                     "cost": cost_usd,
                     "timestamp": datetime.utcnow().isoformat(),
                 }
+                if tool_calls_made:
+                    ai_msg["tool_calls"] = tool_calls_made
                 # Reconstruct full message list from history + new exchange
                 existing_messages = list(req.history or [])
                 existing_messages.append(user_msg)
@@ -509,6 +762,7 @@ async def ask(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             conversation_id=conv_id,
+            tool_calls=tool_calls_made or None,
         )
     except HTTPException:
         raise

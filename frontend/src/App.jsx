@@ -173,7 +173,7 @@ export default function App() {
             <ErrorBoundary>
               <Routes>
                 <Route path="/" element={<Dashboard user={user} />} />
-                <Route path="/chat" element={<Chat />} />
+                <Route path="/chat" element={<Chat user={user} />} />
                 <Route path="/browse" element={<Browse user={user} />} />
                 <Route path="/graph" element={<Graph user={user} />} />
                 <Route path="/characters" element={<Characters />} />
