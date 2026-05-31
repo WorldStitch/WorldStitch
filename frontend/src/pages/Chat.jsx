@@ -122,6 +122,14 @@ export default function Chat() {
     queryFn: ai.status,
     staleTime: 60_000,
     retry: false,
+    // Poll every 3 s while the index is still building so the "Vault index
+    // is building…" banner disappears as soon as the backend finishes.
+    // Once index_built is true (or AI is not ready) polling stops.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data?.ready && data?.index_built === false) return 3_000;
+      return false;
+    },
   });
 
   // Also check whether the current user has a personal key stored; used to

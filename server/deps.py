@@ -35,9 +35,11 @@ PLATFORM_ADMIN = {"owner", "admin"}
 # Users who can perform moderation-level actions
 MOD_AND_ABOVE = {"owner", "admin", "mod"}
 
-# Users who are eligible to use the platform-level OpenAI key as fallback
-# (privileged internal accounts — not general beta/user/guest)
-PLATFORM_KEY_ROLES = {"owner", "admin", "mod", "support", "tester", "system"}
+# Users who are eligible to use the platform-level OpenAI key as fallback.
+# "user" and "beta" are included so that any authenticated account on an
+# instance where the owner has set OPENAI_API_KEY can use AI out of the box.
+# "guest" is intentionally excluded (unauthenticated / read-only tier).
+PLATFORM_KEY_ROLES = {"owner", "admin", "mod", "support", "tester", "beta", "user", "system"}
 
 
 def set_app_context(ctx: AppContext) -> None:

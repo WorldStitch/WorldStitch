@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { getToken, getWsBase } from '@/api';
+import { getToken, getWsBase, auth } from '@/api';
 
 const RealtimeContext = createContext(null);
 
@@ -46,15 +46,33 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
         }
       };
 
-      socket.onclose = () => {
+      socket.onerror = (err) => {
+        // Surface WS errors in the console so they're visible in devtools.
+        console.warn('[RealtimeContext] WebSocket error', err);
+      };
+
+      socket.onclose = (event) => {
         setIsConnected(false);
         if (socketRef.current === socket) socketRef.current = null;
         setOnlineUsers([]);
         setEditing([]);
-        if (!cancelled) {
+        if (cancelled) return;
+
+        const scheduleReconnect = () => {
+          if (cancelled) return;
           const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
           attempt += 1;
           timeoutId = setTimeout(connect, delay);
+        };
+
+        if (event.code === 1008) {
+          // 1008 = Policy Violation — server rejected the token or vault.
+          // Attempt a silent token refresh before reconnecting; if the token
+          // is still valid the refresh is a no-op, if it's expired we get a
+          // fresh one so the next connect() call succeeds.
+          auth.refresh().catch(() => {}).finally(scheduleReconnect);
+        } else {
+          scheduleReconnect();
         }
       };
     };
