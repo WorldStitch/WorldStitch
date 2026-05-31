@@ -34,8 +34,7 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       socket.onopen = () => {
         attempt = 0;
         setIsConnected(true);
-        // Railway's reverse proxy closes idle WebSocket connections after ~60 s.
-        // Send a ping every 25 s so the connection is never considered idle.
+        // Ping every 25s so Railway's 30-minute idle-connection timeout never fires.
         pingInterval = setInterval(() => {
           if (socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify({ type: 'ping' }));
@@ -46,7 +45,6 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          // Heartbeat pong — do not surface as a real event.
           if (payload.type === 'pong') return;
           setLastEvent(payload);
           if (payload.type === 'presence.snapshot') {
@@ -59,11 +57,10 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       };
 
       socket.onerror = (err) => {
-        // Surface WS errors in the console so they're visible in devtools.
         console.warn('[RealtimeContext] WebSocket error', err);
       };
 
-      socket.onclose = (event) => {
+      socket.onclose = async (event) => {
         clearInterval(pingInterval);
         pingInterval = null;
         setIsConnected(false);
@@ -72,22 +69,19 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
         setEditing([]);
         if (cancelled) return;
 
-        const scheduleReconnect = () => {
-          if (cancelled) return;
-          const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
-          attempt += 1;
-          timeoutId = setTimeout(connect, delay);
-        };
-
         if (event.code === 1008) {
-          // 1008 = Policy Violation — server rejected the token or vault.
-          // Attempt a silent token refresh before reconnecting; if the token
-          // is still valid the refresh is a no-op, if it's expired we get a
-          // fresh one so the next connect() call succeeds.
-          auth.refresh().catch(() => {}).finally(scheduleReconnect);
-        } else {
-          scheduleReconnect();
+          try {
+            await auth.refresh();
+          } catch {
+            window.dispatchEvent(new CustomEvent('auth:logout'));
+            return;
+          }
+          if (cancelled) return;
         }
+
+        const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
+        attempt += 1;
+        timeoutId = setTimeout(connect, delay);
       };
     };
 

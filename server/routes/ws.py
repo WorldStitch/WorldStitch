@@ -43,13 +43,13 @@ async def websocket_events(
         logger.info(f"WS JWT decoded - sub: {payload.get('sub', 'none')}")
     except HTTPException as e:
         logger.warning(f"WS auth failed - bad token: {e}")
-        await websocket.close(code=1008)
+        await reject()
         return
     user = ctx.users.get_user(payload.get("sub", ""))
     logger.info(f"WS user lookup - found: {bool(user)}")
     if not user:
         logger.warning(f"WS auth failed - user not found for sub: {payload.get('sub')}")
-        await websocket.close(code=1008)
+        await reject()
         return
     logger.info(f"WS connected - user: {user.username}, vault: {vault_id}")
 
