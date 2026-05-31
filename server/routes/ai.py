@@ -328,7 +328,9 @@ def _get_ai_for_user(
         except Exception:
             logger.exception("Failed to resolve vault AI key for vault %s", vault_id)
 
-    # 3. Platform key (privileged roles only)
+    # 3. Platform key — available to all authenticated roles in PLATFORM_KEY_ROLES
+    #    (now includes "user" and "beta" so any account on an owner-keyed instance
+    #    can use AI without needing to add their own key).
     if user_system_role in PLATFORM_KEY_ROLES:
         if ctx.has_ai():
             if store is not None:

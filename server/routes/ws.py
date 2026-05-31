@@ -1,12 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from WorldStitch.context.app_context import AppContext
 from server.auth_utils import decode_jwt
 from server.deps import get_ctx
 from server.realtime import hub
 from server.vault_access import resolve_vault
+from WorldStitch.context.app_context import AppContext
 
 router = APIRouter()
 
@@ -18,6 +18,14 @@ async def websocket_events(
     vault_id: str = Query(...),
     ctx: AppContext = Depends(get_ctx),
 ):
+    # Accept the WebSocket handshake BEFORE any validation so that close
+    # frames with meaningful codes (1008) are delivered to the client.
+    # Without a prior accept() some ASGI servers drop the TCP connection
+    # abruptly, giving the browser code 1006 (abnormal closure) instead of
+    # 1008 — the frontend cannot distinguish a bad-token rejection from a
+    # transient network hiccup and retries immediately and indefinitely.
+    await websocket.accept()
+
     try:
         payload = decode_jwt(token)
     except HTTPException:
@@ -35,6 +43,8 @@ async def websocket_events(
         return
 
     email = getattr(user, "email", payload.get("email", ""))
+    # The websocket is already accepted above; hub.connect registers the
+    # connection and broadcasts presence without re-accepting.
     await hub.connect(vault.id, user.id, user.username, email, websocket)
     try:
         while True:

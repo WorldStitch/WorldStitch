@@ -110,10 +110,15 @@ async def lifespan(application: FastAPI):
         def _build_index_bg() -> None:
             try:
                 ctx.ai.index_manager.build_index()
-                ctx.ai._index_ready = True
                 logger.info("AI index build complete")
             except Exception as exc:
-                logger.warning("AI index build failed: %s", exc)
+                # Log the failure but still mark the index as "ready" so the
+                # frontend banner ("Vault index is building…") clears.  AI
+                # still works via the recent-notes fallback; semantic search
+                # simply returns an empty list when the retriever is None.
+                logger.warning("AI index build failed (will use note fallback): %s", exc)
+            finally:
+                ctx.ai._index_ready = True
 
         threading.Thread(target=_build_index_bg, daemon=True).start()
 
