@@ -19,7 +19,8 @@ class RealtimeHub:
         return getattr(getattr(websocket, "client_state", None), "name", "") == "CONNECTED"
 
     async def connect(self, vault_id: str, user_id: str, username: str, email: str, websocket: WebSocket) -> None:
-        # websocket is already accepted by the route handler before connect() is called
+        # Websocket is already accepted by the route handler before this is
+        # called — do NOT call accept() again here.
         async with self._lock:
             self._connections[vault_id].add(websocket)
             self._online_users[vault_id][user_id] = {"id": user_id, "username": username, "email": email}

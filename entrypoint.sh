@@ -13,7 +13,10 @@
 #   APP_ENV          — development | production | test  (default: production)
 #   HOST             — bind host  (default: 0.0.0.0)
 #   PORT             — bind port  (default: 8741)
-#   WORKERS          — number of uvicorn workers (default: 1, must stay 1 for in-memory WS hub)
+#   WORKERS          — number of uvicorn workers (default: 1)
+#                      IMPORTANT: keep at 1 when using the in-memory WebSocket hub.
+#                      Multiple workers each have an isolated hub; cross-worker
+#                      presence broadcasts and collaboration features will not work.
 #   LOG_LEVEL        — uvicorn log level: debug | info | warning (default: info)
 
 set -e

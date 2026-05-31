@@ -51,7 +51,15 @@ class IndexManager:
             storage_context = StorageContext.from_defaults(persist_dir=self.index_dir)
             self.index = load_index_from_storage(storage_context)
         else:
-            docs = SimpleDirectoryReader(str(self.vault_path), recursive=True).load_data()
+            # Load documents if the vault path exists and contains files.
+            # If the vault is empty or DB-backed (no local files), build an
+            # empty index so the banner clears immediately rather than failing.
+            docs = []
+            if self.vault_path.exists():
+                try:
+                    docs = SimpleDirectoryReader(str(self.vault_path), recursive=True).load_data()
+                except Exception:
+                    docs = []
             for doc in docs:
                 if hasattr(doc, "get_doc_id"):
                     doc.id_ = doc.get_doc_id()

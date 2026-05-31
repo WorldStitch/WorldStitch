@@ -176,7 +176,7 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
               </Button>
             </div>
             <div className="pt-4 text-xs text-txt-muted space-y-1">
-              <div>Members: {vault.members?.length ?? 0}</div>
+              <div>Members: {(vault.members?.length ?? 0) + 1}</div>
               {vault.created_at && (
                 <div>Created: {new Date(vault.created_at).toLocaleDateString()}</div>
               )}
@@ -488,7 +488,7 @@ export default function Vaults({ user }) {
                   )}
                 </div>
                 <div className="text-xs text-txt-muted mt-0.5">
-                  {vault.members?.length ?? 0} member{vault.members?.length !== 1 ? 's' : ''}
+                  {(vault.members?.length ?? 0) + 1} member{((vault.members?.length ?? 0) + 1) !== 1 ? 's' : ''}
                 </div>
               </button>
             ))
