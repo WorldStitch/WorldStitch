@@ -54,6 +54,24 @@ down_revision: Union[str, None] = "0004"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+
+def _table_exists(conn, table: str) -> bool:
+    if conn.dialect.name == "postgresql":
+        result = conn.execute(
+            sa.text(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = :t"
+            ),
+            {"t": table},
+        )
+        return result.fetchone() is not None
+    else:
+        rows = conn.execute(
+            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name=:t"),
+            {"t": table},
+        ).fetchall()
+        return bool(rows)
+
+
 # Tables added by this migration, in reverse-dependency order for teardown.
 _NEW_TABLES = [
     "activity_feed",
@@ -95,6 +113,12 @@ _NEW_TABLES = [
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    if _table_exists(conn, "assets"):
+        # All 35 tables from this migration were already created by
+        # create_all() on a fresh database; nothing to do.
+        return
+
     # ------------------------------------------------------------------
     # assets — campaign_id is a plain column here; FK added after campaigns
     # ------------------------------------------------------------------
