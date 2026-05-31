@@ -29,6 +29,7 @@ async def websocket_events(
     # 1008 — the frontend cannot distinguish a bad-token rejection from a
     # transient network hiccup and retries immediately and indefinitely.
     await websocket.accept()
+    logger.info(f"WS connection attempt - token present: {bool(token)}, vault_id: {vault_id}")
 
     async def reject(code: int = 1008) -> None:
         """Send a close frame, tolerating an already-gone connection."""
@@ -39,13 +40,18 @@ async def websocket_events(
 
     try:
         payload = decode_jwt(token)
-    except HTTPException:
-        await reject()
+        logger.info(f"WS JWT decoded - sub: {payload.get('sub', 'none')}")
+    except HTTPException as e:
+        logger.warning(f"WS auth failed - bad token: {e}")
+        await websocket.close(code=1008)
         return
     user = ctx.users.get_user(payload.get("sub", ""))
+    logger.info(f"WS user lookup - found: {bool(user)}")
     if not user:
-        await reject()
+        logger.warning(f"WS auth failed - user not found for sub: {payload.get('sub')}")
+        await websocket.close(code=1008)
         return
+    logger.info(f"WS connected - user: {user.username}, vault: {vault_id}")
 
     try:
         vault = resolve_vault(ctx, user, vault_id)
