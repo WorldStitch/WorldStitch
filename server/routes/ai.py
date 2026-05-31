@@ -13,15 +13,12 @@ GET  /ai/conversations/          — list saved conversations for active vault
 POST /ai/conversations/          — create or update a saved conversation
 GET  /ai/conversations/{id}      — fetch one saved conversation
 DELETE /ai/conversations/{id}    — delete a saved conversation
-
-Developer mode (mode="developer"):
-  Restricted to owner/admin/tester roles.  Uses OpenAI function-calling so the
-  AI can take real actions in the vault: create notes, folders, and characters.
 """
 
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -32,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from server.analytics import track as analytics_track
-from server.deps import PLATFORM_KEY_ROLES, get_ctx, get_current_user
+from server.deps import PLATFORM_ADMIN, PLATFORM_KEY_ROLES, get_ctx, get_current_user
 from server.limiter import limiter
 from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
 from WorldStitch.context.app_context import AppContext
@@ -48,9 +45,6 @@ def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 logger = logging.getLogger(__name__)
-
-# Roles allowed to use Developer mode (tool-calling)
-_DEVELOPER_ROLES = {"owner", "admin", "tester"}
 
 # ── AI mode addenda ────────────────────────────────────────────────────────────
 
@@ -70,37 +64,33 @@ _MODE_ADDENDA = {
         "pacing, and player hooks. Help the GM prepare memorable moments, interesting complications, "
         "and satisfying session arcs grounded in the vault's existing lore."
     ),
+    "developer": (
+        "You are in **Developer** mode. You have full access to vault operations: creating, updating, "
+        "listing, and deleting notes and folders. Help developers generate test data, seed the vault "
+        "with sample content, inspect what exists, or clean up content. Be efficient and precise."
+    ),
 }
 
-_DEVELOPER_SYSTEM_PROMPT = (
-    "You are in **Developer Mode** for WorldStitch. You are helping a developer test and debug the app. "
-    "You can create test data in bulk, diagnose issues, and take direct actions in the vault. "
-    "Be technical, direct, and thorough. When asked to create test content, create realistic "
-    "worldbuilding data — varied notes, characters, locations, lore entries. "
-    "Always confirm what you created at the end."
-)
+# ── Tool definitions ───────────────────────────────────────────────────────────
 
-# ── Developer mode tool definitions ──────────────────────────────────────────
-
-_DEVELOPER_TOOLS = [
+_TOOLS_ALL_MODES = [
     {
         "type": "function",
         "function": {
             "name": "create_note",
-            "description": "Create a new note in the vault's Browse section.",
+            "description": (
+                "Creates a new note in Browse with the given title and markdown content. "
+                "Use this when the user asks you to create, write, or save a note."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Note title"},
-                    "content": {"type": "string", "description": "Markdown content"},
+                    "content": {"type": "string", "description": "Markdown content for the note"},
                     "folder_path": {
                         "type": "string",
-                        "description": "Folder name to place note in (created if missing). Leave empty for root.",
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of tags",
+                        "description": "Name of the folder to put the note in. Use '/' for the root (no folder).",
+                        "default": "/",
                     },
                 },
                 "required": ["title", "content"],
@@ -111,14 +101,15 @@ _DEVELOPER_TOOLS = [
         "type": "function",
         "function": {
             "name": "create_folder",
-            "description": "Create a folder in the vault.",
+            "description": "Creates a new folder in Browse.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Folder name"},
                     "parent_path": {
                         "type": "string",
-                        "description": "Parent folder name (leave empty for root folder)",
+                        "description": "Parent folder name. Use '/' for top-level.",
+                        "default": "/",
                     },
                 },
                 "required": ["name"],
@@ -128,25 +119,43 @@ _DEVELOPER_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "update_note",
+            "description": "Updates an existing note's title or content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note to update"},
+                    "title": {"type": "string", "description": "New title (omit to leave unchanged)"},
+                    "content": {"type": "string", "description": "New content (omit to leave unchanged)"},
+                },
+                "required": ["note_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_character",
-            "description": "Create a character (NPC or player) in the vault.",
+            "description": "Creates a new character entry in the vault.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Character name"},
-                    "description": {"type": "string", "description": "Backstory or description"},
+                    "description": {"type": "string", "description": "Character description or backstory"},
                     "char_type": {
                         "type": "string",
                         "enum": ["npc", "player"],
-                        "description": "Whether this is an NPC or player character",
+                        "description": "Character type — npc or player",
+                        "default": "npc",
                     },
                     "tags": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional tags (stored in ai_memory)",
+                        "description": "Tags for the character",
+                        "default": [],
                     },
                 },
-                "required": ["name", "description"],
+                "required": ["name"],
             },
         },
     },
@@ -154,26 +163,66 @@ _DEVELOPER_TOOLS = [
         "type": "function",
         "function": {
             "name": "bulk_create_notes",
-            "description": "Create multiple notes at once for seeding test data.",
+            "description": (
+                "Creates multiple notes at once. Use this for generating test data, "
+                "creating a set of related notes, or seeding a section of the vault."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "notes": {
                         "type": "array",
-                        "description": "List of notes to create",
+                        "description": "Array of notes to create",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "title": {"type": "string"},
                                 "content": {"type": "string"},
-                                "folder_path": {"type": "string"},
-                                "tags": {"type": "array", "items": {"type": "string"}},
+                                "folder_path": {
+                                    "type": "string",
+                                    "description": "Folder name or '/' for root",
+                                    "default": "/",
+                                },
                             },
                             "required": ["title", "content"],
                         },
                     }
                 },
                 "required": ["notes"],
+            },
+        },
+    },
+]
+
+_TOOLS_DEVELOPER_EXTRA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_note",
+            "description": "Soft-deletes a note by ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note to delete"},
+                },
+                "required": ["note_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_notes",
+            "description": "Lists notes in the vault, optionally filtered by folder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder_path": {
+                        "type": "string",
+                        "description": "Folder name to filter by, or '/' for all notes",
+                        "default": "/",
+                    },
+                },
             },
         },
     },
@@ -198,7 +247,7 @@ class AskResponse(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     conversation_id: Optional[str] = None
-    tool_calls: Optional[list[dict]] = None
+    tool_results: Optional[list[dict]] = None
 
 
 class SummarizeRequest(BaseModel):
@@ -279,14 +328,6 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
         except Exception:
             pass
 
-    mode_key = (mode or "lore").lower()
-
-    if mode_key == "developer":
-        return (
-            f"You are the WorldStitch AI Assistant in Developer Mode, helping **{username}** "
-            f'with the vault **"{vault_name}"**. ' + _DEVELOPER_SYSTEM_PROMPT
-        )
-
     base = (
         f"You are the WorldStitch AI Assistant — a specialized worldbuilding companion built into "
         f"the WorldStitch platform. You are currently helping **{username}** with their vault called "
@@ -296,101 +337,15 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
         f"Never forget your role or act as a generic AI assistant."
     )
 
+    tool_note = (
+        " You also have tools to take direct actions in the vault — creating notes, folders, and "
+        "characters. When the user asks you to create content, use your tools to do so, then confirm "
+        "what you created."
+    )
+
+    mode_key = (mode or "lore").lower()
     addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
-    return base + "\n\n" + addendum
-
-
-def _make_tool_executor(ctx: AppContext, user: User, vault_id: str):
-    """
-    Return a callable that executes developer-mode tool calls server-side.
-
-    The executor creates notes, folders, and characters directly in the storage
-    layer using the same managers/storage methods the normal routes use.
-    """
-    import uuid
-    from datetime import datetime as _dt
-
-    # Cache for folder name → id mapping within one request
-    _folder_cache: dict = {}
-
-    def _resolve_folder(folder_path: Optional[str]) -> Optional[str]:
-        if not folder_path:
-            return None
-        if folder_path in _folder_cache:
-            return _folder_cache[folder_path]
-        # Look up by name in existing folders
-        if hasattr(ctx.storage, "list_all_folders"):
-            for f in ctx.storage.list_all_folders(vault_id=vault_id):
-                if getattr(f, "name", "").lower() == folder_path.lower():
-                    _folder_cache[folder_path] = f.id
-                    return f.id
-        # Create it via FolderManager
-        folder = ctx.folders.create_folder(
-            vault_id=vault_id,
-            owner_id=str(user.id),
-            name=folder_path,
-        )
-        _folder_cache[folder_path] = folder.id
-        return folder.id
-
-    def _create_note(args: dict) -> dict:
-        from WorldStitch.models.note import Note
-
-        folder_id = _resolve_folder(args.get("folder_path"))
-        note = Note(
-            id=str(uuid.uuid4()),
-            title=args["title"],
-            content=args.get("content", ""),
-            vault_id=vault_id,
-            folder_id=folder_id,
-            tags=args.get("tags") or [],
-            owner_id=str(user.id),
-            created_at=_dt.utcnow(),
-            last_modified=_dt.utcnow(),
-        )
-        ctx.storage.save_note(note)
-        return {"id": note.id, "title": note.title, "folder": args.get("folder_path")}
-
-    def executor(fn_name: str, args: dict) -> dict:
-        if fn_name == "create_note":
-            return _create_note(args)
-
-        if fn_name == "create_folder":
-            folder_id = _resolve_folder(args["name"])
-            return {"id": folder_id, "name": args["name"]}
-
-        if fn_name == "create_character":
-            from WorldStitch.models.character import Character
-
-            char = Character(
-                id=str(uuid.uuid4()),
-                vault_id=vault_id,
-                campaign_id=vault_id,
-                owner_id=str(user.id),
-                name=args["name"],
-                description=args.get("description", ""),
-                is_npc=(args.get("char_type", "npc") == "npc"),
-                stats={},
-                tags=args.get("tags") or [],
-                note_ids=[],
-                created_at=_dt.utcnow(),
-                last_modified=_dt.utcnow(),
-            )
-            ctx.storage.save_character(char)
-            return {"id": char.id, "name": char.name}
-
-        if fn_name == "bulk_create_notes":
-            results = []
-            for note_args in args.get("notes") or []:
-                try:
-                    results.append(_create_note(note_args))
-                except Exception as e:
-                    results.append({"error": str(e), "title": note_args.get("title", "?")})
-            return {"created": len(results), "notes": results}
-
-        return {"error": f"Unknown tool: {fn_name}"}
-
-    return executor
+    return base + tool_note + "\n\n" + addendum
 
 
 def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
@@ -530,7 +485,6 @@ def _get_ai_for_user(
     if store is not None:
         personal_key = store.get_personal_key(user_id)
         if personal_key:
-            logger.debug("ai_key_path user=%s path=personal_key", user_id)
             return _make_engine_with_key(ctx, personal_key)
 
     # 2. Vault owner shared key
@@ -540,23 +494,15 @@ def _get_ai_for_user(
             if vault and getattr(vault, "ai_key_shared", False):
                 vault_key = ctx.storage.get_vault_ai_key(vault_id)
                 if vault_key:
-                    logger.debug("ai_key_path user=%s path=vault_key vault=%s", user_id, vault_id)
                     return _make_engine_with_key(ctx, vault_key)
         except Exception:
             logger.exception("Failed to resolve vault AI key for vault %s", vault_id)
 
     # 3. Platform key (privileged roles only)
-    logger.debug(
-        "ai_key_path user=%s role=%s has_ai=%s path=platform_key_check",
-        user_id,
-        user_system_role,
-        ctx.has_ai(),
-    )
     if user_system_role in PLATFORM_KEY_ROLES:
         if ctx.has_ai():
             if store is not None:
                 store.check_and_increment(user_id)
-            logger.debug("ai_key_path user=%s path=platform_key", user_id)
             return ctx.require_ai()
         # Role qualifies but platform key is not configured on the server
         raise HTTPException(
@@ -581,6 +527,295 @@ def _get_ai_for_user(
 def _get_conversation_store(ctx: AppContext):
     """Return the conversation store from the storage backend, or None if unavailable."""
     return getattr(ctx.storage, "ai_conversations", None)
+
+
+# ── Tool calling helpers ───────────────────────────────────────────────────────
+
+
+def _get_tools_for_mode(mode: Optional[str], vault_id: Optional[str]) -> list:
+    """Return OpenAI tool definitions for the given mode. Empty if no vault_id."""
+    if not vault_id:
+        return []
+    tools = list(_TOOLS_ALL_MODES)
+    if (mode or "").lower() == "developer":
+        tools = tools + list(_TOOLS_DEVELOPER_EXTRA)
+    return tools
+
+
+def _resolve_folder_id(ctx: AppContext, vault_id: str, user: User, folder_path: str) -> Optional[str]:
+    """Find or create a folder by name. Returns None for root ('/')."""
+    if not folder_path or folder_path == "/":
+        return None
+    try:
+        if hasattr(ctx.storage, "list_all_folders"):
+            for folder in ctx.storage.list_all_folders(vault_id=vault_id):
+                if folder.name == folder_path or getattr(folder, "path", "") == folder_path:
+                    return folder.id
+        # Not found — create it
+        folder = ctx.folders.create_folder(
+            vault_id=vault_id,
+            name=folder_path,
+            owner_id=user.id,
+            parent_id=None,
+        )
+        return folder.id
+    except Exception:
+        logger.exception("Failed to resolve folder for path %s", folder_path)
+        return None
+
+
+def _set_user_ctx_for_tools(ctx: AppContext, user: User) -> None:
+    """Set per-request user context so storage ACL checks use the right identity."""
+    ctx.storage.set_user_context(
+        user.id,
+        is_admin=user.system_role in PLATFORM_ADMIN,
+    )
+
+
+def _execute_tool_call(
+    tool_name: str,
+    tool_args: dict,
+    ctx: AppContext,
+    vault_id: str,
+    user: User,
+) -> dict:
+    """Execute a single AI tool call against the database. Returns a result dict."""
+    _set_user_ctx_for_tools(ctx, user)
+
+    try:
+        if tool_name == "create_note":
+            title = tool_args.get("title", "Untitled")
+            content = tool_args.get("content", "")
+            folder_path = tool_args.get("folder_path", "/")
+            folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
+            note = ctx.notes.create_note(
+                vault_id=vault_id,
+                owner_id=user.id,
+                title=title,
+                content=content,
+                folder_id=folder_id,
+                tags=["ai-generated"],
+            )
+            return {"success": True, "note_id": note.id, "title": note.title}
+
+        elif tool_name == "create_folder":
+            name = tool_args.get("name", "New Folder")
+            parent_path = tool_args.get("parent_path", "/")
+            parent_id = (
+                _resolve_folder_id(ctx, vault_id, user, parent_path) if parent_path and parent_path != "/" else None
+            )
+            folder = ctx.folders.create_folder(
+                vault_id=vault_id,
+                name=name,
+                owner_id=user.id,
+                parent_id=parent_id,
+            )
+            return {"success": True, "folder_id": folder.id, "name": folder.name}
+
+        elif tool_name == "update_note":
+            note_id = tool_args.get("note_id")
+            if not note_id:
+                return {"success": False, "error": "note_id is required"}
+            note = ctx.notes.get_note(note_id)
+            if not note:
+                return {"success": False, "error": f"Note {note_id} not found"}
+            if tool_args.get("title") is not None:
+                note.title = tool_args["title"]
+            if tool_args.get("content") is not None:
+                note.content = tool_args["content"]
+            ctx.notes.update_note(note, actor_id=user.id)
+            return {"success": True, "note_id": note.id, "title": note.title}
+
+        elif tool_name == "create_character":
+            from WorldStitch.models.character import Character
+
+            char = Character(
+                id=str(uuid.uuid4()),
+                vault_id=vault_id,
+                campaign_id=vault_id,
+                owner_id=user.id,
+                name=tool_args.get("name", "Unknown"),
+                description=tool_args.get("description") or None,
+                is_npc=(tool_args.get("char_type", "npc") == "npc"),
+                stats={},
+                note_ids=[],
+                meta={},
+                ai_memory=None,
+            )
+            ctx.storage.save_character(char)
+            return {"success": True, "character_id": char.id, "name": char.name}
+
+        elif tool_name == "bulk_create_notes":
+            notes_data = tool_args.get("notes", [])
+            created = []
+            for n in notes_data:
+                folder_path = n.get("folder_path", "/")
+                folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
+                note = ctx.notes.create_note(
+                    vault_id=vault_id,
+                    owner_id=user.id,
+                    title=n.get("title", "Untitled"),
+                    content=n.get("content", ""),
+                    folder_id=folder_id,
+                    tags=["ai-generated"],
+                )
+                created.append({"note_id": note.id, "title": note.title})
+            return {"success": True, "created_count": len(created), "notes": created}
+
+        elif tool_name == "delete_note":
+            note_id = tool_args.get("note_id")
+            if not note_id:
+                return {"success": False, "error": "note_id is required"}
+            ctx.storage.soft_delete_note(note_id)
+            return {"success": True, "deleted_note_id": note_id}
+
+        elif tool_name == "list_notes":
+            folder_path = tool_args.get("folder_path", "/")
+            all_notes = []
+            if hasattr(ctx.storage, "list_all_notes"):
+                all_notes = ctx.storage.list_all_notes(vault_id=vault_id)
+            result = []
+            for note in all_notes[:50]:
+                folder_id = getattr(note, "folder_id", None)
+                result.append(
+                    {
+                        "id": note.id,
+                        "title": getattr(note, "title", ""),
+                        "folder_id": folder_id,
+                    }
+                )
+            return {"success": True, "notes": result, "total": len(result)}
+
+        else:
+            return {"success": False, "error": f"Unknown tool: {tool_name}"}
+
+    except Exception as e:
+        logger.exception("Tool call %s failed", tool_name)
+        return {"success": False, "error": str(e)}
+
+
+def _build_messages_for_tools(
+    system_prompt: str,
+    user_prompt_with_context: str,
+    history: Optional[list[dict]],
+) -> list:
+    """Build a proper OpenAI messages array from system prompt, history, and user prompt."""
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    for msg in history or []:
+        role = msg.get("role", "user")
+        if role not in ("user", "assistant"):
+            continue
+        messages.append({"role": role, "content": msg.get("content", "")})
+    messages.append({"role": "user", "content": user_prompt_with_context})
+    return messages
+
+
+def _run_ask_with_tools(
+    ai_engine,
+    messages: list,
+    tools: list,
+    ctx: AppContext,
+    vault_id: Optional[str],
+    user: User,
+) -> tuple:
+    """
+    Execute an OpenAI chat completion with optional tool calling.
+
+    Returns (response_text, prompt_tokens, completion_tokens, tool_summaries).
+    Falls back to engine.ask() if the engine doesn't support direct client access.
+    """
+    if not tools or not hasattr(ai_engine, "client"):
+        # Fallback: use the engine's built-in ask() with text-embedded history
+        sys_content = next((m["content"] for m in messages if m["role"] == "system"), "")
+        user_content = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        text, pt, ct = ai_engine.ask(user_content, system_prompt=sys_content)
+        return text, pt, ct, []
+
+    total_pt = 0
+    total_ct = 0
+
+    # First call — with tools so the model can decide whether to use them
+    resp = ai_engine.client.chat.completions.create(
+        model=ai_engine.model,
+        messages=messages,
+        tools=tools,
+        tool_choice="auto",
+    )
+    total_pt += getattr(resp.usage, "prompt_tokens", 0) or 0
+    total_ct += getattr(resp.usage, "completion_tokens", 0) or 0
+
+    choice = resp.choices[0]
+    tool_calls = getattr(choice.message, "tool_calls", None)
+
+    if not tool_calls:
+        return (choice.message.content or "").strip(), total_pt, total_ct, []
+
+    # Build the assistant tool-call message for the follow-up
+    assistant_tool_msg = {
+        "role": "assistant",
+        "content": choice.message.content or "",
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+            }
+            for tc in tool_calls
+        ],
+    }
+    updated_messages = list(messages) + [assistant_tool_msg]
+
+    # Execute each tool call and collect results
+    tool_summaries = []
+    for tc in tool_calls:
+        try:
+            args = json.loads(tc.function.arguments)
+        except Exception:
+            args = {}
+        result = _execute_tool_call(tc.function.name, args, ctx, vault_id or "", user)
+        tool_summaries.append({"tool": tc.function.name, "result": result})
+        updated_messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(result),
+            }
+        )
+
+    # Follow-up call to get the final natural-language response
+    final = ai_engine.client.chat.completions.create(
+        model=ai_engine.model,
+        messages=updated_messages,
+    )
+    total_pt += getattr(final.usage, "prompt_tokens", 0) or 0
+    total_ct += getattr(final.usage, "completion_tokens", 0) or 0
+
+    return (final.choices[0].message.content or "").strip(), total_pt, total_ct, tool_summaries
+
+
+def _tool_status_label(tool_name: str, args: dict) -> str:
+    """Return a human-readable status string for a tool call in progress."""
+    if tool_name == "create_note":
+        title = args.get("title", "note")
+        return f'Creating note "{title}"…'
+    elif tool_name == "create_folder":
+        name = args.get("name", "folder")
+        return f'Creating folder "{name}"…'
+    elif tool_name == "update_note":
+        return "Updating note…"
+    elif tool_name == "create_character":
+        name = args.get("name", "character")
+        return f'Creating character "{name}"…'
+    elif tool_name == "bulk_create_notes":
+        count = len(args.get("notes", []))
+        return f"Creating {count} notes…"
+    elif tool_name == "delete_note":
+        return "Deleting note…"
+    elif tool_name == "list_notes":
+        return "Listing notes…"
+    return f"Running {tool_name}…"
 
 
 # ============================================================================
@@ -674,50 +909,21 @@ async def ask(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set.
-
-    When mode='developer' the request is routed through the tool-calling path so the
-    AI can take real actions in the vault.  Restricted to owner/admin/tester roles.
-    """
+    """Ask the AI with optional conversation history and tool-calling support."""
     try:
         _apply_preferred_model(ctx)
-        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
         system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
+        vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
+        messages = _build_messages_for_tools(system_prompt, vault_prompt, req.history)
+        tools = _get_tools_for_mode(req.mode, req.vault_id)
+
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
 
-        tool_calls_made: list = []
-
-        if (req.mode or "").lower() == "developer":
-            # Enforce role gating
-            user_role = getattr(user, "system_role", "user") or "user"
-            if user_role not in _DEVELOPER_ROLES:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Developer mode requires owner, admin, or tester role.",
-                )
-            if not req.vault_id:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Developer mode requires a vault_id so tools can create content.",
-                )
-            if not hasattr(ai_engine, "ask_with_tools"):
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="The configured AI engine does not support tool-calling.",
-                )
-            executor = _make_tool_executor(ctx, user, req.vault_id)
-            full_prompt = _build_prompt_with_history(req.prompt, req.history)
-            response, prompt_tokens, completion_tokens, tool_calls_made = ai_engine.ask_with_tools(
-                prompt=full_prompt,
-                system_prompt=system_prompt,
-                tools=_DEVELOPER_TOOLS,
-                tool_executor=executor,
-                history=None,  # history already baked into full_prompt
-            )
-        else:
-            full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
-            response, prompt_tokens, completion_tokens = ai_engine.ask(full_prompt, system_prompt=system_prompt)
+        response, prompt_tokens, completion_tokens, tool_results = _run_ask_with_tools(
+            ai_engine, messages, tools, ctx, req.vault_id, user
+        )
 
         cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
         ctx.analytics.track(
@@ -748,8 +954,6 @@ async def ask(
                     "cost": cost_usd,
                     "timestamp": datetime.utcnow().isoformat(),
                 }
-                if tool_calls_made:
-                    ai_msg["tool_calls"] = tool_calls_made
                 # Reconstruct full message list from history + new exchange
                 existing_messages = list(req.history or [])
                 existing_messages.append(user_msg)
@@ -771,7 +975,7 @@ async def ask(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             conversation_id=conv_id,
-            tool_calls=tool_calls_made or None,
+            tool_results=tool_results if tool_results else None,
         )
     except HTTPException:
         raise
@@ -789,9 +993,9 @@ async def stream_ask(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Streaming SSE version of /ai/ask. Yields tokens word-by-word."""
+    """Streaming SSE version of /ai/ask. Yields tool status events then response tokens."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
     except HTTPException:
         raise
 
@@ -799,9 +1003,87 @@ async def stream_ask(
 
     async def generate():
         try:
-            full_prompt = _build_vault_context(ctx, req.vault_id, _build_prompt_with_history(req.prompt, req.history))
-            response, prompt_tokens, completion_tokens = ai_engine.ask(full_prompt, system_prompt=system_prompt)
+            vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
+            messages = _build_messages_for_tools(system_prompt, vault_prompt, req.history)
+            tools = _get_tools_for_mode(req.mode, req.vault_id)
 
+            # ── Tool-calling path ──────────────────────────────────────────────
+            if tools and hasattr(ai_engine, "client"):
+                resp = ai_engine.client.chat.completions.create(
+                    model=ai_engine.model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                )
+                total_pt = getattr(resp.usage, "prompt_tokens", 0) or 0
+                total_ct = getattr(resp.usage, "completion_tokens", 0) or 0
+
+                choice = resp.choices[0]
+                tool_calls = getattr(choice.message, "tool_calls", None)
+
+                tool_summaries = []
+                if tool_calls:
+                    # Emit status events as each tool executes
+                    assistant_tool_msg = {
+                        "role": "assistant",
+                        "content": choice.message.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in tool_calls
+                        ],
+                    }
+                    updated_messages = list(messages) + [assistant_tool_msg]
+
+                    for tc in tool_calls:
+                        try:
+                            args = json.loads(tc.function.arguments)
+                        except Exception:
+                            args = {}
+                        label = _tool_status_label(tc.function.name, args)
+                        yield f"data: {json.dumps({'tool_status': label})}\n\n"
+
+                        result = _execute_tool_call(tc.function.name, args, ctx, req.vault_id or "", user)
+                        tool_summaries.append({"tool": tc.function.name, "result": result})
+                        updated_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": json.dumps(result),
+                            }
+                        )
+
+                    # Clear tool status indicator
+                    yield f"data: {json.dumps({'tool_status': ''})}\n\n"
+
+                    # Signal that tools ran (so frontend can refresh Browse)
+                    yield f"data: {json.dumps({'tools_ran': True})}\n\n"
+
+                    # Follow-up call for the final text response
+                    final = ai_engine.client.chat.completions.create(
+                        model=ai_engine.model,
+                        messages=updated_messages,
+                    )
+                    total_pt += getattr(final.usage, "prompt_tokens", 0) or 0
+                    total_ct += getattr(final.usage, "completion_tokens", 0) or 0
+                    response = (final.choices[0].message.content or "").strip()
+                else:
+                    response = (choice.message.content or "").strip()
+
+            else:
+                # ── Fallback: regular ask (no tools) ──────────────────────────
+                full_prompt = _build_prompt_with_history(req.prompt, req.history)
+                full_prompt = _build_vault_context(ctx, req.vault_id, full_prompt)
+                response, total_pt, total_ct = ai_engine.ask(full_prompt, system_prompt=system_prompt)
+                tool_summaries = []
+
+            # Stream the final response word-by-word
             words = response.split(" ")
             for i, word in enumerate(words):
                 token = word + (" " if i < len(words) - 1 else "")
@@ -811,7 +1093,7 @@ async def stream_ask(
             try:
                 store = _get_conversation_store(ctx)
                 if store is not None and req.vault_id:
-                    cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
+                    cost_usd = _estimate_cost(ctx, total_pt, total_ct)
                     user_msg = {
                         "role": "user",
                         "content": req.prompt,
@@ -820,7 +1102,7 @@ async def stream_ask(
                     ai_msg = {
                         "role": "assistant",
                         "content": response,
-                        "tokens": prompt_tokens + completion_tokens,
+                        "tokens": total_pt + total_ct,
                         "cost": cost_usd,
                         "timestamp": datetime.utcnow().isoformat(),
                     }
@@ -857,7 +1139,7 @@ async def summarize(
 ):
     """Summarize the provided text."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
         summary, prompt_tokens, completion_tokens = ai_engine.summarize(req.text)
 
         return SummarizeResponse(
@@ -884,7 +1166,7 @@ async def suggest_tags(
 ):
     """Suggest tags for text, filtering out existing ones."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
         raw_tags, prompt_tokens, completion_tokens = ai_engine.suggest_tags(req.text)
 
         tags = _parse_comma_list(raw_tags) if isinstance(raw_tags, str) else list(raw_tags)
@@ -917,7 +1199,7 @@ async def propose_links(
 ):
     """Suggest internal [[wiki links]] for the given note content."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx, user_system_role=user.system_role)
+        ai_engine = _get_ai_for_user(str(user.id), ctx)
         raw_links, prompt_tokens, completion_tokens = ai_engine.propose_links(req.text, req.note_names)
 
         links = _parse_comma_list(raw_links) if isinstance(raw_links, str) else list(raw_links)
