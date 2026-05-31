@@ -83,7 +83,12 @@ class Config:
                 print(f"[config] Failed to load or parse config file: {e}")
                 self._data = DEFAULT_CONFIG.copy()
         else:
+            # No settings.json — still apply any env var overrides (e.g. Railway).
             self._data = DEFAULT_CONFIG.copy()
+            for key in DEFAULT_CONFIG:
+                env_val = os.getenv(key)
+                if env_val is not None and env_val != "":
+                    self._data[key] = self._cast_value(env_val, DEFAULT_CONFIG[key])
 
     def _cast_value(self, val: str, default: Any) -> Any:
         if isinstance(default, bool):
