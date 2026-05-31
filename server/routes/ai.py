@@ -228,6 +228,97 @@ _TOOLS_DEVELOPER_EXTRA = [
     },
 ]
 
+# ── Canonical 4-tool set used by the _ask_with_tools loop ─────────────────────
+
+_AI_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "create_note",
+            "description": ("Creates a new note in the vault with the given title and optional markdown content."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Note title"},
+                    "content": {"type": "string", "description": "Markdown content for the note"},
+                    "folder_id": {
+                        "type": "string",
+                        "description": "ID of the folder to place the note in (omit for root)",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags to attach to the note",
+                    },
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_folder",
+            "description": "Creates a new folder in the vault.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Folder name"},
+                    "parent_id": {
+                        "type": "string",
+                        "description": "ID of the parent folder (omit for top-level)",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional description for the folder",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_note",
+            "description": "Updates an existing note's title, content, or tags.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note to update"},
+                    "title": {"type": "string", "description": "New title (omit to leave unchanged)"},
+                    "content": {"type": "string", "description": "New content (omit to leave unchanged)"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "New tags (omit to leave unchanged)",
+                    },
+                },
+                "required": ["note_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_notes",
+            "description": "Searches notes in the vault by semantic or keyword query.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return",
+                        "default": 10,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+]
+
 
 # ============================================================================
 # Request / Response models
@@ -588,29 +679,38 @@ def _execute_tool_call(
         if tool_name == "create_note":
             title = tool_args.get("title", "Untitled")
             content = tool_args.get("content", "")
-            folder_path = tool_args.get("folder_path", "/")
-            folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
+            tags = tool_args.get("tags") or ["ai-generated"]
+            # Support both direct folder_id (from _AI_TOOLS) and folder_path (from _TOOLS_ALL_MODES)
+            folder_id = tool_args.get("folder_id") or None
+            if folder_id is None:
+                folder_path = tool_args.get("folder_path", "/")
+                folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
             note = ctx.notes.create_note(
                 vault_id=vault_id,
                 owner_id=user.id,
                 title=title,
                 content=content,
                 folder_id=folder_id,
-                tags=["ai-generated"],
+                tags=tags,
             )
             return {"success": True, "note_id": note.id, "title": note.title}
 
         elif tool_name == "create_folder":
             name = tool_args.get("name", "New Folder")
-            parent_path = tool_args.get("parent_path", "/")
-            parent_id = (
-                _resolve_folder_id(ctx, vault_id, user, parent_path) if parent_path and parent_path != "/" else None
-            )
+            description = tool_args.get("description") or None
+            # Support both direct parent_id (from _AI_TOOLS) and parent_path (from _TOOLS_ALL_MODES)
+            parent_id = tool_args.get("parent_id") or None
+            if parent_id is None:
+                parent_path = tool_args.get("parent_path", "/")
+                parent_id = (
+                    _resolve_folder_id(ctx, vault_id, user, parent_path) if parent_path and parent_path != "/" else None
+                )
             folder = ctx.folders.create_folder(
                 vault_id=vault_id,
                 name=name,
                 owner_id=user.id,
                 parent_id=parent_id,
+                description=description,
             )
             return {"success": True, "folder_id": folder.id, "name": folder.name}
 
@@ -621,11 +721,15 @@ def _execute_tool_call(
             note = ctx.notes.get_note(note_id)
             if not note:
                 return {"success": False, "error": f"Note {note_id} not found"}
+            if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
+                return {"success": False, "error": f"Note {note_id} does not belong to this vault"}
             if tool_args.get("title") is not None:
                 note.title = tool_args["title"]
             if tool_args.get("content") is not None:
                 note.content = tool_args["content"]
-            ctx.notes.update_note(note, actor_id=user.id)
+            if tool_args.get("tags") is not None:
+                note.tags = tool_args["tags"]
+            ctx.notes.update_note(note, actor_id=str(user.id))
             return {"success": True, "note_id": note.id, "title": note.title}
 
         elif tool_name == "create_character":
@@ -687,6 +791,36 @@ def _execute_tool_call(
                     }
                 )
             return {"success": True, "notes": result, "total": len(result)}
+
+        elif tool_name == "search_notes":
+            query = tool_args.get("query", "")
+            limit = int(tool_args.get("limit", 10))
+            if not query:
+                return {"error": "query is required"}
+            try:
+                raw_results = ctx.storage.search_notes(query, vault_id=vault_id, top_k=limit)
+                notes_out = []
+                for note in raw_results or []:
+                    if isinstance(note, dict):
+                        notes_out.append(
+                            {
+                                "id": note.get("id", ""),
+                                "title": note.get("title", ""),
+                                "content": (note.get("content", "") or "")[:300],
+                            }
+                        )
+                    else:
+                        notes_out.append(
+                            {
+                                "id": getattr(note, "id", ""),
+                                "title": getattr(note, "title", ""),
+                                "content": (getattr(note, "content", "") or "")[:300],
+                            }
+                        )
+                return {"success": True, "notes": notes_out, "total": len(notes_out)}
+            except Exception as e:
+                logger.exception("search_notes tool failed")
+                return {"error": str(e)}
 
         else:
             return {"success": False, "error": f"Unknown tool: {tool_name}"}
@@ -795,6 +929,89 @@ def _run_ask_with_tools(
     total_ct += getattr(final.usage, "completion_tokens", 0) or 0
 
     return (final.choices[0].message.content or "").strip(), total_pt, total_ct, tool_summaries
+
+
+def _ask_with_tools(
+    ai_engine,
+    messages: list,
+    ctx: AppContext,
+    user: User,
+    vault_id: Optional[str],
+) -> tuple:
+    """
+    Run an OpenAI chat completion with the canonical _AI_TOOLS tool set, executing
+    any tool calls the model makes and looping until a final text response is returned.
+
+    Returns (response_text, prompt_tokens, completion_tokens).
+    Falls back to ai_engine.ask() if the engine does not expose .client / .model.
+    """
+    if not hasattr(ai_engine, "client") or not hasattr(ai_engine, "model"):
+        user_content = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        sys_content = next((m["content"] for m in messages if m["role"] == "system"), "")
+        text, pt, ct = ai_engine.ask(user_content, system_prompt=sys_content)
+        return text, pt, ct
+
+    client = ai_engine.client
+    model = ai_engine.model
+    total_pt = 0
+    total_ct = 0
+    current_messages = list(messages)
+
+    for _iteration in range(10):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=current_messages,
+            tools=_AI_TOOLS,
+            tool_choice="auto",
+        )
+        total_pt += getattr(resp.usage, "prompt_tokens", 0) or 0
+        total_ct += getattr(resp.usage, "completion_tokens", 0) or 0
+
+        choice = resp.choices[0]
+        tool_calls = getattr(choice.message, "tool_calls", None)
+
+        if not tool_calls:
+            # Final text response — done
+            return (choice.message.content or "").strip(), total_pt, total_ct
+
+        # Append the assistant message with tool calls
+        try:
+            assistant_msg = choice.message.model_dump()
+        except Exception:
+            assistant_msg = {
+                "role": "assistant",
+                "content": choice.message.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        current_messages.append(assistant_msg)
+
+        # Execute each tool call and append tool result messages
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except Exception:
+                args = {}
+            result = _execute_tool_call(tc.function.name, args, ctx, vault_id or "", user)
+            current_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(result),
+                }
+            )
+
+    # Exceeded iteration limit — make one final call without tools
+    final = client.chat.completions.create(model=model, messages=current_messages)
+    total_pt += getattr(final.usage, "prompt_tokens", 0) or 0
+    total_ct += getattr(final.usage, "completion_tokens", 0) or 0
+    return (final.choices[0].message.content or "").strip(), total_pt, total_ct
 
 
 def _tool_status_label(tool_name: str, args: dict) -> str:
