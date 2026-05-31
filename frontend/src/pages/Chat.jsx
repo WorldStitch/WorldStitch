@@ -15,9 +15,10 @@ const COST_PER_TOKEN = 0.000003;
 const MAX_STORED_MESSAGES = 200;
 
 const MODES = [
-  { key: 'lore',    label: 'Lore Assistant' },
-  { key: 'writing', label: 'Writing Helper' },
-  { key: 'gm',      label: 'GM Prep' },
+  { key: 'lore',      label: 'Lore Assistant' },
+  { key: 'writing',   label: 'Writing Helper' },
+  { key: 'gm',        label: 'GM Prep' },
+  { key: 'developer', label: 'Developer' },
 ];
 
 // ── Export helpers ────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ export default function Chat() {
   const [conversationId, setConversationId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pinnedMsg, setPinnedMsg] = useState(null);
+  const [toolStatus, setToolStatus] = useState('');
   const chatEndRef = useRef(null);
 
   // Ref used to skip persisting messages immediately after a localStorage load
@@ -158,6 +160,13 @@ export default function Chat() {
 
   const nextId = () => `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+  // ── Refresh Browse after tool calls create/modify content ─────────────────
+  const invalidateBrowse = () => {
+    queryClient.invalidateQueries({ queryKey: ['notes'] });
+    queryClient.invalidateQueries({ queryKey: ['folders'] });
+    queryClient.invalidateQueries({ queryKey: ['characters'] });
+  };
+
   // ── Ask handlers ───────────────────────────────────────────────────────────
   // ── New chat ──────────────────────────────────────────────────────────────
   const handleNewChat = () => {
@@ -209,6 +218,10 @@ export default function Chat() {
       if (response.conversation_id) {
         setConversationId(response.conversation_id);
         queryClient.invalidateQueries({ queryKey: ['ai-conversations', activeVaultId] });
+      }
+      // If tools ran, refresh Browse so new notes/folders/characters appear immediately
+      if (response.tool_results?.length) {
+        invalidateBrowse();
       }
       setMessages((prev) => [
         ...prev,
@@ -274,6 +287,7 @@ export default function Chat() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let streamTokenCount = 0;
+      let toolsRan = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -292,6 +306,14 @@ export default function Chat() {
               setConversationId(parsed.conversation_id);
               queryClient.invalidateQueries({ queryKey: ['ai-conversations', activeVaultId] });
             }
+            // Tool status update (e.g. 'Creating note "Dragon's Lair"…')
+            if (parsed.tool_status !== undefined) {
+              setToolStatus(parsed.tool_status);
+            }
+            // Backend signals that at least one tool ran — refresh Browse when done
+            if (parsed.tools_ran) {
+              toolsRan = true;
+            }
             if (parsed.token) {
               streamTokenCount++;
               setMessages((prev) =>
@@ -306,6 +328,14 @@ export default function Chat() {
         }
       }
 
+      // Clear tool status once streaming finishes
+      setToolStatus('');
+
+      // Refresh Browse if the AI created or modified content
+      if (toolsRan) {
+        invalidateBrowse();
+      }
+
       if (streamTokenCount > 0) {
         setSessionTokens((prev) => prev + streamTokenCount);
         setMessages((prev) =>
@@ -315,6 +345,7 @@ export default function Chat() {
         );
       }
     } catch (err) {
+      setToolStatus('');
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId ? { ...m, role: 'error', content: `Error: ${err.message}` } : m
@@ -540,6 +571,11 @@ export default function Chat() {
                 <p className="text-txt-muted text-sm mt-1">
                   Characters, lore, locations, history — your AI knows your vault.
                 </p>
+                {activeVaultId && (
+                  <p className="text-txt-muted text-xs mt-2">
+                    The AI can also create notes, folders, and characters — just ask.
+                  </p>
+                )}
               </div>
             </div>
           ) : (
@@ -593,12 +629,15 @@ export default function Chat() {
             ))
           )}
 
-          {loading && !streamingMode && (
+          {/* Thinking / tool-status indicator */}
+          {loading && (
             <div className="flex justify-start">
               <Card className="px-4 py-3 max-w-xs lg:max-w-md">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 bg-accent rounded-full animate-pulse" />
-                  <p className="text-txt-secondary text-sm">Thinking...</p>
+                  <p className="text-txt-secondary text-sm">
+                    {toolStatus || 'Thinking...'}
+                  </p>
                 </div>
               </Card>
             </div>
@@ -616,7 +655,7 @@ export default function Chat() {
         {/* Input */}
         <Card className="p-4 space-y-3 flex-shrink-0">
           <TextArea
-            placeholder="Ask about your world..."
+            placeholder="Ask about your world, or ask me to create notes, folders, and characters..."
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -631,7 +670,7 @@ export default function Chat() {
               className="flex-1"
               title="Ctrl+Enter to send"
             >
-              {loading ? 'Thinking...' : '✦ Ask AI'}
+              {loading ? (toolStatus || 'Thinking...') : '✦ Ask AI'}
             </Button>
             <Button variant="ghost" onClick={handleNewChat} disabled={loading}>
               Clear
