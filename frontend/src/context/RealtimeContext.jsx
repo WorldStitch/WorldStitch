@@ -17,6 +17,7 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
     let attempt = 0;
     let timeoutId = null;
     let currentSocket = null;
+    let pingInterval = null;
 
     const connect = () => {
       const token = getToken();
@@ -31,11 +32,17 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       socket.onopen = () => {
         attempt = 0;
         setIsConnected(true);
+        pingInterval = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 25000);
       };
 
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+          if (payload.type === 'pong') return;
           setLastEvent(payload);
           if (payload.type === 'presence.snapshot') {
             setOnlineUsers(payload.users || []);
@@ -52,6 +59,7 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       };
 
       socket.onclose = (event) => {
+        clearInterval(pingInterval);
         setIsConnected(false);
         if (socketRef.current === socket) socketRef.current = null;
         setOnlineUsers([]);
@@ -82,6 +90,7 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
     return () => {
       cancelled = true;
       clearTimeout(timeoutId);
+      clearInterval(pingInterval);
       if (currentSocket) currentSocket.close();
       if (socketRef.current === currentSocket) socketRef.current = null;
       setOnlineUsers([]);
