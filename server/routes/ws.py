@@ -18,6 +18,10 @@ async def websocket_events(
     vault_id: str = Query(...),
     ctx: AppContext = Depends(get_ctx),
 ):
+    # Must accept before any close() call — closing without accept drops the
+    # TCP connection abruptly (code 1006 on the client) causing infinite reconnect loops.
+    await websocket.accept()
+
     try:
         payload = decode_jwt(token)
     except HTTPException:
