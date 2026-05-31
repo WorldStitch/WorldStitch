@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from server.auth_utils import decode_jwt
@@ -7,6 +9,8 @@ from server.deps import get_ctx
 from server.realtime import hub
 from server.vault_access import resolve_vault
 from WorldStitch.context.app_context import AppContext
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -26,20 +30,27 @@ async def websocket_events(
     # transient network hiccup and retries immediately and indefinitely.
     await websocket.accept()
 
+    async def reject(code: int = 1008) -> None:
+        """Send a close frame, tolerating an already-gone connection."""
+        try:
+            await websocket.close(code=code)
+        except Exception:
+            pass
+
     try:
         payload = decode_jwt(token)
     except HTTPException:
-        await websocket.close(code=1008)
+        await reject()
         return
     user = ctx.users.get_user(payload.get("sub", ""))
     if not user:
-        await websocket.close(code=1008)
+        await reject()
         return
 
     try:
         vault = resolve_vault(ctx, user, vault_id)
     except HTTPException:
-        await websocket.close(code=1008)
+        await reject()
         return
 
     email = getattr(user, "email", payload.get("email", ""))
@@ -84,4 +95,11 @@ async def websocket_events(
             else:
                 await websocket.send_json({"type": "ack", "received": event_type})
     except WebSocketDisconnect:
+        await hub.disconnect(vault.id, user.id, websocket)
+    except Exception as exc:
+        # Railway's proxy can drop the TCP connection without a clean WS close
+        # frame. In that case receive_json() raises something other than
+        # WebSocketDisconnect (RuntimeError, ConnectionResetError, etc.).
+        # Always clean up the hub so the user's presence entry is removed.
+        logger.debug("WebSocket connection lost unexpectedly: %s", exc)
         await hub.disconnect(vault.id, user.id, websocket)

@@ -22,6 +22,9 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       const token = getToken();
       if (!token || cancelled) return;
 
+      // Tracks the keepalive interval for this specific socket instance.
+      let pingInterval = null;
+
       const socket = new WebSocket(
         `${getWsBase()}/ws?token=${encodeURIComponent(token)}&vault_id=${encodeURIComponent(activeVaultId)}`
       );
@@ -31,11 +34,20 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       socket.onopen = () => {
         attempt = 0;
         setIsConnected(true);
+        // Railway's reverse proxy closes idle WebSocket connections after ~60 s.
+        // Send a ping every 25 s so the connection is never considered idle.
+        pingInterval = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 25000);
       };
 
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+          // Heartbeat pong — do not surface as a real event.
+          if (payload.type === 'pong') return;
           setLastEvent(payload);
           if (payload.type === 'presence.snapshot') {
             setOnlineUsers(payload.users || []);
@@ -52,6 +64,8 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       };
 
       socket.onclose = (event) => {
+        clearInterval(pingInterval);
+        pingInterval = null;
         setIsConnected(false);
         if (socketRef.current === socket) socketRef.current = null;
         setOnlineUsers([]);
