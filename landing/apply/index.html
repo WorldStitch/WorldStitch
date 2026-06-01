@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Apply for Early Access — WorldStitch</title>
+  <meta name="description" content="Apply for early access to WorldStitch, the AI-powered platform for worldbuilders." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:                #0b1a0e;
+      --bg-surface:        #101f14;
+      --bg-card:           #162a1e;
+      --accent-purple:     #7c3aed;
+      --accent-purple-mid: #6d28d9;
+      --accent-purple-dim: rgba(124, 58, 237, 0.12);
+      --accent-green:      #22c55e;
+      --accent-green-dim:  rgba(34, 197, 94, 0.12);
+      --border:            rgba(255, 255, 255, 0.07);
+      --text:              #ddeee1;
+      --text-muted:        #7a9980;
+      --text-dim:          #445a4c;
+      --radius:            10px;
+      --transition:        0.22s ease;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 70% 55% at 0% 0%,   rgba(30, 15, 58, 0.55) 0%, transparent 65%),
+        radial-gradient(ellipse 55% 45% at 100% 100%, rgba(30, 15, 58, 0.4)  0%, transparent 65%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    nav, main, footer { position: relative; z-index: 1; }
+
+    /* ══ NAV ══ */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 36px;
+      background: rgba(11, 26, 14, 0.88);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--accent-green);
+    }
+
+    .nav-back {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: color var(--transition);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .nav-back:hover { color: var(--accent-green); }
+
+    /* ══ MAIN ══ */
+    main {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 100px 24px 80px;
+    }
+
+    .apply-container {
+      width: 100%;
+      max-width: 520px;
+    }
+
+    .apply-header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .apply-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.71rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent-green);
+      border: 1px solid rgba(34, 197, 94, 0.28);
+      border-radius: 100px;
+      padding: 5px 14px;
+      margin-bottom: 28px;
+    }
+
+    .badge-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      animation: blink 2.5s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.35; }
+    }
+
+    .apply-headline {
+      font-size: clamp(1.8rem, 4vw, 2.5rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin-bottom: 14px;
+    }
+
+    .apply-sub {
+      font-size: 0.975rem;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    /* ══ FORM ══ */
+    .apply-form {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+    .form-group:last-of-type { margin-bottom: 0; }
+
+    label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
+    }
+
+    .optional-tag {
+      color: var(--text-dim);
+      font-weight: 400;
+    }
+
+    input, textarea, select {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 11px 15px;
+      color: var(--text);
+      font-size: 0.9rem;
+      font-family: inherit;
+      outline: none;
+      width: 100%;
+      transition: border-color var(--transition), box-shadow var(--transition);
+      appearance: none;
+      -webkit-appearance: none;
+    }
+
+    input::placeholder, textarea::placeholder { color: var(--text-dim); }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: rgba(124, 58, 237, 0.5);
+      box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 110px;
+    }
+
+    .select-wrapper {
+      position: relative;
+    }
+    .select-wrapper::after {
+      content: '▾';
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+      font-size: 0.85rem;
+    }
+    select option { background: var(--bg-surface); }
+
+    .btn-submit {
+      display: block;
+      width: 100%;
+      margin-top: 28px;
+      padding: 14px;
+      background: var(--accent-purple);
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      letter-spacing: 0.01em;
+      transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
+      box-shadow: 0 0 28px rgba(124, 58, 237, 0.22);
+    }
+    .btn-submit:hover:not(:disabled) {
+      background: var(--accent-purple-mid);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 28px rgba(124, 58, 237, 0.38);
+    }
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ══ STATES ══ */
+    .form-error {
+      display: none;
+      padding: 14px 16px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      border-radius: var(--radius);
+      color: #fca5a5;
+      font-size: 0.875rem;
+      margin-top: 16px;
+    }
+    .form-error.visible { display: block; }
+
+    .form-success {
+      display: none;
+      text-align: center;
+      padding: 40px 24px;
+    }
+    .form-success.visible { display: block; }
+
+    .success-icon {
+      font-size: 2.5rem;
+      margin-bottom: 20px;
+    }
+
+    .success-headline {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      margin-bottom: 12px;
+    }
+
+    .success-sub {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    /* ══ FOOTER ══ */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 24px 36px;
+      background: var(--bg-surface);
+      text-align: center;
+    }
+
+    .footer-copy {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+    }
+
+    /* ══ RESPONSIVE ══ */
+    @media (max-width: 640px) {
+      nav { padding: 0 20px; }
+      .apply-form { padding: 24px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <a href="../" class="nav-logo">WorldStitch</a>
+    <a href="../" class="nav-back">← Back</a>
+  </nav>
+
+  <!-- MAIN -->
+  <main>
+    <div class="apply-container">
+      <div class="apply-header">
+        <span class="apply-badge">
+          <span class="badge-dot"></span>
+          Limited spots
+        </span>
+        <h1 class="apply-headline">Apply for Early Access</h1>
+        <p class="apply-sub">Tell us a little about yourself and what you're building. We review every application personally.</p>
+      </div>
+
+      <div class="apply-form" id="applyCard">
+        <form id="applyForm">
+          <div class="form-group">
+            <label for="fname">Full name</label>
+            <input type="text" id="fname" name="name" placeholder="Your name" required autocomplete="name" />
+          </div>
+
+          <div class="form-group">
+            <label for="femail">Email address</label>
+            <input type="email" id="femail" name="email" placeholder="you@example.com" required autocomplete="email" />
+          </div>
+
+          <div class="form-group">
+            <label for="fworld">What are you building / what's your world about? <span class="optional-tag">(optional)</span></label>
+            <textarea id="fworld" name="world_description" placeholder="Tell us about your world, campaign, or project…"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="fref">How did you hear about WorldStitch?</label>
+            <div class="select-wrapper">
+              <select id="fref" name="referral_source" required>
+                <option value="" disabled selected>Select one…</option>
+                <option value="twitter">Twitter / X</option>
+                <option value="reddit">Reddit</option>
+                <option value="friend">A friend</option>
+                <option value="search">Search</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-submit" id="submitBtn">Apply for Early Access</button>
+          <div class="form-error" id="formError"></div>
+        </form>
+
+        <div class="form-success" id="formSuccess">
+          <div class="success-icon">✅</div>
+          <h2 class="success-headline">You're on the list.</h2>
+          <p class="success-sub">We'll be in touch soon. Keep building your world.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- FOOTER -->
+  <footer>
+    <span class="footer-copy">© 2026 WorldStitch. All rights reserved.</span>
+  </footer>
+
+  <script>
+    // API base: same origin by default, can be overridden via window.__API_BASE__
+    const API_BASE = window.__API_BASE__ || '';
+
+    const form = document.getElementById('applyForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const formError = document.getElementById('formError');
+    const formSuccess = document.getElementById('formSuccess');
+
+    function showError(msg) {
+      formError.textContent = msg;
+      formError.classList.add('visible');
+    }
+
+    function clearError() {
+      formError.classList.remove('visible');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearError();
+
+      const name = document.getElementById('fname').value.trim();
+      const email = document.getElementById('femail').value.trim();
+      const world_description = document.getElementById('fworld').value.trim() || null;
+      const referral_source = document.getElementById('fref').value;
+
+      if (!referral_source) {
+        showError('Please select how you heard about WorldStitch.');
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting…';
+
+      try {
+        const res = await fetch(`${API_BASE}/apply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, world_description, referral_source }),
+        });
+
+        if (res.status === 409) {
+          showError('You\'re already on the list! We\'ll be in touch soon.');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Apply for Early Access';
+          return;
+        }
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showError(data.detail || 'Something went wrong. Please try again.');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Apply for Early Access';
+          return;
+        }
+
+        form.style.display = 'none';
+        formSuccess.classList.add('visible');
+      } catch (err) {
+        showError('Network error. Please check your connection and try again.');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Apply for Early Access';
+      }
+    });
+  </script>
+</body>
+</html>
