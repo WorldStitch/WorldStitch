@@ -4,6 +4,7 @@ import Card from '@/components/Card';
 import AdminSettings from '@/components/settings/AdminSettings';
 import DebugSettings from '@/components/settings/DebugSettings';
 import AdminAnalyticsEmbed from './AdminAnalytics';
+import WaitlistAdmin from './WaitlistAdmin';
 
 const OWNER_ONLY   = ['owner'];
 const ADMIN_ABOVE  = ['owner', 'admin'];
@@ -15,7 +16,6 @@ export default function AdminPanel({ user }) {
   const isAdmin     = ADMIN_ABOVE.includes(role);
   const isModerator = MOD_ABOVE.includes(role);
 
-  // Pick a sensible default tab based on what's visible
   const defaultTab = isAdmin ? 'users' : 'support';
   const [activeTab, setActiveTab] = useState(defaultTab);
 
@@ -48,6 +48,7 @@ export default function AdminPanel({ user }) {
               Management
             </p>
             <NavItem id="users"     label="User Management"  allowed={isAdmin} />
+            <NavItem id="waitlist"  label="Waitlist"         allowed={isAdmin} />
             <NavItem id="analytics" label="Analytics"        allowed={isAdmin} />
             <NavItem id="ai_usage"  label="AI Usage"         allowed={isAdmin} />
             <NavItem id="support"   label="Reports / Support" allowed={isModerator} />
@@ -62,6 +63,7 @@ export default function AdminPanel({ user }) {
         {/* Content */}
         <Card className="flex-1 p-6 overflow-y-auto">
           {activeTab === 'users'     && isAdmin     && <AdminSettings />}
+          {activeTab === 'waitlist'  && isAdmin     && <WaitlistAdmin />}
           {activeTab === 'analytics' && isAdmin     && <AdminAnalyticsEmbed embedded />}
           {activeTab === 'ai_usage'  && isAdmin     && <AiUsagePanel />}
           {activeTab === 'support'   && isModerator && <SupportPanel />}

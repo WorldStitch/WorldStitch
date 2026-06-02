@@ -70,10 +70,10 @@ export default function AISettings({
     <div className="space-y-8">
       {/* ── Personal API Key ────────────────────────────────────────────── */}
       <div>
-        <h3 className="text-lg font-bold text-txt mb-1">OpenAI Key</h3>
+        <h3 className="text-lg font-bold text-txt mb-1">Your OpenAI API Key</h3>
         <p className="text-sm text-txt-muted mb-4">
-          By default you share the server's key (subject to a monthly request limit).
-          Enter your own key to remove that limit and use your own quota.
+          Your personal key takes priority over any vault or platform key — you are billed
+          directly by OpenAI and have no platform request limit.
         </p>
 
         {keyLoading ? (
@@ -83,7 +83,7 @@ export default function AISettings({
           <div className="bg-elevated rounded-xl p-4 flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-txt">Using your personal OpenAI key</p>
-              <p className="text-xs text-txt-muted mt-0.5">No server-side request limit applies.</p>
+              <p className="text-xs text-txt-muted mt-0.5">Takes priority over vault and platform keys. No server-side request limit.</p>
             </div>
             <Button
               variant="danger"
@@ -98,7 +98,11 @@ export default function AISettings({
           /* ── Server key + quota ── */
           <div className="space-y-3">
             <div className="bg-elevated rounded-xl p-4">
-              <p className="text-sm font-medium text-txt mb-1">Using shared server key</p>
+              <p className="text-sm font-medium text-txt mb-1">No personal key set</p>
+              <p className="text-xs text-txt-muted mt-0.5">
+                AI uses your vault owner's key (if shared) or the platform key.
+                Add your own key above to override and remove request limits.
+              </p>
               {keyStatus && (
                 <div className="flex items-center gap-2 mt-2">
                   <div className="flex-1 bg-card rounded-full h-2 overflow-hidden">

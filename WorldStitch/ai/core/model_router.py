@@ -1,4 +1,4 @@
-﻿# WorldStitch/ai/core/model_router.py
+# WorldStitch/ai/core/model_router.py
 
 import logging
 from typing import List, Optional, Tuple
@@ -89,7 +89,7 @@ class ModelRouter(AIInterface):
             max_context_tokens=max_context_tokens,
         )
 
-    def ask(self, prompt: str) -> Tuple[str, int, int]:
+    def ask(self, prompt: str, system_prompt: str = "") -> Tuple[str, int, int]:
         model_name = getattr(self._backends["ask"], "model", "gpt-3.5-turbo")
         assembler = self._assembler(model_name)
         ctx_result = assembler.assemble_context(prompt, task="ask", top_k=5, min_tokens_for_reply=256)
@@ -113,7 +113,7 @@ class ModelRouter(AIInterface):
             prompt=full_prompt,
         )
 
-        result = self._backends["ask"].ask(full_prompt)
+        result = self._backends["ask"].ask(full_prompt, system_prompt=system_prompt)
         _, p_tok, c_tok = result
         self._record_cost("ask", p_tok, c_tok)
         return result

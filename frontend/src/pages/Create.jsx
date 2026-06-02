@@ -154,7 +154,7 @@ export default function Create() {
               <h3 className="text-sm font-bold text-txt uppercase tracking-wider">🎲 Random Generator</h3>
               <TextArea
                 label="Describe what you want"
-                placeholder="A mysterious wizard with a dark past..."
+                placeholder="A wanderer with a hidden past..."
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
               />
@@ -187,8 +187,8 @@ export default function Create() {
               <h3 className="text-sm font-bold text-txt uppercase tracking-wider">👤 NPC Builder</h3>
               <Input label="Name (optional)" placeholder="Leave blank for random" value={npcName} onChange={(e) => setNpcName(e.target.value)} />
               <div className="grid grid-cols-2 gap-3">
-                <Input label="Race" placeholder="Elf, Dwarf..." value={npcRace} onChange={(e) => setNpcRace(e.target.value)} />
-                <Input label="Class / Job" placeholder="Wizard, Merchant..." value={npcClass} onChange={(e) => setNpcClass(e.target.value)} />
+                <Input label="Species / Type" placeholder="Human, Elf, Android..." value={npcRace} onChange={(e) => setNpcRace(e.target.value)} />
+                <Input label="Class / Job" placeholder="Scholar, Guard, Merchant..." value={npcClass} onChange={(e) => setNpcClass(e.target.value)} />
               </div>
               <div>
                 <label className="block text-txt-muted text-sm mb-1.5 font-medium">Role</label>

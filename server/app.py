@@ -1,4 +1,4 @@
-﻿"""
+"""
 WorldStitch FastAPI application.
 
 Creates the FastAPI app, wires up AppContext, and registers all route
@@ -8,8 +8,6 @@ Start from the project root (the directory containing both
 ``WorldStitch/`` and ``server/``):
 
     uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
-
-The Electron ``main.cjs`` starts this automatically in production.
 """
 
 import logging
@@ -35,8 +33,6 @@ sys.path.insert(0, str(_parent))
 
 from fastapi.responses import JSONResponse
 
-from WorldStitch.config.config import Config
-from WorldStitch.context.app_context import AppContext
 from server.deps import set_app_context
 from server.limiter import limiter
 from server.middleware.analytics import AnalyticsMiddleware
@@ -59,8 +55,11 @@ from server.routes import (
     settings,
     users,
     vaults,
+    waitlist,
     ws,
 )
+from WorldStitch.config.config import Config
+from WorldStitch.context.app_context import AppContext
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +89,7 @@ async def lifespan(application: FastAPI):
     cfg = Config()
 
     if not cfg.API_KEY_ENCRYPTION_SECRET:
-        logger.warning(
-            "WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext"
-        )
+        logger.warning("WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext")
 
     ctx = AppContext(cfg)
 
@@ -114,10 +111,15 @@ async def lifespan(application: FastAPI):
         def _build_index_bg() -> None:
             try:
                 ctx.ai.index_manager.build_index()
-                ctx.ai._index_ready = True
                 logger.info("AI index build complete")
             except Exception as exc:
-                logger.warning("AI index build failed: %s", exc)
+                # Log the failure but still mark the index as "ready" so the
+                # frontend banner ("Vault index is building…") clears.  AI
+                # still works via the recent-notes fallback; semantic search
+                # simply returns an empty list when the retriever is None.
+                logger.warning("AI index build failed (will use note fallback): %s", exc)
+            finally:
+                ctx.ai._index_ready = True
 
         threading.Thread(target=_build_index_bg, daemon=True).start()
 
@@ -133,7 +135,7 @@ async def lifespan(application: FastAPI):
 app = FastAPI(
     title="WorldStitch API",
     version="1.0.0",
-    description="REST API for the WorldStitch D&D campaign management platform.",
+    description="REST API for the WorldStitch creative worldbuilding platform.",
     lifespan=lifespan,
 )
 
@@ -144,7 +146,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(AnalyticsMiddleware)
 app.add_middleware(LoggingMiddleware)
 
-# Allow the Vite dev server (port 5173) and production Electron renderer
+# Allow the Vite dev server (port 5173) and same-origin production requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -153,6 +155,7 @@ app.add_middleware(
         "http://localhost:8741",
         "http://127.0.0.1:8741",
         "https://app.worldstitch.app",
+        "https://worldstitch.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -220,6 +223,7 @@ app.include_router(ws.router, tags=["ws"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
 app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
+app.include_router(waitlist.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
@@ -227,7 +231,7 @@ app.include_router(relationships.router, prefix="/relationships", tags=["relatio
 
 @app.get("/health", tags=["health"])
 def health():
-    """Liveness probe used by the Electron launcher to detect API readiness."""
+    """Liveness probe."""
     return {"status": "ok", "service": "WorldStitch"}
 
 
@@ -236,7 +240,9 @@ def health():
 # A mount is checked AFTER all FastAPI routes, so API endpoints are never
 # shadowed and non-GET methods (POST /vaults/, etc.) work correctly.
 from pathlib import Path as _Path
+
 _frontend_dist = _Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if _frontend_dist.exists():
     from fastapi.staticfiles import StaticFiles
+
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")

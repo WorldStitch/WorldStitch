@@ -1,4 +1,4 @@
-﻿print("Importing Config...")
+print("Importing Config...")
 from WorldStitch.config.config import Config
 
 print("Importing OpenaiAI...")
@@ -10,7 +10,7 @@ print("Building AI backend...")
 ai = OpenaiAI(config)
 print("Ready to call summarize...")
 
-test_text = "Write a summary of the history of the Forgotten Realms in D&D."
+test_text = "Write a summary of the history of a fictional world."
 try:
     print("About to call summarize...")
     summary, prompt_tokens, resp_tokens = ai.summarize(test_text)

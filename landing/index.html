@@ -42,7 +42,6 @@
 
     a { color: inherit; text-decoration: none; }
 
-    /* Subtle page-level background gradient — purple bleeds from corners */
     body::before {
       content: '';
       position: fixed;
@@ -79,13 +78,38 @@
       color: var(--accent-green);
     }
 
-    .nav-invite {
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+    }
+
+    .nav-link {
       font-size: 0.875rem;
       font-weight: 500;
       color: var(--text-muted);
       transition: color var(--transition);
     }
-    .nav-invite:hover { color: var(--accent-green); }
+    .nav-link:hover { color: var(--accent-green); }
+
+    .nav-apply {
+      display: inline-flex;
+      align-items: center;
+      padding: 7px 18px;
+      background: var(--accent-purple);
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border-radius: var(--radius);
+      letter-spacing: 0.01em;
+      transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
+      box-shadow: 0 0 20px rgba(124, 58, 237, 0.22);
+    }
+    .nav-apply:hover {
+      background: var(--accent-purple-mid);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px rgba(124, 58, 237, 0.38);
+    }
 
     /* ══ HERO ══ */
     #hero {
@@ -126,17 +150,21 @@
     }
 
     .hero-headline {
-      font-size: clamp(2.8rem, 7vw, 5rem);
+      font-size: clamp(3rem, 8vw, 5.5rem);
       font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 1.07;
+      letter-spacing: -0.04em;
+      line-height: 1.0;
       max-width: 780px;
-      margin-bottom: 24px;
+      margin-bottom: 16px;
     }
 
-    .hero-headline em {
-      font-style: normal;
+    .hero-tagline {
+      font-size: clamp(1.3rem, 3vw, 1.9rem);
+      font-weight: 500;
+      letter-spacing: -0.015em;
       color: var(--accent-green);
+      margin-bottom: 28px;
+      font-style: italic;
     }
 
     .hero-sub {
@@ -199,8 +227,8 @@
       transform: translateY(-2px);
     }
 
-    /* ══ HOW IT WORKS ══ */
-    #how {
+    /* ══ FEATURES ══ */
+    #features {
       padding: 100px 24px;
       background: var(--bg-surface);
       border-top: 1px solid var(--border);
@@ -228,156 +256,73 @@
       margin-bottom: 64px;
     }
 
-    .steps {
+    .features-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 40px;
-      max-width: 860px;
+      gap: 24px;
+      max-width: 960px;
       margin: 0 auto;
     }
 
-    .step {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-      gap: 16px;
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 24px;
+      transition: border-color var(--transition), transform var(--transition);
+    }
+    .feature-card:hover {
+      border-color: rgba(34, 197, 94, 0.2);
+      transform: translateY(-2px);
     }
 
-    .step-num {
-      width: 48px; height: 48px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: var(--accent-green);
-      background: var(--accent-green-dim);
-      border: 1.5px solid rgba(34, 197, 94, 0.25);
-      flex-shrink: 0;
+    .feature-icon {
+      font-size: 1.5rem;
+      margin-bottom: 14px;
     }
 
-    .step-title {
+    .feature-title {
       font-size: 0.975rem;
       font-weight: 600;
       color: var(--text);
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
-    .step-desc {
+    .feature-desc {
       font-size: 0.875rem;
       color: var(--text-muted);
       line-height: 1.68;
     }
 
-    /* ══ INVITE FORM ══ */
-    #invite {
+    /* ══ ABOUT ══ */
+    #about {
       padding: 100px 24px;
     }
 
-    .invite-inner {
-      max-width: 500px;
+    .about-inner {
+      max-width: 640px;
       margin: 0 auto;
       text-align: center;
     }
 
-    #invite .section-header {
-      margin-bottom: 40px;
-    }
-
-    .invite-form {
-      text-align: left;
-    }
-
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-
-    .form-field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 0;
-    }
-
-    .form-field-full {
-      margin-top: 12px;
-    }
-
-    label {
-      font-size: 0.78rem;
-      font-weight: 500;
+    .about-body {
+      font-size: 1.05rem;
       color: var(--text-muted);
-      letter-spacing: 0.03em;
+      line-height: 1.8;
+      margin-bottom: 36px;
     }
 
-    .optional-tag {
-      color: var(--text-dim);
-      font-weight: 400;
-    }
-
-    input, textarea {
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 11px 15px;
-      color: var(--text);
+    .about-contact {
       font-size: 0.9rem;
-      font-family: inherit;
-      outline: none;
-      width: 100%;
-      transition: border-color var(--transition), box-shadow var(--transition);
-    }
-    input::placeholder, textarea::placeholder { color: var(--text-dim); }
-    input:focus, textarea:focus {
-      border-color: rgba(124, 58, 237, 0.5);
-      box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+      color: var(--text-muted);
     }
 
-    textarea {
-      resize: vertical;
-      min-height: 96px;
-    }
-
-    .btn-submit {
-      display: block;
-      width: 100%;
-      margin-top: 20px;
-      padding: 14px;
-      background: var(--accent-purple);
-      color: #fff;
-      font-weight: 600;
-      font-size: 0.95rem;
-      border-radius: var(--radius);
-      border: none;
-      cursor: pointer;
-      font-family: inherit;
-      letter-spacing: 0.01em;
-      transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
-      box-shadow: 0 0 28px rgba(124, 58, 237, 0.22);
-    }
-    .btn-submit:hover {
-      background: var(--accent-purple-mid);
-      transform: translateY(-1px);
-      box-shadow: 0 6px 28px rgba(124, 58, 237, 0.38);
-    }
-
-    .form-success {
-      display: none;
-      padding: 18px 20px;
-      background: var(--accent-green-dim);
-      border: 1px solid rgba(34, 197, 94, 0.22);
-      border-radius: var(--radius);
+    .about-contact a {
       color: var(--accent-green);
-      font-size: 0.9rem;
-      text-align: center;
-      margin-top: 16px;
+      border-bottom: 1px solid transparent;
+      transition: border-color var(--transition);
     }
-    .form-success.visible { display: block; }
+    .about-contact a:hover { border-color: var(--accent-green); }
 
     /* ══ FOOTER ══ */
     footer {
@@ -387,7 +332,7 @@
     }
 
     .footer-inner {
-      max-width: 860px;
+      max-width: 960px;
       margin: 0 auto;
       display: flex;
       align-items: center;
@@ -409,17 +354,19 @@
     .footer-email:hover { color: var(--accent-green); }
 
     /* ══ RESPONSIVE ══ */
+    @media (max-width: 768px) {
+      .features-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
     @media (max-width: 640px) {
       nav { padding: 0 20px; }
+      .nav-links { gap: 16px; }
 
-      .steps {
+      .features-grid {
         grid-template-columns: 1fr;
-        gap: 36px;
         max-width: 360px;
-      }
-
-      .form-row {
-        grid-template-columns: 1fr;
       }
 
       .footer-inner {
@@ -439,6 +386,8 @@
     .d1 { transition-delay: 0.1s; }
     .d2 { transition-delay: 0.2s; }
     .d3 { transition-delay: 0.3s; }
+    .d4 { transition-delay: 0.4s; }
+    .d5 { transition-delay: 0.5s; }
   </style>
 </head>
 <body>
@@ -446,7 +395,11 @@
   <!-- NAV -->
   <nav>
     <a href="#" class="nav-logo">WorldStitch</a>
-    <a href="#invite" class="nav-invite">Request Invite</a>
+    <div class="nav-links">
+      <a href="#features" class="nav-link">Features</a>
+      <a href="#about" class="nav-link">About</a>
+      <a href="apply/" class="nav-apply">Apply for Early Access</a>
+    </div>
   </nav>
 
   <!-- HERO -->
@@ -456,79 +409,76 @@
       Early Access
     </span>
     <h1 class="hero-headline">WorldStitch</h1>
+    <p class="hero-tagline"><em>Your world. Your story.</em></p>
     <p class="hero-sub">
       An AI-powered platform for worldbuilders and storytellers. Organize your lore, map the connections between everything, and work with an AI that actually knows your world.
     </p>
     <div class="hero-ctas">
-      <a href="#" class="btn-primary">Download</a>
-      <a href="#invite" class="btn-secondary">Request Invite</a>
+      <a href="apply/" class="btn-primary">Apply for Early Access</a>
+      <a href="#features" class="btn-secondary">See how it works</a>
     </div>
   </section>
 
-  <!-- HOW IT WORKS -->
-  <section id="how">
+  <!-- FEATURES -->
+  <section id="features">
     <div class="section-header">
-      <p class="section-eyebrow reveal">Get up and running fast</p>
-      <h2 class="section-title reveal d1">How it works</h2>
+      <p class="section-eyebrow reveal">What you get</p>
+      <h2 class="section-title reveal d1">Built for your world</h2>
     </div>
-    <div class="steps">
+    <div class="features-grid">
 
-      <div class="step reveal">
-        <div class="step-num">1</div>
-        <div>
-          <p class="step-title">Write your lore</p>
-          <p class="step-desc">Notes for characters, locations, factions, anything. No rigid format — just write.</p>
-        </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon">🧠</div>
+        <p class="feature-title">AI that knows your world</p>
+        <p class="feature-desc">Ask questions and get answers grounded in your actual lore, not guesses.</p>
       </div>
 
-      <div class="step reveal d1">
-        <div class="step-num">2</div>
-        <div>
-          <p class="step-title">Connect the pieces</p>
-          <p class="step-desc">Link entries with typed relationships — allies, rivals, secrets, history. The web builds as you write.</p>
-        </div>
+      <div class="feature-card reveal d1">
+        <div class="feature-icon">🕸️</div>
+        <p class="feature-title">Relationship graph</p>
+        <p class="feature-desc">Visualize how every character, faction, and location connects to everything else.</p>
       </div>
 
-      <div class="step reveal d2">
-        <div class="step-num">3</div>
-        <div>
-          <p class="step-title">Ask your AI</p>
-          <p class="step-desc">Ask questions about your world and get answers grounded in your actual lore — not guesses.</p>
-        </div>
+      <div class="feature-card reveal d2">
+        <div class="feature-icon">📝</div>
+        <p class="feature-title">Rich note editor</p>
+        <p class="feature-desc">Write in a familiar editor with support for links, tags, and structured lore.</p>
+      </div>
+
+      <div class="feature-card reveal d3">
+        <div class="feature-icon">🗄️</div>
+        <p class="feature-title">Vault-based organization</p>
+        <p class="feature-desc">Keep multiple worlds in isolated vaults. Switch context instantly.</p>
+      </div>
+
+      <div class="feature-card reveal d4">
+        <div class="feature-icon">🎲</div>
+        <p class="feature-title">Session management</p>
+        <p class="feature-desc">Track what happened in each session, linked to the characters and places involved.</p>
+      </div>
+
+      <div class="feature-card reveal d5">
+        <div class="feature-icon">🌍</div>
+        <p class="feature-title">Built for worldbuilders</p>
+        <p class="feature-desc">Designed from the ground up for TTRPG creators, fiction writers, and game designers.</p>
       </div>
 
     </div>
   </section>
 
-  <!-- INVITE / SUPPORT FORM -->
-  <section id="invite">
-    <div class="invite-inner">
+  <!-- ABOUT -->
+  <section id="about">
+    <div class="about-inner">
       <div class="section-header">
-        <p class="section-eyebrow reveal">Limited early access</p>
-        <h2 class="section-title reveal d1">Get early access</h2>
+        <p class="section-eyebrow reveal">The project</p>
+        <h2 class="section-title reveal d1">About WorldStitch</h2>
       </div>
-
-      <form class="invite-form" id="inviteForm" action="#" onsubmit="handleSubmit(event)">
-        <div class="form-row">
-          <div class="form-field">
-            <label for="fname">Name</label>
-            <input type="text" id="fname" name="name" placeholder="Your name" required autocomplete="name" />
-          </div>
-          <div class="form-field">
-            <label for="femail">Email</label>
-            <input type="email" id="femail" name="email" placeholder="you@example.com" required autocomplete="email" />
-          </div>
-        </div>
-        <div class="form-field form-field-full">
-          <label for="fmsg">Message <span class="optional-tag">(optional)</span></label>
-          <textarea id="fmsg" name="message" placeholder="What are you building? Any questions?"></textarea>
-        </div>
-        <button type="submit" class="btn-submit">Request Invite</button>
-      </form>
-
-      <div class="form-success" id="formSuccess">
-        You're on the list — we'll reach out when your invite is ready.
-      </div>
+      <p class="about-body reveal d2">
+        WorldStitch is an independent project built for people who build worlds. Whether you're running a tabletop campaign, writing a novel, or designing a game universe — your lore deserves a home that actually understands it. We're in early access, growing carefully, and taking applications from creators who want to shape what this becomes.
+      </p>
+      <p class="about-contact reveal d3">
+        Questions? Reach us at <a href="mailto:hello@worldstitch.app">hello@worldstitch.app</a>
+      </p>
     </div>
   </section>
 
@@ -541,12 +491,6 @@
   </footer>
 
   <script>
-    function handleSubmit(e) {
-      e.preventDefault();
-      document.getElementById('inviteForm').style.display = 'none';
-      document.getElementById('formSuccess').classList.add('visible');
-    }
-
     const observer = new IntersectionObserver(entries => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {

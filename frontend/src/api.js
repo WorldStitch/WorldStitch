@@ -1,12 +1,4 @@
-﻿/**
- * WorldStitch API Client
- * Talks to the FastAPI backend on localhost:8741.
- */
-
-const BASE =
-  typeof window !== "undefined" && window.electronAPI
-    ? "http://127.0.0.1:8741"
-    : (import.meta.env.VITE_API_URL || "");
+const BASE = import.meta.env.VITE_API_URL || "";
 
 export function getApiBase() {
   return BASE;
@@ -247,13 +239,27 @@ export const folders = {
 
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
-  ask: (prompt, history = []) => request("POST", "/ai/ask", { prompt, history }),
+  status: () => request("GET", "/ai/status"),
+  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null) =>
+    request("POST", "/ai/ask", {
+      prompt,
+      history,
+      vault_id: vaultId,
+      mode,
+      conversation_id: conversationId,
+    }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
     request("POST", "/ai/suggest-tags", { text, existing_tags: existingTags }),
   proposeLinks: (text, noteNames = []) =>
     request("POST", "/ai/propose-links", { text, note_names: noteNames }),
   usage: () => request("GET", "/ai/usage"),
+  // Conversation history
+  listConversations: (vaultId) =>
+    request("GET", `/ai/conversations/?vault_id=${encodeURIComponent(vaultId)}`),
+  getConversation: (id) => request("GET", `/ai/conversations/${encodeURIComponent(id)}`),
+  deleteConversation: (id) => request("DELETE", `/ai/conversations/${encodeURIComponent(id)}`),
+  saveConversation: (data) => request("POST", "/ai/conversations/", data),
 };
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -303,6 +309,10 @@ export const vaults = {
   create: (data) => request("POST", "/vaults/", data),
   update: (id, data) => request("PUT", `/vaults/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}`),
+  getAiKeyStatus: (id) => request("GET", `/vaults/${encodeURIComponent(id)}/ai-key/status`),
+  saveAiKey: (id, api_key) => request("POST", `/vaults/${encodeURIComponent(id)}/ai-key`, { api_key }),
+  removeAiKey: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}/ai-key`),
+  setAiSharing: (id, shared) => request("PUT", `/vaults/${encodeURIComponent(id)}/ai-key/sharing`, { shared }),
   exportZip: async (id) => {
     const headers = {};
     if (_token) headers["Authorization"] = `Bearer ${_token}`;
@@ -404,7 +414,7 @@ export const relationships = {
       `/relationships/?vault_id=${encodeURIComponent(vaultId)}${entityId ? `&entity_id=${encodeURIComponent(entityId)}` : ""}`
     ),
   getTypes: () => request("GET", "/relationships/types"),
-  create: (data) => request("POST", "/relationships", data),
+  create: (data) => request("POST", "/relationships/", data),
   update: (id, data) => request("PUT", `/relationships/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/relationships/${encodeURIComponent(id)}`),
 };

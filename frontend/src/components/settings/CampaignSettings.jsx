@@ -102,14 +102,8 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
   };
 
   const handleBrowseVault = () => {
-    if (window.electronAPI?.selectFolder) {
-      window.electronAPI.selectFolder().then((path) => {
-        if (path) setVaultPath(path);
-      });
-    } else {
-      const path = window.prompt('Enter vault folder path:', vaultPath);
-      if (path) setVaultPath(path);
-    }
+    const path = window.prompt('Enter vault folder path:', vaultPath);
+    if (path) setVaultPath(path);
   };
 
   return (

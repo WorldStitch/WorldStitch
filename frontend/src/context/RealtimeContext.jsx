@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { getToken, getWsBase } from '@/api';
+import { getToken, getWsBase, auth } from '@/api';
 
 const RealtimeContext = createContext(null);
 
@@ -22,6 +22,9 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       const token = getToken();
       if (!token || cancelled) return;
 
+      // Tracks the keepalive interval for this specific socket instance.
+      let pingInterval = null;
+
       const socket = new WebSocket(
         `${getWsBase()}/ws?token=${encodeURIComponent(token)}&vault_id=${encodeURIComponent(activeVaultId)}`
       );
@@ -31,11 +34,18 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       socket.onopen = () => {
         attempt = 0;
         setIsConnected(true);
+        // Ping every 25s so Railway's 30-minute idle-connection timeout never fires.
+        pingInterval = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 25000);
       };
 
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+          if (payload.type === 'pong') return;
           setLastEvent(payload);
           if (payload.type === 'presence.snapshot') {
             setOnlineUsers(payload.users || []);
@@ -46,16 +56,32 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
         }
       };
 
-      socket.onclose = () => {
+      socket.onerror = (err) => {
+        console.warn('[RealtimeContext] WebSocket error', err);
+      };
+
+      socket.onclose = async (event) => {
+        clearInterval(pingInterval);
+        pingInterval = null;
         setIsConnected(false);
         if (socketRef.current === socket) socketRef.current = null;
         setOnlineUsers([]);
         setEditing([]);
-        if (!cancelled && attempt < 5) {
-          const delay = Math.pow(2, attempt) * 1000;
-          attempt += 1;
-          timeoutId = setTimeout(connect, delay);
+        if (cancelled) return;
+
+        if (event.code === 1008) {
+          try {
+            await auth.refresh();
+          } catch {
+            window.dispatchEvent(new CustomEvent('auth:logout'));
+            return;
+          }
+          if (cancelled) return;
         }
+
+        const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
+        attempt += 1;
+        timeoutId = setTimeout(connect, delay);
       };
     };
 

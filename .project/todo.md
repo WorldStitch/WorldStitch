@@ -1,4 +1,4 @@
-# MythosEngine — Master Roadmap
+# WorldStitch — Master Roadmap
 
 ---
 
@@ -15,9 +15,9 @@ user management UI, CI/CD, and docs are all in place.
 Goal: stable, shareable app for a small group of testers.
 
 ### Auth & Login
-- [ ] Login dialog works end-to-end with fresh DB
+- [ ] Login works end-to-end with fresh DB
 - [ ] Admin bootstraps correctly from .env on first launch
-- [ ] User Management panel creates player accounts correctly
+- [ ] User Management panel creates accounts correctly
 - [ ] Reset password in User Management works
 - [ ] Member accounts see only their own data; admin sees all
 - [ ] Login failure shows error message (not crash)
@@ -26,11 +26,10 @@ Goal: stable, shareable app for a small group of testers.
 - [ ] All tabs load without errors after login
 - [ ] App survives existing DB across restarts
 - [ ] SMTP crash reporter tested and sending emails
-- [ ] Cancel login exits cleanly
 
 ### Security cleanup
 - [ ] Rotate exposed OpenAI API key
-- [ ] Confirm .env and ward_dnd.db are gitignored and NOT on GitHub
+- [ ] Confirm .env is gitignored and NOT on GitHub
 - [ ] Delete leftover fix scripts from repo
 
 ### v0 Release
@@ -53,7 +52,7 @@ Goal: real multiuser with groups, roles, sharing, and online capability.
 - [ ] Admin view — full user list, usage stats, account controls
 
 ### Groups & permissions
-- [ ] Group/party creation and management UI
+- [ ] Group creation and management UI
 - [ ] Vault membership — group members share a vault's content
 - [ ] Role-based access: vault admin sees everything, members see what's shared
 - [ ] Per-resource sharing (individual notes/characters with specific users)
@@ -76,7 +75,6 @@ Goal: real multiuser with groups, roles, sharing, and online capability.
 Goal: looks and feels like a real product.
 
 - [ ] New icon, color scheme, typography
-- [ ] Modern sidebar navigation replacing tab bar
 - [ ] Light/dark/custom theme system
 - [ ] Consistent buttons, icons, spacing throughout
 - [ ] Drag-and-drop for notes/folders
@@ -98,7 +96,7 @@ Goal: AI is first-class across the whole app.
 - [ ] Consistency checker — finds contradictions in lore
 - [ ] Shared AI context for groups — vault members query same lore base
 - [ ] Session recap generator from notes
-- [ ] NPC dialogue generator from character sheets
+- [ ] Character dialogue generator from character sheets
 - [ ] API endpoint — expose AI query as REST for website integration
 
 ---
@@ -112,7 +110,7 @@ Goal: all existing tabs actually work, plus new world-building tools.
 - [ ] Tag browser and tag cloud
 - [ ] Note versioning UI — diff view, one-click restore
 - [ ] Bulk operations — multi-select, batch move/tag/delete
-- [ ] Note templates (NPC, Location, Item, etc.)
+- [ ] Note templates (Character, Location, Item, etc.)
 
 ### World Builder module
 - [ ] Location hierarchy (world → region → city → building)
@@ -120,7 +118,7 @@ Goal: all existing tabs actually work, plus new world-building tools.
 - [ ] Timeline with linked events
 - [ ] Relationship graph — visual connections between entities
 
-### DND module
+### TTRPG module
 - [ ] Character sheet viewer and editor
 - [ ] Party management
 - [ ] Initiative tracker
@@ -138,7 +136,7 @@ Goal: all existing tabs actually work, plus new world-building tools.
 ## 🌐 PHASE 7 — Website & Cloud Integration
 
 - [ ] Public lore portal — publish notes as read-only website
-- [ ] Player portal — players access notes via browser
+- [ ] Collaborator portal — collaborators access notes via browser
 - [ ] REST API backend
 - [ ] Hosted database option (PostgreSQL)
 - [ ] Cloud backup scheduled automatically
@@ -167,9 +165,7 @@ Goal: all existing tabs actually work, plus new world-building tools.
 
 ## 🚀 PHASE 10 — Distribution
 
-- [ ] Windows installer (.exe)
-- [ ] Mac installer (.dmg)
-- [ ] In-app auto-updater
+- [ ] Docker image and docker-compose for self-hosted deployments
 - [ ] CI/CD auto-build and release on tag
 - [ ] Public landing page
 
@@ -178,5 +174,4 @@ Goal: all existing tabs actually work, plus new world-building tools.
 ## 📋 Tech Debt (see TECH_DEBT.md)
 
 - [ ] Add owner_id SQL column to remaining ORM tables
-- [ ] find_legacy_storage.py, rename_vault_storage.py, tree.py — move or delete
 - [ ] mypy is continue-on-error — fix errors, make it a hard CI gate
