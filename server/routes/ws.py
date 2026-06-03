@@ -11,8 +11,9 @@ from server.realtime import hub
 from server.vault_access import resolve_vault
 from WorldStitch.context.app_context import AppContext
 
-router = APIRouter()
 logger = logging.getLogger(__name__)
+
+router = APIRouter()
 
 
 @router.websocket("/ws")
@@ -22,29 +23,45 @@ async def websocket_events(
     vault_id: str = Query(...),
     ctx: AppContext = Depends(get_ctx),
 ):
+    # Accept the WebSocket handshake BEFORE any validation so that close
+    # frames with meaningful codes (1008) are delivered to the client.
+    # Without a prior accept() some ASGI servers drop the TCP connection
+    # abruptly, giving the browser code 1006 (abnormal closure) instead of
+    # 1008 — the frontend cannot distinguish a bad-token rejection from a
+    # transient network hiccup and retries immediately and indefinitely.
     await websocket.accept()
-    logger.info(f"WS accepted — vault_id={vault_id}")
+    logger.info(f"WS connection attempt - token present: {bool(token)}, vault_id: {vault_id}")
+
+    async def reject(code: int = 1008) -> None:
+        """Send a close frame, tolerating an already-gone connection."""
+        try:
+            await websocket.close(code=code)
+        except Exception:
+            pass
 
     try:
         payload = decode_jwt(token)
+        logger.info(f"WS JWT decoded - sub: {payload.get('sub', 'none')}")
     except HTTPException as e:
-        logger.warning(f"WS auth failed — bad token: {e.detail}")
-        await websocket.close(code=1008)
+        logger.warning(f"WS auth failed - bad token: {e}")
+        await reject()
         return
 
     sub = payload.get("sub", "")
     user = ctx.users.get_user(sub)
-    logger.info(f"WS user lookup — sub={sub} found={bool(user)}")
+    logger.info(f"WS user lookup - sub={sub} found={bool(user)}")
     if not user:
-        logger.warning(f"WS closing — user not found for sub={sub}")
-        await websocket.close(code=1008)
+        logger.warning(f"WS auth failed - user not found for sub: {sub}")
+        await reject()
         return
+
+    logger.info(f"WS connected - user: {user.username}, vault: {vault_id}")
 
     try:
         vault = resolve_vault(ctx, user, vault_id)
     except HTTPException as e:
         logger.warning(f"WS closing — vault resolve failed: {e.detail}")
-        await websocket.close(code=1008)
+        await reject()
         return
 
     logger.info(f"WS connected — user={user.username} vault={vault.id}")
@@ -54,7 +71,7 @@ async def websocket_events(
         await hub.connect(vault.id, user.id, user.username, email, websocket)
     except Exception:
         logger.error(f"WS hub.connect error: {traceback.format_exc()}")
-        await websocket.close(code=1011)
+        await reject(code=1011)
         return
 
     try:
@@ -98,5 +115,9 @@ async def websocket_events(
         logger.info(f"WS disconnected — user={user.username} vault={vault.id}")
         await hub.disconnect(vault.id, user.id, websocket)
     except Exception:
+        # Railway's proxy can drop the TCP connection without a clean WS close
+        # frame. In that case receive_json() raises something other than
+        # WebSocketDisconnect (RuntimeError, ConnectionResetError, etc.).
+        # Always clean up the hub so the user's presence entry is removed.
         logger.error(f"WS unexpected error for user={user.username}: {traceback.format_exc()}")
         await hub.disconnect(vault.id, user.id, websocket)

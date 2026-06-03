@@ -205,6 +205,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
+# WebSocket must be registered first — the StaticFiles mount at "/" matches all
+# paths (including websocket scopes) in Starlette's routing, so any route that
+# should take priority over it must appear earlier in the routes list.
+app.include_router(ws.router, prefix="/api", tags=["ws"])
+
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
@@ -219,7 +224,6 @@ app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(invites.router, prefix="/invites", tags=["invites"])
 app.include_router(vaults.router, prefix="/vaults", tags=["vaults"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
-app.include_router(ws.router, tags=["ws"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
 app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
