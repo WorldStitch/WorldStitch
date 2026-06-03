@@ -18,7 +18,6 @@ DELETE /ai/conversations/{id}    — delete a saved conversation
 import asyncio
 import json
 import logging
-import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -31,6 +30,7 @@ from sqlalchemy.orm import Session
 from server.analytics import track as analytics_track
 from server.deps import PLATFORM_ADMIN, PLATFORM_KEY_ROLES, get_ctx, get_current_user
 from server.limiter import limiter
+from server.realtime import hub
 from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
@@ -223,97 +223,6 @@ _TOOLS_DEVELOPER_EXTRA = [
                         "default": "/",
                     },
                 },
-            },
-        },
-    },
-]
-
-# ── Canonical 4-tool set used by the _ask_with_tools loop ─────────────────────
-
-_AI_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "create_note",
-            "description": ("Creates a new note in the vault with the given title and optional markdown content."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Note title"},
-                    "content": {"type": "string", "description": "Markdown content for the note"},
-                    "folder_id": {
-                        "type": "string",
-                        "description": "ID of the folder to place the note in (omit for root)",
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Tags to attach to the note",
-                    },
-                },
-                "required": ["title"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_folder",
-            "description": "Creates a new folder in the vault.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Folder name"},
-                    "parent_id": {
-                        "type": "string",
-                        "description": "ID of the parent folder (omit for top-level)",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Optional description for the folder",
-                    },
-                },
-                "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_note",
-            "description": "Updates an existing note's title, content, or tags.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "note_id": {"type": "string", "description": "ID of the note to update"},
-                    "title": {"type": "string", "description": "New title (omit to leave unchanged)"},
-                    "content": {"type": "string", "description": "New content (omit to leave unchanged)"},
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "New tags (omit to leave unchanged)",
-                    },
-                },
-                "required": ["note_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_notes",
-            "description": "Searches notes in the vault by semantic or keyword query.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results to return",
-                        "default": 10,
-                    },
-                },
-                "required": ["query"],
             },
         },
     },
@@ -665,7 +574,31 @@ def _set_user_ctx_for_tools(ctx: AppContext, user: User) -> None:
     )
 
 
-def _execute_tool_call(
+def _note_to_ws_payload(note) -> dict:
+    """Build the WebSocket note.saved payload from a Note model instance."""
+    return {
+        "id": note.id,
+        "title": getattr(note, "title", ""),
+        "content": getattr(note, "content", "") or "",
+        "folder_id": getattr(note, "folder_id", None),
+        "vault_id": getattr(note, "vault_id", ""),
+        "tags": getattr(note, "tags", []) or [],
+        "group_id": getattr(note, "group_id", None),
+        "permissions": getattr(note, "permissions", {}) or {},
+        "links": getattr(note, "links", []) or [],
+        "attachments": getattr(note, "attachments", []) or [],
+        "ai_summary": getattr(note, "ai_summary", None),
+        "meta": getattr(note, "meta", {}) or {},
+        "owner_id": str(getattr(note, "owner_id", "")),
+        "is_deleted": getattr(note, "is_deleted", False),
+        "created_at": note.created_at.isoformat() if hasattr(note, "created_at") and note.created_at else None,
+        "last_modified": note.last_modified.isoformat()
+        if hasattr(note, "last_modified") and note.last_modified
+        else None,
+    }
+
+
+async def _execute_tool_call(
     tool_name: str,
     tool_args: dict,
     ctx: AppContext,
@@ -680,7 +613,6 @@ def _execute_tool_call(
             title = tool_args.get("title", "Untitled")
             content = tool_args.get("content", "")
             tags = tool_args.get("tags") or ["ai-generated"]
-            # Support both direct folder_id (from _AI_TOOLS) and folder_path (from _TOOLS_ALL_MODES)
             folder_id = tool_args.get("folder_id") or None
             if folder_id is None:
                 folder_path = tool_args.get("folder_path", "/")
@@ -693,12 +625,12 @@ def _execute_tool_call(
                 folder_id=folder_id,
                 tags=tags,
             )
+            await hub.publish_note_saved(vault_id, _note_to_ws_payload(note))
             return {"success": True, "note_id": note.id, "title": note.title}
 
         elif tool_name == "create_folder":
             name = tool_args.get("name", "New Folder")
             description = tool_args.get("description") or None
-            # Support both direct parent_id (from _AI_TOOLS) and parent_path (from _TOOLS_ALL_MODES)
             parent_id = tool_args.get("parent_id") or None
             if parent_id is None:
                 parent_path = tool_args.get("parent_path", "/")
@@ -730,25 +662,18 @@ def _execute_tool_call(
             if tool_args.get("tags") is not None:
                 note.tags = tool_args["tags"]
             ctx.notes.update_note(note, actor_id=str(user.id))
+            await hub.publish_note_saved(note.vault_id, _note_to_ws_payload(note))
             return {"success": True, "note_id": note.id, "title": note.title}
 
         elif tool_name == "create_character":
-            from WorldStitch.models.character import Character
-
-            char = Character(
-                id=str(uuid.uuid4()),
+            char = ctx.characters.create_character(
                 vault_id=vault_id,
-                campaign_id=vault_id,
                 owner_id=user.id,
                 name=tool_args.get("name", "Unknown"),
                 description=tool_args.get("description") or None,
                 is_npc=(tool_args.get("char_type", "npc") == "npc"),
-                stats={},
-                note_ids=[],
-                meta={},
-                ai_memory=None,
+                tags=tool_args.get("tags") or [],
             )
-            ctx.storage.save_character(char)
             return {"success": True, "character_id": char.id, "name": char.name}
 
         elif tool_name == "bulk_create_notes":
@@ -765,6 +690,7 @@ def _execute_tool_call(
                     folder_id=folder_id,
                     tags=["ai-generated"],
                 )
+                await hub.publish_note_saved(vault_id, _note_to_ws_payload(note))
                 created.append({"note_id": note.id, "title": note.title})
             return {"success": True, "created_count": len(created), "notes": created}
 
@@ -776,18 +702,16 @@ def _execute_tool_call(
             return {"success": True, "deleted_note_id": note_id}
 
         elif tool_name == "list_notes":
-            folder_path = tool_args.get("folder_path", "/")
             all_notes = []
             if hasattr(ctx.storage, "list_all_notes"):
                 all_notes = ctx.storage.list_all_notes(vault_id=vault_id)
             result = []
             for note in all_notes[:50]:
-                folder_id = getattr(note, "folder_id", None)
                 result.append(
                     {
                         "id": note.id,
                         "title": getattr(note, "title", ""),
-                        "folder_id": folder_id,
+                        "folder_id": getattr(note, "folder_id", None),
                     }
                 )
             return {"success": True, "notes": result, "total": len(result)}
@@ -848,7 +772,7 @@ def _build_messages_for_tools(
     return messages
 
 
-def _run_ask_with_tools(
+async def _run_ask_with_tools(
     ai_engine,
     messages: list,
     tools: list,
@@ -863,17 +787,17 @@ def _run_ask_with_tools(
     Falls back to engine.ask() if the engine doesn't support direct client access.
     """
     if not tools or not hasattr(ai_engine, "client"):
-        # Fallback: use the engine's built-in ask() with text-embedded history
         sys_content = next((m["content"] for m in messages if m["role"] == "system"), "")
         user_content = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        text, pt, ct = ai_engine.ask(user_content, system_prompt=sys_content)
+        text, pt, ct = await asyncio.to_thread(ai_engine.ask, user_content, system_prompt=sys_content)
         return text, pt, ct, []
 
     total_pt = 0
     total_ct = 0
 
     # First call — with tools so the model can decide whether to use them
-    resp = ai_engine.client.chat.completions.create(
+    resp = await asyncio.to_thread(
+        ai_engine.client.chat.completions.create,
         model=ai_engine.model,
         messages=messages,
         tools=tools,
@@ -883,7 +807,10 @@ def _run_ask_with_tools(
     total_ct += getattr(resp.usage, "completion_tokens", 0) or 0
 
     choice = resp.choices[0]
-    tool_calls = getattr(choice.message, "tool_calls", None)
+    # Check finish_reason first; fall back to inspecting the tool_calls attribute
+    tool_calls = choice.message.tool_calls if choice.finish_reason == "tool_calls" else None
+    if not tool_calls:
+        tool_calls = getattr(choice.message, "tool_calls", None) or None
 
     if not tool_calls:
         return (choice.message.content or "").strip(), total_pt, total_ct, []
@@ -910,7 +837,7 @@ def _run_ask_with_tools(
             args = json.loads(tc.function.arguments)
         except Exception:
             args = {}
-        result = _execute_tool_call(tc.function.name, args, ctx, vault_id or "", user)
+        result = await _execute_tool_call(tc.function.name, args, ctx, vault_id or "", user)
         tool_summaries.append({"tool": tc.function.name, "result": result})
         updated_messages.append(
             {
@@ -921,7 +848,8 @@ def _run_ask_with_tools(
         )
 
     # Follow-up call to get the final natural-language response
-    final = ai_engine.client.chat.completions.create(
+    final = await asyncio.to_thread(
+        ai_engine.client.chat.completions.create,
         model=ai_engine.model,
         messages=updated_messages,
     )
@@ -929,89 +857,6 @@ def _run_ask_with_tools(
     total_ct += getattr(final.usage, "completion_tokens", 0) or 0
 
     return (final.choices[0].message.content or "").strip(), total_pt, total_ct, tool_summaries
-
-
-def _ask_with_tools(
-    ai_engine,
-    messages: list,
-    ctx: AppContext,
-    user: User,
-    vault_id: Optional[str],
-) -> tuple:
-    """
-    Run an OpenAI chat completion with the canonical _AI_TOOLS tool set, executing
-    any tool calls the model makes and looping until a final text response is returned.
-
-    Returns (response_text, prompt_tokens, completion_tokens).
-    Falls back to ai_engine.ask() if the engine does not expose .client / .model.
-    """
-    if not hasattr(ai_engine, "client") or not hasattr(ai_engine, "model"):
-        user_content = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        sys_content = next((m["content"] for m in messages if m["role"] == "system"), "")
-        text, pt, ct = ai_engine.ask(user_content, system_prompt=sys_content)
-        return text, pt, ct
-
-    client = ai_engine.client
-    model = ai_engine.model
-    total_pt = 0
-    total_ct = 0
-    current_messages = list(messages)
-
-    for _iteration in range(10):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=current_messages,
-            tools=_AI_TOOLS,
-            tool_choice="auto",
-        )
-        total_pt += getattr(resp.usage, "prompt_tokens", 0) or 0
-        total_ct += getattr(resp.usage, "completion_tokens", 0) or 0
-
-        choice = resp.choices[0]
-        tool_calls = getattr(choice.message, "tool_calls", None)
-
-        if not tool_calls:
-            # Final text response — done
-            return (choice.message.content or "").strip(), total_pt, total_ct
-
-        # Append the assistant message with tool calls
-        try:
-            assistant_msg = choice.message.model_dump()
-        except Exception:
-            assistant_msg = {
-                "role": "assistant",
-                "content": choice.message.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                    }
-                    for tc in tool_calls
-                ],
-            }
-        current_messages.append(assistant_msg)
-
-        # Execute each tool call and append tool result messages
-        for tc in tool_calls:
-            try:
-                args = json.loads(tc.function.arguments)
-            except Exception:
-                args = {}
-            result = _execute_tool_call(tc.function.name, args, ctx, vault_id or "", user)
-            current_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(result),
-                }
-            )
-
-    # Exceeded iteration limit — make one final call without tools
-    final = client.chat.completions.create(model=model, messages=current_messages)
-    total_pt += getattr(final.usage, "prompt_tokens", 0) or 0
-    total_ct += getattr(final.usage, "completion_tokens", 0) or 0
-    return (final.choices[0].message.content or "").strip(), total_pt, total_ct
 
 
 def _tool_status_label(tool_name: str, args: dict) -> str:
@@ -1140,7 +985,7 @@ async def ask(
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
 
-        response, prompt_tokens, completion_tokens, tool_results = _run_ask_with_tools(
+        response, prompt_tokens, completion_tokens, tool_results = await _run_ask_with_tools(
             ai_engine, messages, tools, ctx, req.vault_id, user
         )
 
@@ -1228,7 +1073,8 @@ async def stream_ask(
 
             # ── Tool-calling path ──────────────────────────────────────────────
             if tools and hasattr(ai_engine, "client"):
-                resp = ai_engine.client.chat.completions.create(
+                resp = await asyncio.to_thread(
+                    ai_engine.client.chat.completions.create,
                     model=ai_engine.model,
                     messages=messages,
                     tools=tools,
@@ -1238,7 +1084,10 @@ async def stream_ask(
                 total_ct = getattr(resp.usage, "completion_tokens", 0) or 0
 
                 choice = resp.choices[0]
-                tool_calls = getattr(choice.message, "tool_calls", None)
+                # Prefer finish_reason; fall back to presence of tool_calls attribute
+                tool_calls = choice.message.tool_calls if choice.finish_reason == "tool_calls" else None
+                if not tool_calls:
+                    tool_calls = getattr(choice.message, "tool_calls", None) or None
 
                 tool_summaries = []
                 if tool_calls:
@@ -1268,7 +1117,7 @@ async def stream_ask(
                         label = _tool_status_label(tc.function.name, args)
                         yield f"data: {json.dumps({'tool_status': label})}\n\n"
 
-                        result = _execute_tool_call(tc.function.name, args, ctx, req.vault_id or "", user)
+                        result = await _execute_tool_call(tc.function.name, args, ctx, req.vault_id or "", user)
                         tool_summaries.append({"tool": tc.function.name, "result": result})
                         updated_messages.append(
                             {
@@ -1285,7 +1134,8 @@ async def stream_ask(
                     yield f"data: {json.dumps({'tools_ran': True})}\n\n"
 
                     # Follow-up call for the final text response
-                    final = ai_engine.client.chat.completions.create(
+                    final = await asyncio.to_thread(
+                        ai_engine.client.chat.completions.create,
                         model=ai_engine.model,
                         messages=updated_messages,
                     )
@@ -1299,7 +1149,9 @@ async def stream_ask(
                 # ── Fallback: regular ask (no tools) ──────────────────────────
                 full_prompt = _build_prompt_with_history(req.prompt, req.history)
                 full_prompt = _build_vault_context(ctx, req.vault_id, full_prompt)
-                response, total_pt, total_ct = ai_engine.ask(full_prompt, system_prompt=system_prompt)
+                response, total_pt, total_ct = await asyncio.to_thread(
+                    ai_engine.ask, full_prompt, system_prompt=system_prompt
+                )
                 tool_summaries = []
 
             # Stream the final response word-by-word
