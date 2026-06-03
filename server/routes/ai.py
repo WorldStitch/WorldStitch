@@ -339,8 +339,10 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
 
     tool_note = (
         " You also have tools to take direct actions in the vault — creating notes, folders, and "
-        "characters. When the user asks you to create content, use your tools to do so, then confirm "
-        "what you created."
+        "characters. When the user asks you to create, generate, write, or make any content (notes, "
+        "folders, characters, etc.), you MUST immediately call the appropriate tool to do so. Do not "
+        "respond with text saying you will do it — just do it by calling the tool. If asked to create "
+        "multiple items, use bulk_create_notes or call create_note multiple times."
     )
 
     mode_key = (mode or "lore").lower()
