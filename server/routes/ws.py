@@ -114,10 +114,10 @@ async def websocket_events(
     except WebSocketDisconnect:
         logger.info(f"WS disconnected — user={user.username} vault={vault.id}")
         await hub.disconnect(vault.id, user.id, websocket)
-    except Exception as exc:
+    except Exception:
         # Railway's proxy can drop the TCP connection without a clean WS close
         # frame. In that case receive_json() raises something other than
         # WebSocketDisconnect (RuntimeError, ConnectionResetError, etc.).
         # Always clean up the hub so the user's presence entry is removed.
-        logger.warning("WebSocket connection lost unexpectedly for user=%s: %s", user.username, exc)
+        logger.error(f"WS unexpected error for user={user.username}: {traceback.format_exc()}")
         await hub.disconnect(vault.id, user.id, websocket)

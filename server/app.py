@@ -55,6 +55,7 @@ from server.routes import (
     settings,
     users,
     vaults,
+    waitlist,
     ws,
 )
 from WorldStitch.config.config import Config
@@ -154,6 +155,7 @@ app.add_middleware(
         "http://localhost:8741",
         "http://127.0.0.1:8741",
         "https://app.worldstitch.app",
+        "https://worldstitch.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -225,6 +227,7 @@ app.include_router(groups.router, prefix="/groups", tags=["groups"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
 app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
+app.include_router(waitlist.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
