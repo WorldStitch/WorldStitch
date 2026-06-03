@@ -667,7 +667,7 @@ def _set_user_ctx_for_tools(ctx: AppContext, user: User) -> None:
     )
 
 
-def _execute_tool_call(
+async def _execute_tool_call(
     tool_name: str,
     tool_args: dict,
     ctx: AppContext,
