@@ -2,27 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(npm install *)",
-      "Bash(git switch *)",
-      "Bash(git stash *)",
-      "Bash(git commit -m ' *)",
-      "Bash(gh pr create --title 'feat: relationship graph visualization' --body ' *)",
-      "Bash(git push *)",
-      "Bash(gh pr create --title 'feat: Characters page worldbuilding overhaul' --body ' *)",
       "Bash(git checkout *)",
-      "Bash(git add *)",
-      "Bash(gh pr create --title 'feat: Sessions page worldbuilding overhaul' --body ' *)",
-      "Bash(gh pr create --title 'fix: dashboard stats vault-scoped' --body ' *)",
-      "Bash(git fetch *)",
-      "Bash(python -c ' *)",
-      "Bash(.venv\\\\Scripts\\\\python.exe -c \"import starlette; print\\(starlette.__version__\\)\")",
-      "Read(//mnt/c/Users/Evan/Desktop/**)",
-      "Bash(.venv/Scripts/python.exe -c \"import starlette; print\\(starlette.__version__\\)\")",
-      "Bash(gh pr create --title 'fix: add campaign_id to Character model and DB migration' --body ' *)",
-      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Evan\\\\Desktop\\\\WorldStitch\" -Force)",
-      "Bash(Select-Object Name, FullName)",
-      "Bash(gh pr create --title 'feat: vault media type system with per-type UI terminology' --body ' *)",
-      "Bash(gh pr *)",
-      "Bash(git pull *)"
+      "Bash(git stash *)"
     ]
   }
 }
