@@ -14,16 +14,19 @@
 
 FROM python:3.11-slim
 
-# ── System deps ──────────────────────────────────────────────────────────────
+# ── System deps (including Node.js for frontend build) ───────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         libpq-dev \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Working directory ─────────────────────────────────────────────────────────
 WORKDIR /app
 
 # ── Python deps — strip desktop-only packages before installing ───────────────
+# Cached until requirements.txt changes.
 COPY requirements.txt .
 RUN grep -v '\[desktop-only\]' requirements.txt \
     | grep -v '^\s*#' \
@@ -31,13 +34,17 @@ RUN grep -v '\[desktop-only\]' requirements.txt \
     > requirements.server.txt \
     && pip install --no-cache-dir -r requirements.server.txt
 
-# ── Application code ──────────────────────────────────────────────────────────
+# ── Frontend Node deps — cached until package-lock.json changes ───────────────
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci
+
+# ── Application code (cache busts here on any source change) ─────────────────
 COPY . .
 
-# ── Build React frontend ──────────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
-    && cd /app/frontend && npm ci && npx vite build \
-    && apt-get purge -y nodejs npm && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /app/frontend/node_modules
+# ── Build React frontend then purge Node from the final image ─────────────────
+RUN cd /app/frontend && npx vite build \
+    && rm -rf /app/frontend/node_modules \
+    && apt-get purge -y nodejs npm && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # ── Runtime directories (overridden by volume mounts in docker-compose) ───────
 RUN mkdir -p /data/vault /data/logs
