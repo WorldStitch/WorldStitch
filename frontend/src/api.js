@@ -9,7 +9,7 @@ export function getWsBase() {
   if (BASE.startsWith("https://")) return BASE.replace("https://", "wss://");
   if (typeof window !== "undefined") {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}${BASE}`;
+    return `${proto}//${window.location.host}`;
   }
   return BASE;
 }
