@@ -205,10 +205,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-# WebSocket must be registered first — the StaticFiles mount at "/" matches all
-# paths (including websocket scopes) in Starlette's routing, so any route that
-# should take priority over it must appear earlier in the routes list.
-app.include_router(ws.router, prefix="/api", tags=["ws"])
+# WebSocket route registered directly on the app (not through APIRouter +
+# prefix) to avoid a FastAPI/Starlette bug where prefix-based WebSocket route
+# resolution fails — requests reach /api/ws but the prefixed router doesn't
+# match them.  Must also be first so it wins before the StaticFiles Mount("/")
+# which handles websocket scopes too (Match.FULL for any path).
+app.add_api_websocket_route("/api/ws", ws.websocket_events)
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
