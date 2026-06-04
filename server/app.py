@@ -55,6 +55,7 @@ from server.routes import (
     settings,
     users,
     vaults,
+    waitlist,
     ws,
 )
 from WorldStitch.config.config import Config
@@ -154,6 +155,7 @@ app.add_middleware(
         "http://localhost:8741",
         "http://127.0.0.1:8741",
         "https://app.worldstitch.app",
+        "https://worldstitch.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -203,6 +205,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
+# WebSocket route registered directly on the app (not through APIRouter +
+# prefix) to avoid a FastAPI/Starlette bug where prefix-based WebSocket route
+# resolution fails — requests reach /api/ws but the prefixed router doesn't
+# match them.  Must also be first so it wins before the StaticFiles Mount("/")
+# which handles websocket scopes too (Match.FULL for any path).
+app.add_api_websocket_route("/api/ws", ws.websocket_events)
+
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
@@ -217,10 +226,10 @@ app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(invites.router, prefix="/invites", tags=["invites"])
 app.include_router(vaults.router, prefix="/vaults", tags=["vaults"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
-app.include_router(ws.router, tags=["ws"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
 app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
+app.include_router(waitlist.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

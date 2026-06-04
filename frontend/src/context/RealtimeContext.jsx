@@ -26,7 +26,7 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       let pingInterval = null;
 
       const socket = new WebSocket(
-        `${getWsBase()}/ws?token=${encodeURIComponent(token)}&vault_id=${encodeURIComponent(activeVaultId)}`
+        `${getWsBase()}/api/ws?token=${encodeURIComponent(token)}&vault_id=${encodeURIComponent(activeVaultId)}`
       );
       currentSocket = socket;
       socketRef.current = socket;
