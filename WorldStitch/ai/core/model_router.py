@@ -194,6 +194,45 @@ class ModelRouter(AIInterface):
             if hasattr(backend, "update_max_tokens"):
                 backend.update_max_tokens(max_tokens)
 
+    # ── Tool-calling surface ───────────────────────────────────────────────────
+    # The route layer checks `hasattr(ai_engine, "client")` / `hasattr(ai_engine,
+    # "ask_with_tools")` to decide whether to use the tool-calling path.
+    # ModelRouter wraps OpenaiAI as its "ask" backend, so we expose these
+    # attributes by proxying through to that backend.
+
+    @property
+    def client(self):
+        """Proxy to the underlying OpenAI client used for tool-calling completions."""
+        backend = self._backends.get("ask")
+        return getattr(backend, "client", None)
+
+    @property
+    def model(self):
+        """Proxy to the completion model name used by the ask backend."""
+        backend = self._backends.get("ask")
+        return getattr(backend, "model", getattr(self._config, "COMPLETION_MODEL", "gpt-4o"))
+
+    def ask_with_tools(
+        self,
+        prompt: str,
+        system_prompt: str,
+        tools: list,
+        tool_executor,
+        history=None,
+    ):
+        """
+        Delegate the tool-calling conversation loop to the ask backend.
+
+        Returns (final_text, prompt_tokens, completion_tokens, tool_calls_made).
+        Raises RuntimeError if the ask backend does not support tool calling.
+        """
+        backend = self._backends.get("ask")
+        if not hasattr(backend, "ask_with_tools"):
+            raise RuntimeError(f"Ask backend '{type(backend).__name__}' does not support ask_with_tools")
+        text, p_tok, c_tok, calls = backend.ask_with_tools(prompt, system_prompt, tools, tool_executor, history)
+        self._record_cost("ask", p_tok, c_tok)
+        return text, p_tok, c_tok, calls
+
 
 def get_model_backend(config: Config, storage=None) -> AIInterface:
     return ModelRouter(config, storage=storage)
