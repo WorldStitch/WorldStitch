@@ -31,13 +31,18 @@ RUN grep -v '\[desktop-only\]' requirements.txt \
     > requirements.server.txt \
     && pip install --no-cache-dir -r requirements.server.txt
 
+# ── Frontend deps (cached separately — only busts on package.json changes) ────
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd /app/frontend && npm ci
+
 # ── Application code ──────────────────────────────────────────────────────────
 COPY . .
 
 # ── Build React frontend ──────────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
-    && cd /app/frontend && npm ci && npx vite build \
-    && apt-get purge -y nodejs npm && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /app/frontend/node_modules
+RUN cd /app/frontend && npx vite build \
+    && rm -rf /app/frontend/node_modules
 
 # ── Runtime directories (overridden by volume mounts in docker-compose) ───────
 RUN mkdir -p /data/vault /data/logs
