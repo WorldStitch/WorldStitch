@@ -296,6 +296,8 @@ export default function Chat() {
       const decoder = new TextDecoder();
       let streamTokenCount = 0;
       let toolsRan = false;
+      let streamDone = false;
+      let streamError = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -306,10 +308,10 @@ export default function Chat() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6);
-          if (data === '[DONE]') break;
+          if (data === '[DONE]') { streamDone = true; break; }
           try {
             const parsed = JSON.parse(data);
-            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.error) { streamError = parsed.error; streamDone = true; break; }
             if (parsed.conversation_id) {
               setConversationId(parsed.conversation_id);
               queryClient.invalidateQueries({ queryKey: ['ai-conversations', activeVaultId] });
@@ -334,7 +336,10 @@ export default function Chat() {
             // ignore parse errors on individual chunks
           }
         }
+        if (streamDone) break;
       }
+
+      if (streamError) throw new Error(streamError);
 
       // Clear tool status once streaming finishes
       setToolStatus('');

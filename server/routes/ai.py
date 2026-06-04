@@ -1879,7 +1879,8 @@ async def list_conversations(
     try:
         return store.list(vault_id=vault_id, user_id=str(user.id))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list conversations: {e}")
+        logger.warning("ai_conversations list failed (table may not exist yet): %s", e)
+        return []
 
 
 @router.post("/conversations/")
