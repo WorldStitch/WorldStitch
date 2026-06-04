@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
@@ -45,24 +46,34 @@ async def websocket_events(
         logger.warning(f"WS auth failed - bad token: {e}")
         await reject()
         return
-    user = ctx.users.get_user(payload.get("sub", ""))
-    logger.info(f"WS user lookup - found: {bool(user)}")
+
+    sub = payload.get("sub", "")
+    user = ctx.users.get_user(sub)
+    logger.info(f"WS user lookup - sub={sub} found={bool(user)}")
     if not user:
-        logger.warning(f"WS auth failed - user not found for sub: {payload.get('sub')}")
+        logger.warning(f"WS auth failed - user not found for sub: {sub}")
         await reject()
         return
+
     logger.info(f"WS connected - user: {user.username}, vault: {vault_id}")
 
     try:
         vault = resolve_vault(ctx, user, vault_id)
-    except HTTPException:
+    except HTTPException as e:
+        logger.warning(f"WS closing — vault resolve failed: {e.detail}")
         await reject()
         return
 
+    logger.info(f"WS connected — user={user.username} vault={vault.id}")
     email = getattr(user, "email", payload.get("email", ""))
-    # The websocket is already accepted above; hub.connect registers the
-    # connection and broadcasts presence without re-accepting.
-    await hub.connect(vault.id, user.id, user.username, email, websocket)
+
+    try:
+        await hub.connect(vault.id, user.id, user.username, email, websocket)
+    except Exception:
+        logger.error(f"WS hub.connect error: {traceback.format_exc()}")
+        await reject(code=1011)
+        return
+
     try:
         while True:
             message = await websocket.receive_json()
@@ -101,11 +112,12 @@ async def websocket_events(
             else:
                 await websocket.send_json({"type": "ack", "received": event_type})
     except WebSocketDisconnect:
+        logger.info(f"WS disconnected — user={user.username} vault={vault.id}")
         await hub.disconnect(vault.id, user.id, websocket)
-    except Exception as exc:
+    except Exception:
         # Railway's proxy can drop the TCP connection without a clean WS close
         # frame. In that case receive_json() raises something other than
         # WebSocketDisconnect (RuntimeError, ConnectionResetError, etc.).
         # Always clean up the hub so the user's presence entry is removed.
-        logger.debug("WebSocket connection lost unexpectedly: %s", exc)
+        logger.error(f"WS unexpected error for user={user.username}: {traceback.format_exc()}")
         await hub.disconnect(vault.id, user.id, websocket)

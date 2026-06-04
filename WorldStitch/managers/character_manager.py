@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from WorldStitch.models.character import Character
@@ -43,13 +43,12 @@ class CharacterManager:
             is_npc=is_npc,
             stats=stats or {},
             tags=tags or [],
-            notes=notes or [],
+            note_ids=notes or [],
             meta=meta or {},
             ai_memory=ai_memory,
             last_modified=datetime.utcnow(),
             created_at=datetime.utcnow(),
             schema_version=1,
-            version=1,
         )
         self.storage.save_character(character)
         return character
