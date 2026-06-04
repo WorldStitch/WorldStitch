@@ -667,7 +667,7 @@ def _set_user_ctx_for_tools(ctx: AppContext, user: User) -> None:
     )
 
 
-async def _execute_tool_call(
+def _execute_tool_call(
     tool_name: str,
     tool_args: dict,
     ctx: AppContext,
@@ -675,6 +675,7 @@ async def _execute_tool_call(
     user: User,
 ) -> dict:
     """Execute a single AI tool call against the database. Returns a result dict."""
+    logger.info("[tool] executing %s  args=%s", tool_name, tool_args)
     _set_user_ctx_for_tools(ctx, user)
 
     try:
@@ -850,170 +851,62 @@ def _build_messages_for_tools(
     return messages
 
 
+def _make_tool_executor(ctx: AppContext, vault_id: str, user: User):
+    """
+    Return a synchronous callable that executes a named tool and returns a result
+    dict.  Suitable as the ``tool_executor`` argument to engine.ask_with_tools().
+    """
+    _set_user_ctx_for_tools(ctx, user)
+
+    def executor(tool_name: str, tool_args: dict) -> dict:
+        return _execute_tool_call(tool_name, tool_args, ctx, vault_id, user)
+
+    return executor
+
+
 def _run_ask_with_tools(
     ai_engine,
-    messages: list,
+    system_prompt: str,
+    vault_prompt: str,
+    history: Optional[list[dict]],
     tools: list,
     ctx: AppContext,
     vault_id: Optional[str],
     user: User,
 ) -> tuple:
     """
-    Execute an OpenAI chat completion with optional tool calling.
+    Run one full tool-calling conversation and return
+    (response_text, prompt_tokens, completion_tokens, tool_summaries).
 
-    Returns (response_text, prompt_tokens, completion_tokens, tool_summaries).
-    Falls back to engine.ask() if the engine doesn't support direct client access.
+    Delegates to engine.ask_with_tools() when available (covers both OpenaiAI
+    directly and ModelRouter-wrapped engines).  Falls back to plain ask() when
+    the engine does not support tools.
     """
-    if not tools or not hasattr(ai_engine, "client"):
-        # Fallback: use the engine's built-in ask() with text-embedded history
-        sys_content = next((m["content"] for m in messages if m["role"] == "system"), "")
-        user_content = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        text, pt, ct = ai_engine.ask(user_content, system_prompt=sys_content)
+    _vid = vault_id or ""
+
+    if not tools or not hasattr(ai_engine, "ask_with_tools"):
+        logger.info("[ai] no tools or engine lacks ask_with_tools — plain ask()")
+        full = _build_prompt_with_history(vault_prompt, history)
+        text, pt, ct = ai_engine.ask(full, system_prompt=system_prompt)
         return text, pt, ct, []
 
-    total_pt = 0
-    total_ct = 0
+    logger.info("[ai] calling ask_with_tools with %d tool(s)", len(tools))
+    executor = _make_tool_executor(ctx, _vid, user)
 
-    # First call — with tools so the model can decide whether to use them
-    resp = ai_engine.client.chat.completions.create(
-        model=ai_engine.model,
-        messages=messages,
-        tools=tools,
-        tool_choice="auto",
+    text, pt, ct, calls = ai_engine.ask_with_tools(
+        vault_prompt,
+        system_prompt,
+        tools,
+        executor,
+        history or [],
     )
-    total_pt += getattr(resp.usage, "prompt_tokens", 0) or 0
-    total_ct += getattr(resp.usage, "completion_tokens", 0) or 0
-
-    choice = resp.choices[0]
-    tool_calls = getattr(choice.message, "tool_calls", None)
-
-    if not tool_calls:
-        return (choice.message.content or "").strip(), total_pt, total_ct, []
-
-    # Build the assistant tool-call message for the follow-up
-    assistant_tool_msg = {
-        "role": "assistant",
-        "content": choice.message.content or "",
-        "tool_calls": [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-            }
-            for tc in tool_calls
-        ],
-    }
-    updated_messages = list(messages) + [assistant_tool_msg]
-
-    # Execute each tool call and collect results
-    tool_summaries = []
-    for tc in tool_calls:
-        try:
-            args = json.loads(tc.function.arguments)
-        except Exception:
-            args = {}
-        result = _execute_tool_call(tc.function.name, args, ctx, vault_id or "", user)
-        tool_summaries.append({"tool": tc.function.name, "result": result})
-        updated_messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(result),
-            }
-        )
-
-    # Follow-up call to get the final natural-language response
-    final = ai_engine.client.chat.completions.create(
-        model=ai_engine.model,
-        messages=updated_messages,
+    tool_summaries = [{"tool": c["name"], "result": c["result"]} for c in calls]
+    logger.info(
+        "[ai] ask_with_tools finished: %d tool call(s) made — %s",
+        len(calls),
+        [c["name"] for c in calls],
     )
-    total_pt += getattr(final.usage, "prompt_tokens", 0) or 0
-    total_ct += getattr(final.usage, "completion_tokens", 0) or 0
-
-    return (final.choices[0].message.content or "").strip(), total_pt, total_ct, tool_summaries
-
-
-def _ask_with_tools(
-    ai_engine,
-    messages: list,
-    ctx: AppContext,
-    user: User,
-    vault_id: Optional[str],
-) -> tuple:
-    """
-    Run an OpenAI chat completion with the canonical _AI_TOOLS tool set, executing
-    any tool calls the model makes and looping until a final text response is returned.
-
-    Returns (response_text, prompt_tokens, completion_tokens).
-    Falls back to ai_engine.ask() if the engine does not expose .client / .model.
-    """
-    if not hasattr(ai_engine, "client") or not hasattr(ai_engine, "model"):
-        user_content = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        sys_content = next((m["content"] for m in messages if m["role"] == "system"), "")
-        text, pt, ct = ai_engine.ask(user_content, system_prompt=sys_content)
-        return text, pt, ct
-
-    client = ai_engine.client
-    model = ai_engine.model
-    total_pt = 0
-    total_ct = 0
-    current_messages = list(messages)
-
-    for _iteration in range(10):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=current_messages,
-            tools=_AI_TOOLS,
-            tool_choice="auto",
-        )
-        total_pt += getattr(resp.usage, "prompt_tokens", 0) or 0
-        total_ct += getattr(resp.usage, "completion_tokens", 0) or 0
-
-        choice = resp.choices[0]
-        tool_calls = getattr(choice.message, "tool_calls", None)
-
-        if not tool_calls:
-            # Final text response — done
-            return (choice.message.content or "").strip(), total_pt, total_ct
-
-        # Append the assistant message with tool calls
-        try:
-            assistant_msg = choice.message.model_dump()
-        except Exception:
-            assistant_msg = {
-                "role": "assistant",
-                "content": choice.message.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                    }
-                    for tc in tool_calls
-                ],
-            }
-        current_messages.append(assistant_msg)
-
-        # Execute each tool call and append tool result messages
-        for tc in tool_calls:
-            try:
-                args = json.loads(tc.function.arguments)
-            except Exception:
-                args = {}
-            result = _execute_tool_call(tc.function.name, args, ctx, vault_id or "", user)
-            current_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(result),
-                }
-            )
-
-    # Exceeded iteration limit — make one final call without tools
-    final = client.chat.completions.create(model=model, messages=current_messages)
-    total_pt += getattr(final.usage, "prompt_tokens", 0) or 0
-    total_ct += getattr(final.usage, "completion_tokens", 0) or 0
-    return (final.choices[0].message.content or "").strip(), total_pt, total_ct
+    return text, pt, ct, tool_summaries
 
 
 def _tool_status_label(tool_name: str, args: dict) -> str:
@@ -1136,14 +1029,22 @@ async def ask(
         ai_engine = _get_ai_for_user(str(user.id), ctx)
         system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
         vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
-        messages = _build_messages_for_tools(system_prompt, vault_prompt, req.history)
         tools = _get_tools_for_mode(req.mode, req.vault_id)
 
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
 
-        response, prompt_tokens, completion_tokens, tool_results = _run_ask_with_tools(
-            ai_engine, messages, tools, ctx, req.vault_id, user
+        # Run blocking OpenAI calls in a thread so we don't stall the event loop.
+        response, prompt_tokens, completion_tokens, tool_results = await asyncio.to_thread(
+            _run_ask_with_tools,
+            ai_engine,
+            system_prompt,
+            vault_prompt,
+            req.history,
+            tools,
+            ctx,
+            req.vault_id,
+            user,
         )
 
         cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
@@ -1225,84 +1126,82 @@ async def stream_ask(
     async def generate():
         try:
             vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
-            messages = _build_messages_for_tools(system_prompt, vault_prompt, req.history)
             tools = _get_tools_for_mode(req.mode, req.vault_id)
 
             # ── Tool-calling path ──────────────────────────────────────────────
-            if tools and hasattr(ai_engine, "client"):
-                resp = ai_engine.client.chat.completions.create(
-                    model=ai_engine.model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                )
-                total_pt = getattr(resp.usage, "prompt_tokens", 0) or 0
-                total_ct = getattr(resp.usage, "completion_tokens", 0) or 0
+            # Uses ask_with_tools() which handles the full multi-round loop.
+            # The blocking OpenAI calls run in a thread so the event loop stays
+            # free.  We collect tool-status strings during execution via a
+            # thread-safe queue and forward them as SSE events between polls.
+            if tools and hasattr(ai_engine, "ask_with_tools"):
+                import queue as _queue
+                import threading as _threading
 
-                choice = resp.choices[0]
-                tool_calls = getattr(choice.message, "tool_calls", None)
+                status_q: _queue.SimpleQueue = _queue.SimpleQueue()
+                _vid = req.vault_id or ""
 
-                tool_summaries = []
-                if tool_calls:
-                    # Emit status events as each tool executes
-                    assistant_tool_msg = {
-                        "role": "assistant",
-                        "content": choice.message.content or "",
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                },
-                            }
-                            for tc in tool_calls
-                        ],
-                    }
-                    updated_messages = list(messages) + [assistant_tool_msg]
+                # Tool executor runs inside the worker thread; it pushes status
+                # labels into the queue so we can forward them as SSE events.
+                def _executor(tool_name: str, tool_args: dict) -> dict:
+                    label = _tool_status_label(tool_name, tool_args)
+                    status_q.put(("tool_status", label))
+                    result = _execute_tool_call(tool_name, tool_args, ctx, _vid, user)
+                    status_q.put(("tool_status", ""))
+                    return result
 
-                    for tc in tool_calls:
-                        try:
-                            args = json.loads(tc.function.arguments)
-                        except Exception:
-                            args = {}
-                        label = _tool_status_label(tc.function.name, args)
-                        yield f"data: {json.dumps({'tool_status': label})}\n\n"
+                _set_user_ctx_for_tools(ctx, user)
 
-                        result = _execute_tool_call(tc.function.name, args, ctx, req.vault_id or "", user)
-                        tool_summaries.append({"tool": tc.function.name, "result": result})
-                        updated_messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": json.dumps(result),
-                            }
+                # Run the full conversation loop in a background thread.
+                thread_result: dict = {}
+                thread_exc: list = []
+                done = _threading.Event()
+
+                def _worker():
+                    try:
+                        thread_result["value"] = ai_engine.ask_with_tools(
+                            vault_prompt,
+                            system_prompt,
+                            tools,
+                            _executor,
+                            req.history or [],
                         )
+                    except Exception as exc:  # noqa: BLE001
+                        thread_exc.append(exc)
+                    finally:
+                        done.set()
 
-                    # Clear tool status indicator
-                    yield f"data: {json.dumps({'tool_status': ''})}\n\n"
+                _threading.Thread(target=_worker, daemon=True).start()
 
-                    # Signal that tools ran (so frontend can refresh Browse)
+                # Poll: drain the status queue and yield events while the thread runs.
+                while not done.is_set():
+                    await asyncio.sleep(0.05)
+                    while not status_q.empty():
+                        kind, payload = status_q.get_nowait()
+                        yield f"data: {json.dumps({kind: payload})}\n\n"
+
+                # Drain any remaining status events posted right before done.set()
+                while not status_q.empty():
+                    kind, payload = status_q.get_nowait()
+                    yield f"data: {json.dumps({kind: payload})}\n\n"
+
+                if thread_exc:
+                    raise thread_exc[0]
+
+                response, total_pt, total_ct, tool_calls_made = thread_result["value"]
+
+                if tool_calls_made:
+                    logger.info("[stream] tools ran: %s", [c["name"] for c in tool_calls_made])
                     yield f"data: {json.dumps({'tools_ran': True})}\n\n"
-
-                    # Follow-up call for the final text response
-                    final = ai_engine.client.chat.completions.create(
-                        model=ai_engine.model,
-                        messages=updated_messages,
-                    )
-                    total_pt += getattr(final.usage, "prompt_tokens", 0) or 0
-                    total_ct += getattr(final.usage, "completion_tokens", 0) or 0
-                    response = (final.choices[0].message.content or "").strip()
-                else:
-                    response = (choice.message.content or "").strip()
 
             else:
                 # ── Fallback: regular ask (no tools) ──────────────────────────
+                logger.info("[stream] no tools — plain ask()")
                 full_prompt = _build_prompt_with_history(req.prompt, req.history)
                 full_prompt = _build_vault_context(ctx, req.vault_id, full_prompt)
-                response, total_pt, total_ct = ai_engine.ask(full_prompt, system_prompt=system_prompt)
-                tool_summaries = []
+                response, total_pt, total_ct = await asyncio.to_thread(
+                    ai_engine.ask, full_prompt, system_prompt=system_prompt
+                )
+                tool_calls_made = []
 
             # Stream the final response word-by-word
             words = response.split(" ")
