@@ -1678,7 +1678,10 @@ async def stream_ask(
                 _threading.Thread(target=_worker, daemon=True).start()
 
                 # Poll: drain the status queue and yield events while the thread runs.
+                _poll_start = asyncio.get_event_loop().time()
                 while not done.is_set():
+                    if asyncio.get_event_loop().time() - _poll_start > 60.0:
+                        raise asyncio.TimeoutError()
                     await asyncio.sleep(0.05)
                     while not status_q.empty():
                         kind, payload = status_q.get_nowait()
@@ -1703,8 +1706,9 @@ async def stream_ask(
                 logger.info("[stream] no tools — plain ask()")
                 full_prompt = _build_prompt_with_history(req.prompt, req.history)
                 full_prompt = _build_vault_context(ctx, req.vault_id, full_prompt)
-                response, total_pt, total_ct = await asyncio.to_thread(
-                    ai_engine.ask, full_prompt, system_prompt=system_prompt
+                response, total_pt, total_ct = await asyncio.wait_for(
+                    asyncio.to_thread(ai_engine.ask, full_prompt, system_prompt=system_prompt),
+                    timeout=60.0,
                 )
                 tool_calls_made = []
 
@@ -1747,9 +1751,18 @@ async def stream_ask(
                 logger.exception("Failed to auto-save streamed conversation")
 
             yield "data: [DONE]\n\n"
+        except asyncio.CancelledError:
+            yield f"data: {json.dumps({'error': 'Request cancelled'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        except asyncio.TimeoutError:
+            logger.warning("[stream] request timed out after 60 s")
+            yield f"data: {json.dumps({'error': 'Request timed out — try again'})}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception:
             logger.exception("Streaming AI ask failed")
             yield f"data: {json.dumps({'error': 'Request failed'})}\n\n"
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -1879,7 +1892,8 @@ async def list_conversations(
     try:
         return store.list(vault_id=vault_id, user_id=str(user.id))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list conversations: {e}")
+        logger.warning("ai_conversations list failed (table may not exist yet): %s", e)
+        return []
 
 
 @router.post("/conversations/")

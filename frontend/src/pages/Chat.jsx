@@ -70,6 +70,7 @@ export default function Chat() {
   const [pinnedMsg, setPinnedMsg] = useState(null);
   const [toolStatus, setToolStatus] = useState('');
   const chatEndRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   // Ref used to skip persisting messages immediately after a localStorage load
   // (prevents an empty-array save from racing with the loaded data on mount/
@@ -175,6 +176,10 @@ export default function Chat() {
     queryClient.invalidateQueries({ queryKey: ['characters'] });
   };
 
+  const handleCancel = () => {
+    abortControllerRef.current?.abort('user');
+  };
+
   // ── Ask handlers ───────────────────────────────────────────────────────────
   // ── New chat ──────────────────────────────────────────────────────────────
   const handleNewChat = () => {
@@ -259,11 +264,16 @@ export default function Chat() {
     const assistantId = nextId();
     setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }]);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort('timeout'), 30_000);
+
     try {
       const { getToken } = await import('@/api');
       const token = getToken();
       const res = await fetch(`${getApiBase()}/ai/ask/stream`, {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -296,6 +306,8 @@ export default function Chat() {
       const decoder = new TextDecoder();
       let streamTokenCount = 0;
       let toolsRan = false;
+      let streamDone = false;
+      let streamError = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -306,10 +318,10 @@ export default function Chat() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6);
-          if (data === '[DONE]') break;
+          if (data === '[DONE]') { streamDone = true; break; }
           try {
             const parsed = JSON.parse(data);
-            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.error) { streamError = parsed.error; streamDone = true; break; }
             if (parsed.conversation_id) {
               setConversationId(parsed.conversation_id);
               queryClient.invalidateQueries({ queryKey: ['ai-conversations', activeVaultId] });
@@ -334,7 +346,10 @@ export default function Chat() {
             // ignore parse errors on individual chunks
           }
         }
+        if (streamDone) break;
       }
+
+      if (streamError) throw new Error(streamError);
 
       // Clear tool status once streaming finishes
       setToolStatus('');
@@ -354,12 +369,33 @@ export default function Chat() {
       }
     } catch (err) {
       setToolStatus('');
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, role: 'error', content: `Error: ${err.message}` } : m
-        )
-      );
+      if (err.name === 'AbortError') {
+        const reason = controller.signal.reason;
+        if (reason === 'timeout') {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, role: 'error', content: 'Request timed out — try again' }
+                : m
+            )
+          );
+        } else {
+          // User cancelled — drop the bubble if empty, keep partial content if any
+          setMessages((prev) => {
+            const msg = prev.find((m) => m.id === assistantId);
+            return msg?.content ? prev : prev.filter((m) => m.id !== assistantId);
+          });
+        }
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, role: 'error', content: `Error: ${err.message}` } : m
+          )
+        );
+      }
     } finally {
+      clearTimeout(timeoutId);
+      abortControllerRef.current = null;
       setLoading(false);
     }
   };
@@ -646,6 +682,14 @@ export default function Chat() {
                   <p className="text-txt-secondary text-sm">
                     {toolStatus || 'Thinking...'}
                   </p>
+                  {streamingMode && (
+                    <button
+                      onClick={handleCancel}
+                      className="text-xs text-txt-muted hover:text-txt-secondary ml-1 underline underline-offset-2"
+                    >
+                      Cancel
+                    </button>
+                  )}
                 </div>
               </Card>
             </div>
@@ -680,9 +724,15 @@ export default function Chat() {
             >
               {loading ? (toolStatus || 'Thinking...') : '✦ Ask AI'}
             </Button>
-            <Button variant="ghost" onClick={handleNewChat} disabled={loading}>
-              Clear
-            </Button>
+            {streamingMode && loading ? (
+              <Button variant="ghost" onClick={handleCancel}>
+                Cancel
+              </Button>
+            ) : (
+              <Button variant="ghost" onClick={handleNewChat} disabled={loading}>
+                Clear
+              </Button>
+            )}
           </div>
         </Card>
       </div>
