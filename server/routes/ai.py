@@ -74,6 +74,7 @@ _MODE_ADDENDA = {
 # ── Tool definitions ───────────────────────────────────────────────────────────
 
 _TOOLS_ALL_MODES = [
+    # ── Create ────────────────────────────────────────────────────────────────
     {
         "type": "function",
         "function": {
@@ -113,22 +114,6 @@ _TOOLS_ALL_MODES = [
                     },
                 },
                 "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_note",
-            "description": "Updates an existing note's title or content.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "note_id": {"type": "string", "description": "ID of the note to update"},
-                    "title": {"type": "string", "description": "New title (omit to leave unchanged)"},
-                    "content": {"type": "string", "description": "New content (omit to leave unchanged)"},
-                },
-                "required": ["note_id"],
             },
         },
     },
@@ -192,18 +177,101 @@ _TOOLS_ALL_MODES = [
             },
         },
     },
-]
-
-_TOOLS_DEVELOPER_EXTRA = [
+    # ── Read / Search ─────────────────────────────────────────────────────────
     {
         "type": "function",
         "function": {
-            "name": "delete_note",
-            "description": "Soft-deletes a note by ID.",
+            "name": "search_vault",
+            "description": (
+                "Search notes by keyword or title across the entire vault. "
+                "Use this to find notes before reading or editing them."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "note_id": {"type": "string", "description": "ID of the note to delete"},
+                    "query": {"type": "string", "description": "Search query — keywords or partial title"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return",
+                        "default": 10,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_note",
+            "description": ("Read the full content of a specific note. Supply either the note_id or the exact title."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note to read (preferred)"},
+                    "title": {
+                        "type": "string",
+                        "description": "Title of the note to find (fallback if note_id unknown)",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_notes",
+            "description": "List notes in the vault, optionally filtered by folder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder_path": {
+                        "type": "string",
+                        "description": "Folder name to filter by, or omit for all notes",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of notes to return",
+                        "default": 20,
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_characters",
+            "description": "List characters in the vault.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of characters to return",
+                        "default": 20,
+                    },
+                },
+            },
+        },
+    },
+    # ── Edit ─────────────────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "update_note",
+            "description": "Updates an existing note's title, content, or tags.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note to update"},
+                    "title": {"type": "string", "description": "New title (omit to leave unchanged)"},
+                    "content": {"type": "string", "description": "New content (omit to leave unchanged)"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Replacement tag list (omit to leave unchanged)",
+                    },
                 },
                 "required": ["note_id"],
             },
@@ -212,21 +280,151 @@ _TOOLS_DEVELOPER_EXTRA = [
     {
         "type": "function",
         "function": {
-            "name": "list_notes",
-            "description": "Lists notes in the vault, optionally filtered by folder.",
+            "name": "add_tags",
+            "description": "Add tags to a note without replacing the existing tag list.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags to add",
+                    },
+                },
+                "required": ["note_id", "tags"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_note",
+            "description": "Move a note to a different folder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note to move"},
                     "folder_path": {
                         "type": "string",
-                        "description": "Folder name to filter by, or '/' for all notes",
-                        "default": "/",
+                        "description": "Destination folder name. Use '/' to move to root.",
+                    },
+                },
+                "required": ["note_id", "folder_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_character",
+            "description": "Update a character's name or description.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "character_id": {"type": "string", "description": "ID of the character to update"},
+                    "name": {"type": "string", "description": "New name (omit to leave unchanged)"},
+                    "description": {"type": "string", "description": "New description (omit to leave unchanged)"},
+                },
+                "required": ["character_id"],
+            },
+        },
+    },
+    # ── Delete (requires confirmation) ────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_note",
+            "description": (
+                "Delete a note. Call first with confirmed=false to get a confirmation prompt, "
+                "then call again with confirmed=true once the user approves."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string", "description": "ID of the note to delete"},
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Set to true only after the user has confirmed the deletion",
+                        "default": False,
+                    },
+                },
+                "required": ["note_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_character",
+            "description": (
+                "Delete a character. Call first with confirmed=false to get a confirmation prompt, "
+                "then call again with confirmed=true once the user approves."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "character_id": {"type": "string", "description": "ID of the character to delete"},
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Set to true only after the user has confirmed the deletion",
+                        "default": False,
+                    },
+                },
+                "required": ["character_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_folder",
+            "description": (
+                "Delete a folder. Call first with confirmed=false to get a confirmation prompt "
+                "(it will warn you if the folder has sub-folders), "
+                "then call again with confirmed=true once the user approves."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder_id": {"type": "string", "description": "ID of the folder to delete (preferred)"},
+                    "folder_path": {"type": "string", "description": "Name/path of the folder (fallback)"},
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Set to true only after the user has confirmed the deletion",
+                        "default": False,
                     },
                 },
             },
         },
     },
+    # ── Relationships ─────────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "create_relationship",
+            "description": (
+                "Create a relationship edge between two vault entities (notes, characters, folders, etc.). "
+                "relationship_type should describe the nature of the link, e.g. 'ally', 'enemy', 'created_by', 'located_in'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string", "description": "ID of the source entity"},
+                    "target_id": {"type": "string", "description": "ID of the target entity"},
+                    "relationship_type": {"type": "string", "description": "Type/label of the relationship"},
+                    "description": {
+                        "type": "string",
+                        "description": "Optional longer description of this relationship",
+                    },
+                },
+                "required": ["source_id", "target_id", "relationship_type"],
+            },
+        },
+    },
 ]
+
+_TOOLS_DEVELOPER_EXTRA: list = []
 
 # ── Canonical 4-tool set used by the _ask_with_tools loop ─────────────────────
 
@@ -429,11 +627,21 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
     )
 
     tool_note = (
-        " You also have tools to take direct actions in the vault — creating notes, folders, and "
-        "characters. When the user asks you to create, generate, write, or make any content (notes, "
-        "folders, characters, etc.), you MUST immediately call the appropriate tool to do so. Do not "
-        "respond with text saying you will do it — just do it by calling the tool. If asked to create "
-        "multiple items, use bulk_create_notes or call create_note multiple times."
+        " You have tools to take direct actions in the vault. When the user asks you to do something "
+        "you MUST call the appropriate tool immediately — do not describe what you will do, just do it. "
+        "\n\nAvailable tools:"
+        "\n  CREATE: create_note, create_folder, create_character, bulk_create_notes"
+        "\n  READ:   search_vault (keyword search), get_note (read full note by id or title),"
+        "\n          list_notes (list notes, optional folder filter), list_characters"
+        "\n  EDIT:   update_note (title/content/tags), add_tags (append tags without replacing),"
+        "\n          move_note (change folder), update_character (name/description)"
+        "\n  DELETE: delete_note, delete_character, delete_folder"
+        "\n          — all delete tools require a two-step confirmation flow:"
+        "\n            1) call with confirmed=false → returns a confirmation prompt"
+        "\n            2) present the prompt to the user, then call again with confirmed=true"
+        "\n  RELATE: create_relationship (link two entities with a typed edge)"
+        "\n\nUse search_vault or list_notes to find a note before editing or deleting it. "
+        "If asked to create multiple items, use bulk_create_notes or call create_note multiple times."
     )
 
     mode_key = (mode or "lore").lower()
@@ -771,29 +979,305 @@ def _execute_tool_call(
                 created.append({"note_id": note.id, "title": note.title})
             return {"success": True, "created_count": len(created), "notes": created}
 
-        elif tool_name == "delete_note":
+        elif tool_name == "search_vault":
+            query = tool_args.get("query", "")
+            limit = int(tool_args.get("limit", 10))
+            if not query:
+                return {"error": "query is required"}
+            try:
+                raw_results = ctx.storage.search_notes(query, vault_id=vault_id, top_k=limit)
+                results = []
+                for note in raw_results or []:
+                    if isinstance(note, dict):
+                        nid = note.get("id", "")
+                        title = note.get("title", "")
+                        content = note.get("content", "") or ""
+                        folder_id = note.get("folder_id") or None
+                        tags = note.get("tags") or []
+                    else:
+                        nid = getattr(note, "id", "")
+                        title = getattr(note, "title", "")
+                        content = getattr(note, "content", "") or ""
+                        folder_id = getattr(note, "folder_id", None)
+                        tags = getattr(note, "tags", []) or []
+                    folder_name = None
+                    if folder_id and hasattr(ctx.storage, "get_folder_by_id"):
+                        try:
+                            f = ctx.storage.get_folder_by_id(folder_id)
+                            if f:
+                                folder_name = f.name
+                        except Exception:
+                            pass
+                    results.append(
+                        {
+                            "note_id": nid,
+                            "title": title,
+                            "folder": folder_name,
+                            "excerpt": content[:300],
+                        }
+                    )
+                return {"success": True, "results": results, "total": len(results)}
+            except Exception as e:
+                logger.exception("search_vault tool failed")
+                return {"error": str(e)}
+
+        elif tool_name == "get_note":
             note_id = tool_args.get("note_id")
-            if not note_id:
-                return {"success": False, "error": "note_id is required"}
-            ctx.storage.soft_delete_note(note_id)
-            return {"success": True, "deleted_note_id": note_id}
+            title_query = tool_args.get("title")
+            note = None
+            if note_id and hasattr(ctx.storage, "get_note_by_id"):
+                note = ctx.storage.get_note_by_id(note_id)
+            if note is None and title_query:
+                try:
+                    candidates = ctx.storage.search_notes(title_query, vault_id=vault_id, top_k=5)
+                    for candidate in candidates or []:
+                        if isinstance(candidate, dict):
+                            if (candidate.get("title", "") or "").lower() == title_query.lower():
+                                note = candidate
+                                break
+                        else:
+                            if (getattr(candidate, "title", "") or "").lower() == title_query.lower():
+                                note = candidate
+                                break
+                    if note is None and candidates:
+                        note = candidates[0]
+                except Exception:
+                    logger.exception("get_note title search failed")
+            if note is None:
+                return {"success": False, "error": "Note not found"}
+            if isinstance(note, dict):
+                nid = note.get("id", "")
+                t = note.get("title", "")
+                content = note.get("content", "") or ""
+                tags = note.get("tags") or []
+                folder_id = note.get("folder_id") or None
+            else:
+                if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
+                    return {"success": False, "error": "Note does not belong to this vault"}
+                nid = note.id
+                t = getattr(note, "title", "")
+                content = getattr(note, "content", "") or ""
+                tags = getattr(note, "tags", []) or []
+                folder_id = getattr(note, "folder_id", None)
+            folder_name = None
+            if folder_id and hasattr(ctx.storage, "get_folder_by_id"):
+                try:
+                    f = ctx.storage.get_folder_by_id(folder_id)
+                    if f:
+                        folder_name = f.name
+                except Exception:
+                    pass
+            return {
+                "success": True,
+                "note_id": nid,
+                "title": t,
+                "content": content,
+                "tags": tags,
+                "folder": folder_name,
+            }
 
         elif tool_name == "list_notes":
-            folder_path = tool_args.get("folder_path", "/")
+            folder_path = tool_args.get("folder_path")
+            limit = int(tool_args.get("limit", 20))
             all_notes = []
             if hasattr(ctx.storage, "list_all_notes"):
                 all_notes = ctx.storage.list_all_notes(vault_id=vault_id)
+            # Filter by folder if specified
+            if folder_path and folder_path != "/":
+                folder_id_filter = _resolve_folder_id(ctx, vault_id, user, folder_path)
+                if folder_id_filter:
+                    all_notes = [
+                        n for n in all_notes if str(getattr(n, "folder_id", "") or "") == str(folder_id_filter)
+                    ]
             result = []
-            for note in all_notes[:50]:
-                folder_id = getattr(note, "folder_id", None)
+            for note in all_notes[:limit]:
+                fid = getattr(note, "folder_id", None)
+                folder_name = None
+                if fid and hasattr(ctx.storage, "get_folder_by_id"):
+                    try:
+                        f = ctx.storage.get_folder_by_id(fid)
+                        if f:
+                            folder_name = f.name
+                    except Exception:
+                        pass
                 result.append(
                     {
-                        "id": note.id,
+                        "note_id": note.id,
                         "title": getattr(note, "title", ""),
-                        "folder_id": folder_id,
+                        "folder": folder_name,
+                        "tags": getattr(note, "tags", []) or [],
                     }
                 )
             return {"success": True, "notes": result, "total": len(result)}
+
+        elif tool_name == "list_characters":
+            limit = int(tool_args.get("limit", 20))
+            chars = ctx.storage.list_characters(vault_id=vault_id)
+            result = []
+            for char in chars[:limit]:
+                result.append(
+                    {
+                        "character_id": char.id,
+                        "name": getattr(char, "name", ""),
+                        "description": getattr(char, "description", "") or "",
+                    }
+                )
+            return {"success": True, "characters": result, "total": len(result)}
+
+        elif tool_name == "add_tags":
+            note_id = tool_args.get("note_id")
+            new_tags = tool_args.get("tags") or []
+            if not note_id:
+                return {"success": False, "error": "note_id is required"}
+            if not new_tags:
+                return {"success": False, "error": "tags list is required"}
+            note = ctx.notes.get_note(note_id)
+            if not note:
+                return {"success": False, "error": f"Note {note_id} not found"}
+            if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
+                return {"success": False, "error": "Note does not belong to this vault"}
+            for tag in new_tags:
+                ctx.notes.add_tag(note_id, tag)
+            note = ctx.notes.get_note(note_id)
+            return {"success": True, "note_id": note_id, "tags": getattr(note, "tags", []) or []}
+
+        elif tool_name == "move_note":
+            note_id = tool_args.get("note_id")
+            folder_path = tool_args.get("folder_path", "/")
+            if not note_id:
+                return {"success": False, "error": "note_id is required"}
+            note = ctx.notes.get_note(note_id)
+            if not note:
+                return {"success": False, "error": f"Note {note_id} not found"}
+            if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
+                return {"success": False, "error": "Note does not belong to this vault"}
+            old_folder_id = getattr(note, "folder_id", None)
+            new_folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
+            note.folder_id = new_folder_id
+            ctx.notes.update_note(note, actor_id=str(user.id))
+            # Update folder note_id lists
+            try:
+                if old_folder_id and hasattr(ctx.folders, "remove_note_from_folder"):
+                    ctx.folders.remove_note_from_folder(old_folder_id, note_id)
+                if new_folder_id and hasattr(ctx.folders, "add_note_to_folder"):
+                    ctx.folders.add_note_to_folder(new_folder_id, note_id)
+            except Exception:
+                logger.exception("Failed to update folder note lists during move_note")
+            return {"success": True, "note_id": note_id, "title": note.title, "new_folder_id": new_folder_id}
+
+        elif tool_name == "update_character":
+            character_id = tool_args.get("character_id")
+            if not character_id:
+                return {"success": False, "error": "character_id is required"}
+            char = ctx.characters.get_character(character_id)
+            if not char:
+                return {"success": False, "error": f"Character {character_id} not found"}
+            if getattr(char, "vault_id", None) and str(char.vault_id) != str(vault_id):
+                return {"success": False, "error": "Character does not belong to this vault"}
+            if tool_args.get("name") is not None:
+                char.name = tool_args["name"]
+            if tool_args.get("description") is not None:
+                char.description = tool_args["description"]
+            ctx.characters.update_character(char)
+            return {"success": True, "character_id": char.id, "name": char.name}
+
+        elif tool_name == "delete_note":
+            note_id = tool_args.get("note_id")
+            confirmed = bool(tool_args.get("confirmed", False))
+            if not note_id:
+                return {"success": False, "error": "note_id is required"}
+            note = ctx.notes.get_note(note_id)
+            if not note:
+                return {"success": False, "error": f"Note {note_id} not found"}
+            if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
+                return {"success": False, "error": "Note does not belong to this vault"}
+            if not confirmed:
+                return {
+                    "requires_confirmation": True,
+                    "message": f"Delete note '{note.title}'? This cannot be undone. Call delete_note again with confirmed=true to proceed.",
+                    "note_id": note_id,
+                }
+            ctx.storage.soft_delete_note(note_id)
+            return {"success": True, "deleted_note_id": note_id, "title": note.title}
+
+        elif tool_name == "delete_character":
+            character_id = tool_args.get("character_id")
+            confirmed = bool(tool_args.get("confirmed", False))
+            if not character_id:
+                return {"success": False, "error": "character_id is required"}
+            char = ctx.characters.get_character(character_id)
+            if not char:
+                return {"success": False, "error": f"Character {character_id} not found"}
+            if getattr(char, "vault_id", None) and str(char.vault_id) != str(vault_id):
+                return {"success": False, "error": "Character does not belong to this vault"}
+            if not confirmed:
+                return {
+                    "requires_confirmation": True,
+                    "message": f"Delete character '{char.name}'? This cannot be undone. Call delete_character again with confirmed=true to proceed.",
+                    "character_id": character_id,
+                }
+            ctx.storage.soft_delete_character(character_id)
+            return {"success": True, "deleted_character_id": character_id, "name": char.name}
+
+        elif tool_name == "delete_folder":
+            folder_id = tool_args.get("folder_id")
+            folder_path = tool_args.get("folder_path")
+            confirmed = bool(tool_args.get("confirmed", False))
+            # Resolve folder
+            folder = None
+            if folder_id:
+                folder = ctx.folders.get_folder(folder_id)
+            if folder is None and folder_path:
+                all_folders = ctx.storage.list_all_folders(vault_id=vault_id)
+                for f in all_folders:
+                    if f.name == folder_path or getattr(f, "path", "") == folder_path:
+                        folder = f
+                        break
+            if folder is None:
+                return {"success": False, "error": "Folder not found"}
+            if getattr(folder, "vault_id", None) and str(folder.vault_id) != str(vault_id):
+                return {"success": False, "error": "Folder does not belong to this vault"}
+            resolved_id = folder.id
+            if not confirmed:
+                # Check for sub-folders
+                child_count = 0
+                try:
+                    all_folders = ctx.storage.list_all_folders(vault_id=vault_id)
+                    child_count = sum(
+                        1 for f in all_folders if str(getattr(f, "parent_id", "") or "") == str(resolved_id)
+                    )
+                except Exception:
+                    pass
+                msg = f"Delete folder '{folder.name}'? This cannot be undone."
+                if child_count:
+                    msg += f" Warning: it contains {child_count} sub-folder(s)."
+                return {
+                    "requires_confirmation": True,
+                    "message": msg + " Call delete_folder again with confirmed=true to proceed.",
+                    "folder_id": resolved_id,
+                }
+            ctx.folders.delete_folder(resolved_id)
+            return {"success": True, "deleted_folder_id": resolved_id, "name": folder.name}
+
+        elif tool_name == "create_relationship":
+            from WorldStitch.models.relationship import Relationship
+
+            source_id = tool_args.get("source_id")
+            target_id = tool_args.get("target_id")
+            relationship_type = tool_args.get("relationship_type")
+            description = tool_args.get("description") or None
+            if not source_id or not target_id or not relationship_type:
+                return {"success": False, "error": "source_id, target_id, and relationship_type are required"}
+            rel = Relationship(
+                vault_id=vault_id,
+                owner_id=str(user.id),
+                source_id=source_id,
+                target_id=target_id,
+                relationship_type=relationship_type,
+                label=description,
+            )
+            ctx.storage.create_relationship(rel)
+            return {"success": True, "relationship_id": rel.id, "relationship_type": relationship_type}
 
         elif tool_name == "search_notes":
             query = tool_args.get("query", "")
@@ -925,10 +1409,31 @@ def _tool_status_label(tool_name: str, args: dict) -> str:
     elif tool_name == "bulk_create_notes":
         count = len(args.get("notes", []))
         return f"Creating {count} notes…"
-    elif tool_name == "delete_note":
-        return "Deleting note…"
+    elif tool_name == "search_vault":
+        query = args.get("query", "")
+        return f'Searching vault for "{query}"…'
+    elif tool_name == "get_note":
+        title = args.get("title") or args.get("note_id", "note")
+        return f'Reading note "{title}"…'
     elif tool_name == "list_notes":
         return "Listing notes…"
+    elif tool_name == "list_characters":
+        return "Listing characters…"
+    elif tool_name == "add_tags":
+        return "Adding tags…"
+    elif tool_name == "move_note":
+        return "Moving note…"
+    elif tool_name == "update_character":
+        return "Updating character…"
+    elif tool_name == "delete_note":
+        return "Deleting note…"
+    elif tool_name == "delete_character":
+        return "Deleting character…"
+    elif tool_name == "delete_folder":
+        return "Deleting folder…"
+    elif tool_name == "create_relationship":
+        rel_type = args.get("relationship_type", "relationship")
+        return f'Creating relationship "{rel_type}"…'
     return f"Running {tool_name}…"
 
 
