@@ -46,28 +46,45 @@ def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) 
 router = APIRouter(prefix="/ai", tags=["ai"])
 logger = logging.getLogger(__name__)
 
-# ── AI mode addenda ────────────────────────────────────────────────────────────
+# ── Developer role gate ────────────────────────────────────────────────────────
+
+DEVELOPER_ROLES = {"owner", "admin", "mod", "support", "tester", "system"}
+
+
+def _resolve_effective_mode(requested_mode: Optional[str], user_role: str) -> str:
+    """Gate developer mode to privileged roles; everyone else falls back to lore."""
+    mode = (requested_mode or "lore").lower()
+    if mode == "developer" and user_role not in DEVELOPER_ROLES:
+        return "lore"
+    return mode
+
+
+# ── AI mode personas ───────────────────────────────────────────────────────────
 
 _MODE_ADDENDA = {
     "lore": (
-        "You are in **Lore Assistant** mode. Focus on world consistency, answer lore questions "
-        "precisely, and actively suggest connections between entities in the vault. When answering, "
-        "cite relevant notes when possible and flag any lore contradictions you notice."
+        "You are the **Lore Keeper** — an expert on this vault's world. Answer questions with depth "
+        "and nuance. When creating notes, write them as proper lore documents with rich context, "
+        "historical background, and connections to other entities in the world. "
+        "Actively suggest connections between entities and flag any lore contradictions you notice."
     ),
     "writing": (
-        "You are in **Writing Helper** mode. Focus on narrative craft, character voice, scene "
-        "structure, and prose suggestions. Help the user write evocative descriptions, compelling "
-        "dialogue, and strong scene arcs. Draw on vault lore to keep fiction consistent."
+        "You are a **Creative Writing Partner**. Your focus is prose, narrative, and story. "
+        "When creating content, write in an evocative, literary style. Prioritize flow and voice "
+        "over structure. Help with scene writing, character voice, dialogue, and narrative craft. "
+        "Draw on vault lore to keep the fiction consistent with the world."
     ),
     "gm": (
-        "You are in **GM Prep** mode. Focus on session planning, encounter design, NPC motivations, "
-        "pacing, and player hooks. Help the GM prepare memorable moments, interesting complications, "
-        "and satisfying session arcs grounded in the vault's existing lore."
+        "You are a **Game Master's Assistant**. Be practical and organized. "
+        "Create structured, scannable content — use tables, bullet points, and clear headers. "
+        "Focus on what a GM needs at the table: NPC motivations, encounter hooks, session pacing, "
+        "and plot complications. Keep everything actionable and ready to use immediately."
     ),
     "developer": (
-        "You are in **Developer** mode. You have full access to vault operations: creating, updating, "
-        "listing, and deleting notes and folders. Help developers generate test data, seed the vault "
-        "with sample content, inspect what exists, or clean up content. Be efficient and precise."
+        "You are in **Developer Mode**. Execute all operations directly without conversational "
+        "padding. Accept direct commands. No need to explain what you are doing — just do it "
+        "efficiently. You have full access to all vault operations including bulk creation and "
+        "deletion with no confirmation required."
     ),
 }
 
@@ -523,12 +540,20 @@ _AI_TOOLS = [
 # ============================================================================
 
 
+class AttachmentItem(BaseModel):
+    name: str
+    type: str  # 'text' or 'image'
+    content: Optional[str] = None
+    data_url: Optional[str] = None
+
+
 class AskRequest(BaseModel):
     prompt: str
     vault_id: Optional[str] = None
     history: Optional[list[dict]] = None
     mode: Optional[str] = "lore"
     conversation_id: Optional[str] = None
+    attachments: Optional[list[AttachmentItem]] = None
 
 
 class AskResponse(BaseModel):
@@ -1532,9 +1557,10 @@ async def ask(
     try:
         _apply_preferred_model(ctx)
         ai_engine = _get_ai_for_user(str(user.id), ctx)
-        system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
+        effective_mode = _resolve_effective_mode(req.mode, user.system_role)
+        system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
         vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
-        tools = _get_tools_for_mode(req.mode, req.vault_id)
+        tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
@@ -1626,12 +1652,13 @@ async def stream_ask(
     except HTTPException:
         raise
 
-    system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
+    effective_mode = _resolve_effective_mode(req.mode, user.system_role)
+    system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
 
     async def generate():
         try:
             vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
-            tools = _get_tools_for_mode(req.mode, req.vault_id)
+            tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
             # ── Tool-calling path ──────────────────────────────────────────────
             # Uses ask_with_tools() which handles the full multi-round loop.
@@ -1699,7 +1726,8 @@ async def stream_ask(
 
                 if tool_calls_made:
                     logger.info("[stream] tools ran: %s", [c["name"] for c in tool_calls_made])
-                    yield f"data: {json.dumps({'tools_ran': True})}\n\n"
+                    tool_actions = [{"tool": c["name"], "result": c.get("result", {})} for c in tool_calls_made]
+                    yield f"data: {json.dumps({'tools_ran': True, 'tool_actions': tool_actions})}\n\n"
 
             else:
                 # ── Fallback: regular ask (no tools) ──────────────────────────
