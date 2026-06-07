@@ -36,6 +36,7 @@ from server.deps import set_app_context
 from server.limiter import _rate_limit_enabled, limiter
 from server.middleware.analytics import AnalyticsMiddleware
 from server.middleware.logging import LoggingMiddleware
+from server.monitoring import init_sentry, metrics_router
 from server.routes import (
     admin_analytics,
     ai,
@@ -61,6 +62,9 @@ from WorldStitch.config.config import Config
 from WorldStitch.context.app_context import AppContext
 
 logger = logging.getLogger(__name__)
+
+# Initialise Sentry as early as possible (before route handlers are defined).
+init_sentry()
 
 
 # ── App lifespan ──────────────────────────────────────────────────────────────
@@ -255,6 +259,7 @@ app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
 app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
 app.include_router(waitlist.router)
+app.include_router(metrics_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

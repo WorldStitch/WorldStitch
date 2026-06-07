@@ -46,28 +46,45 @@ def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) 
 router = APIRouter(prefix="/ai", tags=["ai"])
 logger = logging.getLogger(__name__)
 
-# ── AI mode addenda ────────────────────────────────────────────────────────────
+# ── Developer role gate ────────────────────────────────────────────────────────
+
+DEVELOPER_ROLES = {"owner", "admin", "mod", "support", "tester", "system"}
+
+
+def _resolve_effective_mode(requested_mode: Optional[str], user_role: str) -> str:
+    """Gate developer mode to privileged roles; everyone else falls back to lore."""
+    mode = (requested_mode or "lore").lower()
+    if mode == "developer" and user_role not in DEVELOPER_ROLES:
+        return "lore"
+    return mode
+
+
+# ── AI mode personas ───────────────────────────────────────────────────────────
 
 _MODE_ADDENDA = {
     "lore": (
-        "You are in **Lore Assistant** mode. Focus on world consistency, answer lore questions "
-        "precisely, and actively suggest connections between entities in the vault. When answering, "
-        "cite relevant notes when possible and flag any lore contradictions you notice."
+        "You are the **Lore Keeper** — an expert on this vault's world. Answer questions with depth "
+        "and nuance. When creating notes, write them as proper lore documents with rich context, "
+        "historical background, and connections to other entities in the world. "
+        "Actively suggest connections between entities and flag any lore contradictions you notice."
     ),
     "writing": (
-        "You are in **Writing Helper** mode. Focus on narrative craft, character voice, scene "
-        "structure, and prose suggestions. Help the user write evocative descriptions, compelling "
-        "dialogue, and strong scene arcs. Draw on vault lore to keep fiction consistent."
+        "You are a **Creative Writing Partner**. Your focus is prose, narrative, and story. "
+        "When creating content, write in an evocative, literary style. Prioritize flow and voice "
+        "over structure. Help with scene writing, character voice, dialogue, and narrative craft. "
+        "Draw on vault lore to keep the fiction consistent with the world."
     ),
     "gm": (
-        "You are in **GM Prep** mode. Focus on session planning, encounter design, NPC motivations, "
-        "pacing, and player hooks. Help the GM prepare memorable moments, interesting complications, "
-        "and satisfying session arcs grounded in the vault's existing lore."
+        "You are a **Game Master's Assistant**. Be practical and organized. "
+        "Create structured, scannable content — use tables, bullet points, and clear headers. "
+        "Focus on what a GM needs at the table: NPC motivations, encounter hooks, session pacing, "
+        "and plot complications. Keep everything actionable and ready to use immediately."
     ),
     "developer": (
-        "You are in **Developer** mode. You have full access to vault operations: creating, updating, "
-        "listing, and deleting notes and folders. Help developers generate test data, seed the vault "
-        "with sample content, inspect what exists, or clean up content. Be efficient and precise."
+        "You are in **Developer Mode**. Execute all operations directly without conversational "
+        "padding. Accept direct commands. No need to explain what you are doing — just do it "
+        "efficiently. You have full access to all vault operations including bulk creation and "
+        "deletion with no confirmation required."
     ),
 }
 
@@ -523,12 +540,20 @@ _AI_TOOLS = [
 # ============================================================================
 
 
+class AttachmentItem(BaseModel):
+    name: str
+    type: str  # 'text' or 'image'
+    content: Optional[str] = None
+    data_url: Optional[str] = None
+
+
 class AskRequest(BaseModel):
     prompt: str
     vault_id: Optional[str] = None
     history: Optional[list[dict]] = None
     mode: Optional[str] = "lore"
     conversation_id: Optional[str] = None
+    attachments: Optional[list[AttachmentItem]] = None
 
 
 class AskResponse(BaseModel):
@@ -615,7 +640,7 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
             if vault:
                 vault_name = vault.name
         except Exception:
-            pass
+            logger.debug("Could not resolve vault name for vault_id=%s", vault_id)
 
     base = (
         f"You are the WorldStitch AI Assistant — a specialized worldbuilding companion built into "
@@ -709,6 +734,7 @@ def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) 
                     try:
                         note = ctx.storage.read_note(note_path)
                     except Exception:
+                        logger.debug("_build_vault_context: could not read note at path %s", note_path)
                         continue
                     if note is not None:
                         notes.append(note)
@@ -742,7 +768,7 @@ def _apply_preferred_model(ctx: AppContext) -> None:
             embedding = getattr(ctx.config, "EMBEDDING_MODEL", "text-embedding-3-small")
             ctx.ai.update_models(embedding_model=embedding, completion_model=preferred)
     except Exception:
-        pass
+        logger.warning("Failed to apply preferred model %s", preferred)
 
 
 def _parse_comma_list(raw: str) -> list[str]:
@@ -1007,7 +1033,7 @@ def _execute_tool_call(
                             if f:
                                 folder_name = f.name
                         except Exception:
-                            pass
+                            logger.debug("search_vault tool: could not resolve folder name for folder_id=%s", folder_id)
                     results.append(
                         {
                             "note_id": nid,
@@ -1042,7 +1068,7 @@ def _execute_tool_call(
                     if note is None and candidates:
                         note = candidates[0]
                 except Exception:
-                    logger.exception("get_note title search failed")
+                    logger.warning("get_note tool: title search failed for query=%s", title_query, exc_info=True)
             if note is None:
                 return {"success": False, "error": "Note not found"}
             if isinstance(note, dict):
@@ -1066,7 +1092,7 @@ def _execute_tool_call(
                     if f:
                         folder_name = f.name
                 except Exception:
-                    pass
+                    logger.debug("get_note tool: could not resolve folder name for folder_id=%s", folder_id)
             return {
                 "success": True,
                 "note_id": nid,
@@ -1099,7 +1125,7 @@ def _execute_tool_call(
                         if f:
                             folder_name = f.name
                     except Exception:
-                        pass
+                        logger.debug("list_notes tool: could not resolve folder name for folder_id=%s", fid)
                 result.append(
                     {
                         "note_id": note.id,
@@ -1247,7 +1273,7 @@ def _execute_tool_call(
                         1 for f in all_folders if str(getattr(f, "parent_id", "") or "") == str(resolved_id)
                     )
                 except Exception:
-                    pass
+                    logger.debug("delete_folder tool: could not count child folders for folder_id=%s", resolved_id)
                 msg = f"Delete folder '{folder.name}'? This cannot be undone."
                 if child_count:
                     msg += f" Warning: it contains {child_count} sub-folder(s)."
@@ -1478,7 +1504,7 @@ async def ai_status(
                 else:
                     user_can_use_ai = False
         except Exception:
-            pass  # malformed token — fall back to platform_ready
+            logger.debug("ai_status: could not decode optional Bearer token; falling back to platform_ready")
 
     return {
         "ready": platform_ready,
@@ -1532,9 +1558,10 @@ async def ask(
     try:
         _apply_preferred_model(ctx)
         ai_engine = _get_ai_for_user(str(user.id), ctx)
-        system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
+        effective_mode = _resolve_effective_mode(req.mode, user.system_role)
+        system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
         vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
-        tools = _get_tools_for_mode(req.mode, req.vault_id)
+        tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
@@ -1628,12 +1655,13 @@ async def stream_ask(
     except HTTPException:
         raise
 
-    system_prompt = _build_system_prompt(ctx, user, req.vault_id, req.mode)
+    effective_mode = _resolve_effective_mode(req.mode, user.system_role)
+    system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
 
     async def generate():
         try:
             vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
-            tools = _get_tools_for_mode(req.mode, req.vault_id)
+            tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
             # ── Tool-calling path ──────────────────────────────────────────────
             # Uses ask_with_tools() which handles the full multi-round loop.
@@ -1680,7 +1708,10 @@ async def stream_ask(
                 _threading.Thread(target=_worker, daemon=True).start()
 
                 # Poll: drain the status queue and yield events while the thread runs.
+                _poll_start = asyncio.get_event_loop().time()
                 while not done.is_set():
+                    if asyncio.get_event_loop().time() - _poll_start > 60.0:
+                        raise asyncio.TimeoutError()
                     await asyncio.sleep(0.05)
                     while not status_q.empty():
                         kind, payload = status_q.get_nowait()
@@ -1698,15 +1729,17 @@ async def stream_ask(
 
                 if tool_calls_made:
                     logger.info("[stream] tools ran: %s", [c["name"] for c in tool_calls_made])
-                    yield f"data: {json.dumps({'tools_ran': True})}\n\n"
+                    tool_actions = [{"tool": c["name"], "result": c.get("result", {})} for c in tool_calls_made]
+                    yield f"data: {json.dumps({'tools_ran': True, 'tool_actions': tool_actions})}\n\n"
 
             else:
                 # ── Fallback: regular ask (no tools) ──────────────────────────
                 logger.info("[stream] no tools — plain ask()")
                 full_prompt = _build_prompt_with_history(req.prompt, req.history)
                 full_prompt = _build_vault_context(ctx, req.vault_id, full_prompt)
-                response, total_pt, total_ct = await asyncio.to_thread(
-                    ai_engine.ask, full_prompt, system_prompt=system_prompt
+                response, total_pt, total_ct = await asyncio.wait_for(
+                    asyncio.to_thread(ai_engine.ask, full_prompt, system_prompt=system_prompt),
+                    timeout=60.0,
                 )
                 tool_calls_made = []
 
@@ -1749,9 +1782,18 @@ async def stream_ask(
                 logger.exception("Failed to auto-save streamed conversation")
 
             yield "data: [DONE]\n\n"
+        except asyncio.CancelledError:
+            yield f"data: {json.dumps({'error': 'Request cancelled'})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        except asyncio.TimeoutError:
+            logger.warning("[stream] request timed out after 60 s")
+            yield f"data: {json.dumps({'error': 'Request timed out — try again'})}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception:
             logger.exception("Streaming AI ask failed")
             yield f"data: {json.dumps({'error': 'Request failed'})}\n\n"
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -1881,7 +1923,8 @@ async def list_conversations(
     try:
         return store.list(vault_id=vault_id, user_id=str(user.id))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list conversations: {e}")
+        logger.warning("ai_conversations list failed (table may not exist yet): %s", e)
+        return []
 
 
 @router.post("/conversations/")
