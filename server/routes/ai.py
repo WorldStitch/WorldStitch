@@ -615,7 +615,7 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
             if vault:
                 vault_name = vault.name
         except Exception:
-            pass
+            logger.debug("Could not resolve vault name for vault_id=%s", vault_id)
 
     base = (
         f"You are the WorldStitch AI Assistant — a specialized worldbuilding companion built into "
@@ -709,6 +709,7 @@ def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) 
                     try:
                         note = ctx.storage.read_note(note_path)
                     except Exception:
+                        logger.debug("_build_vault_context: could not read note at path %s", note_path)
                         continue
                     if note is not None:
                         notes.append(note)
@@ -742,7 +743,7 @@ def _apply_preferred_model(ctx: AppContext) -> None:
             embedding = getattr(ctx.config, "EMBEDDING_MODEL", "text-embedding-3-small")
             ctx.ai.update_models(embedding_model=embedding, completion_model=preferred)
     except Exception:
-        pass
+        logger.warning("Failed to apply preferred model %s", preferred)
 
 
 def _parse_comma_list(raw: str) -> list[str]:
@@ -1007,7 +1008,7 @@ def _execute_tool_call(
                             if f:
                                 folder_name = f.name
                         except Exception:
-                            pass
+                            logger.debug("search_vault tool: could not resolve folder name for folder_id=%s", folder_id)
                     results.append(
                         {
                             "note_id": nid,
@@ -1042,7 +1043,7 @@ def _execute_tool_call(
                     if note is None and candidates:
                         note = candidates[0]
                 except Exception:
-                    logger.exception("get_note title search failed")
+                    logger.warning("get_note tool: title search failed for query=%s", title_query, exc_info=True)
             if note is None:
                 return {"success": False, "error": "Note not found"}
             if isinstance(note, dict):
@@ -1066,7 +1067,7 @@ def _execute_tool_call(
                     if f:
                         folder_name = f.name
                 except Exception:
-                    pass
+                    logger.debug("get_note tool: could not resolve folder name for folder_id=%s", folder_id)
             return {
                 "success": True,
                 "note_id": nid,
@@ -1099,7 +1100,7 @@ def _execute_tool_call(
                         if f:
                             folder_name = f.name
                     except Exception:
-                        pass
+                        logger.debug("list_notes tool: could not resolve folder name for folder_id=%s", fid)
                 result.append(
                     {
                         "note_id": note.id,
@@ -1247,7 +1248,7 @@ def _execute_tool_call(
                         1 for f in all_folders if str(getattr(f, "parent_id", "") or "") == str(resolved_id)
                     )
                 except Exception:
-                    pass
+                    logger.debug("delete_folder tool: could not count child folders for folder_id=%s", resolved_id)
                 msg = f"Delete folder '{folder.name}'? This cannot be undone."
                 if child_count:
                     msg += f" Warning: it contains {child_count} sub-folder(s)."
@@ -1478,7 +1479,7 @@ async def ai_status(
                 else:
                     user_can_use_ai = False
         except Exception:
-            pass  # malformed token — fall back to platform_ready
+            logger.debug("ai_status: could not decode optional Bearer token; falling back to platform_ready")
 
     return {
         "ready": platform_ready,
