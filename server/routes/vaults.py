@@ -57,6 +57,22 @@ class VaultAiSharingRequest(BaseModel):
     shared: bool
 
 
+class VaultSearchItem(BaseModel):
+    id: str
+    title: str
+    snippet: str = ""
+    score: float = 0.0
+    folder_id: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class VaultSearchResponse(BaseModel):
+    items: List[VaultSearchItem]
+    total: int
+    skip: int
+    limit: int
+
+
 def _to_response(vault: Vault, ctx: AppContext) -> VaultResponse:
     has_key = False
     if hasattr(ctx.storage, "get_vault_ai_key"):
@@ -273,3 +289,18 @@ async def set_vault_ai_sharing(
     ctx.vaults.update_vault(vault)
     if hasattr(ctx.storage, "set_vault_ai_sharing"):
         ctx.storage.set_vault_ai_sharing(vault_id, body.shared)
+
+
+@router.get("/{vault_id}/search", response_model=VaultSearchResponse)
+async def search_vault_notes(
+    vault_id: str,
+    q: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(20, ge=1, le=100, description="Max results"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Full-text search across all notes in a vault by content and title."""
+    vault = resolve_vault(ctx, user, vault_id)
+    result = ctx.storage.search_notes_fts(q, vault_id=vault.id, skip=offset, limit=limit)
+    return result

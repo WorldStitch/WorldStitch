@@ -1877,6 +1877,8 @@ class SQLiteBackend(StorageBackend):
                     "is_deleted": getattr(note, "is_deleted", False),
                     "created_at": note.created_at,
                     "last_modified": note.last_modified,
+                    "updated_at": note.last_modified,
+                    "score": float(rank),
                     "snippet": snippet_text or "",
                 }
             )

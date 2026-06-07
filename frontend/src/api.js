@@ -338,6 +338,10 @@ export const vaults = {
     return res.json();
   },
   updateBackup: (id, cron) => request("PUT", `/vaults/${encodeURIComponent(id)}/backup?cron=${encodeURIComponent(cron)}`),
+  search: (id, query, { limit = 20, offset = 0 } = {}) => {
+    const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) });
+    return request("GET", `/vaults/${encodeURIComponent(id)}/search?${params.toString()}`);
+  },
 };
 
 export const groups = {
