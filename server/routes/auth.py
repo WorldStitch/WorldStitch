@@ -1,4 +1,4 @@
-﻿"""
+"""
 Authentication endpoints.
 
 GET /auth/status — check if setup is needed (no users exist)
@@ -23,12 +23,13 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
 
-from WorldStitch.context.app_context import AppContext
-from WorldStitch.models.user import User
-from WorldStitch.utils.audit_logger import audit
 from server.analytics import track as analytics_track
 from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
 from server.deps import get_ctx, get_current_user
+from server.limiter import limiter
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
+from WorldStitch.utils.audit_logger import audit
 
 logger = logging.getLogger(__name__)
 
@@ -305,9 +306,10 @@ async def setup_admin(
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("10/minute")
 async def login(
-    req: LoginRequest,
     request: Request,
+    req: LoginRequest,
     ctx: AppContext = Depends(get_ctx),
 ):
     """
@@ -474,7 +476,9 @@ async def refresh_token(
 
 
 @router.post("/register", response_model=RegisterResponse)
+@limiter.limit("5/minute")
 async def register(
+    request: Request,
     req: RegisterRequest,
     ctx: AppContext = Depends(get_ctx),
 ):
