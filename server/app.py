@@ -19,7 +19,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 logging.basicConfig(
@@ -34,9 +33,10 @@ sys.path.insert(0, str(_parent))
 from fastapi.responses import JSONResponse
 
 from server.deps import set_app_context
-from server.limiter import limiter
+from server.limiter import _rate_limit_enabled, limiter
 from server.middleware.analytics import AnalyticsMiddleware
 from server.middleware.logging import LoggingMiddleware
+from server.monitoring import init_sentry, metrics_router
 from server.routes import (
     admin_analytics,
     ai,
@@ -63,6 +63,9 @@ from WorldStitch.config.config import Config
 from WorldStitch.context.app_context import AppContext
 
 logger = logging.getLogger(__name__)
+
+# Initialise Sentry as early as possible (before route handlers are defined).
+init_sentry()
 
 
 # ── App lifespan ──────────────────────────────────────────────────────────────
@@ -140,9 +143,35 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Rate-limiting (slowapi)
+# ── Rate-limiting (slowapi) ───────────────────────────────────────────────────
+
+
+async def _custom_rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Return a JSON 429 with Retry-After and X-RateLimit-* headers."""
+    retry_after = 60
+    limit_value = str(exc.detail) if exc.detail else "unknown"
+    response = JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Too many requests. Please slow down.",
+            "retry_after": retry_after,
+        },
+    )
+    response.headers["Retry-After"] = str(retry_after)
+    response.headers["X-RateLimit-Limit"] = limit_value
+    response.headers["X-RateLimit-Remaining"] = "0"
+    return response
+
+
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _custom_rate_limit_handler)
+
+if _rate_limit_enabled:
+    from slowapi.middleware import SlowAPIMiddleware
+
+    app.add_middleware(SlowAPIMiddleware)
+else:
+    logger.info("Rate limiting disabled (RATE_LIMIT_ENABLED=false)")
 
 app.add_middleware(AnalyticsMiddleware)
 app.add_middleware(LoggingMiddleware)
@@ -232,6 +261,7 @@ app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
 app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
 app.include_router(waitlist.router)
+app.include_router(metrics_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

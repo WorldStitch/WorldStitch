@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -11,6 +12,8 @@ from server.vault_access import list_accessible_vaults, resolve_vault
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -54,13 +57,29 @@ class VaultAiSharingRequest(BaseModel):
     shared: bool
 
 
+class VaultSearchItem(BaseModel):
+    id: str
+    title: str
+    snippet: str = ""
+    score: float = 0.0
+    folder_id: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class VaultSearchResponse(BaseModel):
+    items: List[VaultSearchItem]
+    total: int
+    skip: int
+    limit: int
+
+
 def _to_response(vault: Vault, ctx: AppContext) -> VaultResponse:
     has_key = False
     if hasattr(ctx.storage, "get_vault_ai_key"):
         try:
             has_key = bool(ctx.storage.get_vault_ai_key(vault.id))
         except Exception:
-            pass
+            logger.debug("_to_response: could not check AI key for vault %s", vault.id)
     return VaultResponse(
         **{k: v for k, v in vault.model_dump().items() if k in VaultResponse.model_fields},
         has_ai_key=has_key,
@@ -209,7 +228,7 @@ async def get_vault_ai_key_status(
         try:
             has_key = bool(ctx.storage.get_vault_ai_key(vault_id))
         except Exception:
-            pass
+            logger.debug("get_vault_ai_key_status: could not check AI key for vault %s", vault_id)
     return {
         "has_ai_key": has_key,
         "ai_key_shared": getattr(vault, "ai_key_shared", False),
@@ -270,3 +289,18 @@ async def set_vault_ai_sharing(
     ctx.vaults.update_vault(vault)
     if hasattr(ctx.storage, "set_vault_ai_sharing"):
         ctx.storage.set_vault_ai_sharing(vault_id, body.shared)
+
+
+@router.get("/{vault_id}/search", response_model=VaultSearchResponse)
+async def search_vault_notes(
+    vault_id: str,
+    q: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(20, ge=1, le=100, description="Max results"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Full-text search across all notes in a vault by content and title."""
+    vault = resolve_vault(ctx, user, vault_id)
+    result = ctx.storage.search_notes_fts(q, vault_id=vault.id, skip=offset, limit=limit)
+    return result

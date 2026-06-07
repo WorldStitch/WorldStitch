@@ -40,5 +40,9 @@ export function useSessionExpiry(exp, onWarning, onExpired) {
     check();
     const id = setInterval(check, CHECK_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [exp]);
+  // onWarning and onExpired are stable callbacks provided by the parent;
+  // including them avoids stale-closure warnings but they should be memoised
+  // (or declared outside render) by the caller if they change each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exp, onWarning, onExpired]);
 }

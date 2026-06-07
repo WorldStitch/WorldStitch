@@ -51,13 +51,13 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
             setOnlineUsers(payload.users || []);
             setEditing(payload.editing || []);
           }
-        } catch (error) {
-          console.warn('Failed to parse realtime event', error);
+        } catch {
+          // Ignore malformed events
         }
       };
 
-      socket.onerror = (err) => {
-        console.warn('[RealtimeContext] WebSocket error', err);
+      socket.onerror = () => {
+        // WebSocket errors are followed by onclose — reconnect logic handles recovery
       };
 
       socket.onclose = async (event) => {

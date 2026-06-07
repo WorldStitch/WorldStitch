@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Loader2 } from 'lucide-react';
 import Card from '@/components/Card';
 import NoteList from './NoteList';
 import { SkeletonLine } from '@/components/Skeleton';
@@ -49,6 +49,7 @@ export default function FolderTree({
   searchQuery,
   onSearchChange,
   searchResults,
+  searchLoading = false,
   allTags,
   tagFilter,
   onTagFilter,
@@ -85,6 +86,10 @@ export default function FolderTree({
           onChange={(e) => onSearchChange(e.target.value)}
           onFocus={() => setHistoryOpen(true)}
           onBlur={() => setHistoryOpen(false)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { onSearchChange(''); e.currentTarget.blur(); }
+            if (e.key === 'Enter' && searchResults?.length > 0) { onNoteSelect(searchResults[0]); }
+          }}
           className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none transition placeholder:text-txt-muted"
         />
       </div>
@@ -139,17 +144,47 @@ export default function FolderTree({
             <SkeletonLine width="w-1/2" />
             <SkeletonLine width="w-2/3" />
           </div>
-        ) : searchResults ? (
+        ) : searchLoading && searchQuery ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-txt-muted text-sm">
+            <Loader2 size={15} className="animate-spin" />
+            Searching…
+          </div>
+        ) : searchResults !== null ? (
           <div className="space-y-0.5">
-            <p className="text-txt-muted text-xs px-2 py-1 font-medium">
-              {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
-            </p>
-            <NoteList
-              notes={searchResults}
-              selectedNoteId={selectedNoteId}
-              onNoteSelect={onNoteSelect}
-              editingMap={editingMap}
-            />
+            {searchResults.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center space-y-1">
+                <p className="text-txt-muted text-sm">No results found</p>
+                <p className="text-txt-muted text-xs">Try different keywords</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-txt-muted text-xs px-2 py-1 font-medium">
+                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+                </p>
+                {searchResults.map((result) => (
+                  <button
+                    key={result.id}
+                    onClick={() => onNoteSelect(result)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
+                      selectedNoteId === result.id
+                        ? 'bg-accent/10 text-accent'
+                        : 'text-txt hover:bg-hover'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-xs flex-shrink-0">📝</span>
+                      <span className="truncate font-medium">{result.title || 'Untitled'}</span>
+                    </div>
+                    {result.snippet && (
+                      <div
+                        className="text-xs text-txt-secondary mt-0.5 line-clamp-2 [&_mark]:bg-accent/20 [&_mark]:text-accent [&_mark]:rounded-sm [&_mark]:px-px"
+                        dangerouslySetInnerHTML={{ __html: result.snippet }}
+                      />
+                    )}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-0.5">

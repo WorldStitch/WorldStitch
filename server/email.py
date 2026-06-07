@@ -1,23 +1,24 @@
 """
-Email sending module for WorldStitch.
+Email sending via Resend (https://resend.com).
 
-Uses Resend (https://resend.com) if RESEND_API_KEY is set.
-If the key is absent, logs the email content and returns gracefully — no error raised.
-
-Usage:
-    from server.email import send_email
-    send_email(to="user@example.com", subject="Hello", html="<p>Hi</p>")
+Requires RESEND_API_KEY env var. If absent, logs and returns False without error.
+Retries once on 429 after the Retry-After header (or 2 s default).
+Never raises — callers must not depend on delivery to complete a request.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import time
+
+import requests
 
 logger = logging.getLogger(__name__)
 
 _FROM = "WorldStitch <hello@worldstitch.app>"
 _RESEND_URL = "https://api.resend.com/emails"
+_TIMEOUT = 10
 
 
 _APP_URL = os.getenv("APP_URL", "https://app.worldstitch.app")
@@ -96,53 +97,39 @@ def send_vault_invite_email(to: str, vault_name: str, inviter_name: str, token: 
 
 def send_email(to: str, subject: str, html: str) -> bool:
     """
-    Send an email to *to* with the given *subject* and *html* body.
+    Send a transactional email.
 
-    Returns True if the email was dispatched, False if skipped or failed.
-    Never raises — callers should not depend on email delivery to complete a request.
+    Returns True if Resend accepted it (2xx), False otherwise.
     """
     api_key = os.getenv("RESEND_API_KEY", "").strip()
-
     if not api_key:
-        logger.info(
-            "Email skipped (RESEND_API_KEY not configured). To=%s | Subject=%s",
-            to,
-            subject,
-        )
+        logger.info("Email skipped (RESEND_API_KEY not set). to=%s subject=%s", to, subject)
         return False
 
-    try:
-        import json as _json
-        import urllib.request
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {"from": _FROM, "to": [to], "subject": subject, "html": html}
 
-        payload = _json.dumps(
-            {
-                "from": _FROM,
-                "to": [to],
-                "subject": subject,
-                "html": html,
-            }
-        ).encode()
-
-        req = urllib.request.Request(
-            _RESEND_URL,
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            status = resp.status
-            if status >= 200 and status < 300:
-                logger.info("Email sent. To=%s | Subject=%s", to, subject)
-                return True
-            body = resp.read().decode(errors="replace")
-            logger.warning("Resend returned %d: %s", status, body)
+    for attempt in range(2):
+        try:
+            resp = requests.post(_RESEND_URL, json=body, headers=headers, timeout=_TIMEOUT)
+        except requests.RequestException as exc:
+            logger.warning("Email network error. to=%s error=%s", to, exc)
             return False
 
-    except Exception as exc:
-        logger.warning("Email send failed. To=%s | Error=%s", to, exc)
+        if resp.status_code == 429 and attempt == 0:
+            retry_after = float(resp.headers.get("Retry-After", 2))
+            logger.info("Resend 429 — retrying in %.1fs", retry_after)
+            time.sleep(retry_after)
+            continue
+
+        if resp.ok:
+            logger.info("Email sent. to=%s subject=%s", to, subject)
+            return True
+
+        logger.warning("Resend %d: %s. to=%s", resp.status_code, resp.text[:200], to)
         return False
+
+    return False
