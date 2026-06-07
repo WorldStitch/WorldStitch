@@ -1,0 +1,7 @@
+# Development / test dependencies
+# Install with: pip install -r requirements-dev.txt
+#
+# Core deps (pytest, httpx) are already in requirements.txt.
+# This file adds the async pytest plugin and any other test-only extras.
+
+pytest-asyncio>=0.23.0
