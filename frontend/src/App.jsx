@@ -20,6 +20,7 @@ import OwnerInvites from "./pages/OwnerInvites";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import AdminPanel from "./pages/AdminPanel";
 import Graph from "./pages/Graph";
+import InviteAccept from "./pages/InviteAccept";
 import { auth, setToken, getToken, setRefreshToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -95,13 +96,14 @@ export default function App() {
   );
 
   // exp comes from the login/setup/register response (Item 55)
-  const handleLogin = (token, userData, exp = null) => {
+  // redirectTo: optional path to navigate to after login (e.g. /invite?token=...)
+  const handleLogin = (token, userData, exp = null, redirectTo = null) => {
     setToken(token);
     setUser(userData);
     setSessionExp(exp);
     setExpiryWarning(null);
     setNeedsSetup(false);
-    navigate("/");
+    navigate(redirectTo || "/");
   };
 
   const handleLogout = () => {
@@ -139,6 +141,11 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  // Allow /invite to render without auth (shows vault info + login/register CTAs)
+  if (!user && location.pathname === '/invite') {
+    return <InviteAccept user={null} />;
   }
 
   // Not logged in → show login (or setup if first run)
@@ -182,6 +189,7 @@ export default function App() {
                 <Route path="/universe" element={<Universe />} />
                 <Route path="/maps" element={<Maps />} />
                 <Route path="/vaults" element={<Vaults user={user} />} />
+                <Route path="/invite" element={<InviteAccept user={user} />} />
                 <Route path="/settings" element={<Settings user={user} />} />
                 <Route path="/groups" element={<Navigate to="/vaults" replace />} />
                 {isAdmin && <Route path="/owner/groups" element={<OwnerGroups />} />}

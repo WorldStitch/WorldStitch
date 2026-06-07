@@ -45,6 +45,7 @@ from WorldStitch.models.session import Session as SessionModel
 from WorldStitch.models.sound import Sound
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
+from WorldStitch.models.vault_invite import VaultInvite
 from WorldStitch.search.vector_index import VectorIndexConfig, VectorIndexLocation, VectorIndexManager
 from WorldStitch.storage.storage_base import StorageBackend
 from WorldStitch.sync.conflict_resolver import DEFAULT_CONFLICT_STRATEGY, ConflictRecord, ConflictResolver
@@ -223,6 +224,18 @@ class InviteRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+    data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
+
+
+class VaultInviteRecord(Base):
+    """ORM model for VaultInvite — email-targeted vault membership invitation."""
+
+    __tablename__ = "vault_invites"
+    __table_args__ = (Index("ix_vault_invites_vault_id", "vault_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
@@ -2113,6 +2126,56 @@ class SQLiteBackend(StorageBackend):
                 except Exception:
                     pass
         return codes
+
+    # ========================================================================
+    # Vault Invites (email-targeted, vault-scoped)
+    # ========================================================================
+
+    def save_vault_invite(self, invite: VaultInvite) -> None:
+        with self._session() as session:
+            record = session.query(VaultInviteRecord).filter(VaultInviteRecord.id == invite.id).first()
+            if record:
+                record.vault_id = invite.vault_id
+                record.token = invite.token
+                record.data = invite.model_dump_json()
+            else:
+                record = VaultInviteRecord(
+                    id=invite.id,
+                    vault_id=invite.vault_id,
+                    token=invite.token,
+                    data=invite.model_dump_json(),
+                )
+                session.add(record)
+            session.commit()
+
+    def get_vault_invite_by_token(self, token: str) -> Optional[VaultInvite]:
+        with self._session() as session:
+            record = session.query(VaultInviteRecord).filter(VaultInviteRecord.token == token).first()
+            if record:
+                return VaultInvite.model_validate_json(record.data)
+        return None
+
+    def get_vault_invite_by_id(self, invite_id: str) -> Optional[VaultInvite]:
+        with self._session() as session:
+            record = session.query(VaultInviteRecord).filter(VaultInviteRecord.id == invite_id).first()
+            if record:
+                return VaultInvite.model_validate_json(record.data)
+        return None
+
+    def list_vault_invites(self, vault_id: str) -> List[VaultInvite]:
+        invites: List[VaultInvite] = []
+        with self._session() as session:
+            for rec in session.query(VaultInviteRecord).filter(VaultInviteRecord.vault_id == vault_id).all():
+                try:
+                    invites.append(VaultInvite.model_validate_json(rec.data))
+                except Exception:
+                    pass
+        return invites
+
+    def delete_vault_invite(self, invite_id: str) -> None:
+        with self._session() as session:
+            session.query(VaultInviteRecord).filter(VaultInviteRecord.id == invite_id).delete()
+            session.commit()
 
     # ========================================================================
     # Relationships (typed edge objects)

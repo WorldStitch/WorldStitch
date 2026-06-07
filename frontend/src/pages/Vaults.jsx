@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Layers, Plus, Globe, Copy, Check, Trash2, X, Eye, EyeOff } from 'lucide-react';
+import { Layers, Plus, Globe, Copy, Check, Trash2, X, Eye, EyeOff, Mail, RefreshCw, Ban } from 'lucide-react';
 import Button from '@/components/Button';
 import Input, { TextArea } from '@/components/Input';
-import { vaults as vaultsApi, invites as invitesApi } from '@/api';
+import { vaults as vaultsApi, vaultInvites as vaultInvitesApi } from '@/api';
 import { useVault } from '@/context/VaultContext';
 
 const VAULT_TYPE_OPTIONS = [
@@ -21,7 +21,7 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
   const [editName, setEditName] = useState(vault.name);
   const [editDesc, setEditDesc] = useState(vault.description || '');
   const [editVaultType, setEditVaultType] = useState(vault.vault_type || 'worldbuilding');
-  const [generatedCode, setGeneratedCode] = useState(null);
+  const [inviteEmail, setInviteEmail] = useState('');
   const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [vaultAiKey, setVaultAiKey] = useState('');
@@ -44,10 +44,34 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
     onError: (err) => toast.error(err.message),
   });
 
+  const qc = useQueryClient();
+
   const inviteMutation = useMutation({
-    mutationFn: () => invitesApi.generate({ ttl_days: 7, max_uses: 1 }),
-    onSuccess: (data) => setGeneratedCode(data.code),
+    mutationFn: (email) => vaultInvitesApi.send(vault.id, email),
+    onSuccess: () => {
+      setInviteEmail('');
+      toast.success('Invite sent!');
+      qc.invalidateQueries({ queryKey: ['vault-invites', vault.id] });
+    },
     onError: (err) => toast.error(err.message),
+  });
+
+  const revokeInviteMutation = useMutation({
+    mutationFn: (inviteId) => vaultInvitesApi.revoke(vault.id, inviteId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vault-invites', vault.id] }),
+    onError: (err) => toast.error(err.message),
+  });
+
+  const resendInviteMutation = useMutation({
+    mutationFn: (inviteId) => vaultInvitesApi.resend(vault.id, inviteId),
+    onSuccess: () => toast.success('Invite resent'),
+    onError: (err) => toast.error(err.message),
+  });
+
+  const { data: pendingInvites = [] } = useQuery({
+    queryKey: ['vault-invites', vault.id],
+    queryFn: () => vaultInvitesApi.list(vault.id),
+    enabled: canInvite,
   });
 
   const saveVaultKeyMutation = useMutation({
@@ -96,9 +120,11 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(generatedCode);
-    setCopied(true);
+  const handleCopyLink = (token) => {
+    // HashRouter: path lives after '#'
+    const url = `${window.location.origin}/#/invite?token=${token}`;
+    navigator.clipboard.writeText(url);
+    setCopied(token);
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -207,27 +233,79 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
 
             {canInvite && (
               <div>
-                <h3 className="text-sm font-semibold text-txt mb-3">Invite</h3>
-                <Button
-                  variant="secondary"
-                  onClick={() => inviteMutation.mutate()}
-                  disabled={inviteMutation.isPending}
-                >
-                  Generate Invite
-                </Button>
-                {generatedCode && (
-                  <div className="mt-3 space-y-2">
-                    <div className="flex items-center gap-2 bg-elevated rounded-xl px-4 py-3">
-                      <code className="flex-1 text-sm font-mono text-accent">{generatedCode}</code>
-                      <button
-                        onClick={handleCopy}
-                        className="text-txt-muted hover:text-txt transition-colors"
-                        title="Copy to clipboard"
-                      >
-                        {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
-                      </button>
+                <h3 className="text-sm font-semibold text-txt mb-3">Invite by Email</h3>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="collaborator@example.com"
+                    className="flex-1 bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && inviteEmail.trim()) inviteMutation.mutate(inviteEmail.trim());
+                    }}
+                  />
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => inviteMutation.mutate(inviteEmail.trim())}
+                    disabled={!inviteEmail.trim() || inviteMutation.isPending}
+                  >
+                    <Mail size={14} className="mr-1.5" />
+                    Invite
+                  </Button>
+                </div>
+                <p className="text-xs text-txt-muted mt-1.5">
+                  Sends an email with a link to join this vault. Expires in 7 days.
+                </p>
+
+                {pendingInvites.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-2">Pending &amp; Sent</p>
+                    <div className="space-y-2">
+                      {pendingInvites.map((inv) => (
+                        <div
+                          key={inv.id}
+                          className="flex items-center gap-2 bg-surface rounded-xl px-3 py-2.5 text-sm"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-txt truncate">{inv.email}</p>
+                            <p className="text-xs text-txt-muted capitalize">{inv.status}</p>
+                          </div>
+                          {inv.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => inv.token && handleCopyLink(inv.token)}
+                                className="text-txt-muted hover:text-txt transition-colors flex-shrink-0"
+                                title="Copy invite link"
+                              >
+                                {copied === inv.token ? (
+                                  <Check size={14} className="text-green-500" />
+                                ) : (
+                                  <Copy size={14} />
+                                )}
+                              </button>
+                              <button
+                                onClick={() => resendInviteMutation.mutate(inv.id)}
+                                disabled={resendInviteMutation.isPending}
+                                className="text-txt-muted hover:text-accent transition-colors flex-shrink-0"
+                                title="Resend email"
+                              >
+                                <RefreshCw size={14} />
+                              </button>
+                              <button
+                                onClick={() => revokeInviteMutation.mutate(inv.id)}
+                                disabled={revokeInviteMutation.isPending}
+                                className="text-txt-muted hover:text-danger transition-colors flex-shrink-0"
+                                title="Revoke invite"
+                              >
+                                <Ban size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <p className="text-xs text-txt-muted">Share this code for new users to register</p>
                   </div>
                 )}
               </div>

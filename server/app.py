@@ -54,6 +54,7 @@ from server.routes import (
     sessions,
     settings,
     users,
+    vault_invites,
     vaults,
     waitlist,
     ws,
@@ -224,6 +225,7 @@ app.include_router(dashboard.router)
 app.include_router(settings.router)
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(invites.router, prefix="/invites", tags=["invites"])
+app.include_router(vault_invites.router, tags=["vault-invites"])
 app.include_router(vaults.router, prefix="/vaults", tags=["vaults"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])

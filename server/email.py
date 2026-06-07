@@ -20,6 +20,80 @@ _FROM = "WorldStitch <hello@worldstitch.app>"
 _RESEND_URL = "https://api.resend.com/emails"
 
 
+_APP_URL = os.getenv("APP_URL", "https://app.worldstitch.app")
+
+
+def send_vault_invite_email(to: str, vault_name: str, inviter_name: str, token: str) -> bool:
+    """Send a WorldStitch-branded vault invitation email."""
+    # App uses HashRouter: path goes in the fragment after '#'
+    invite_url = f"{_APP_URL}/#/invite?token={token}"
+    subject = f"You've been invited to join {vault_name} on WorldStitch"
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vault Invitation</title>
+</head>
+<body style="margin:0;padding:0;background:#0f1117;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f1117;padding:40px 0;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#1a1d27;border-radius:16px;overflow:hidden;border:1px solid #2a2d3e;">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#6c63ff 0%,#a855f7 100%);padding:32px 40px;text-align:center;">
+            <p style="margin:0 0 8px 0;font-size:28px;font-weight:700;color:#fff;letter-spacing:-0.5px;">&#9889; WorldStitch</p>
+            <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.75);letter-spacing:1px;text-transform:uppercase;">Vault Invitation</p>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:36px 40px;">
+            <p style="margin:0 0 20px 0;font-size:22px;font-weight:600;color:#e8eaf0;">You've been invited!</p>
+            <p style="margin:0 0 16px 0;font-size:15px;color:#9ba0b4;line-height:1.6;">
+              <strong style="color:#c8cadc;">{inviter_name}</strong> has invited you to join the vault
+              <strong style="color:#a78bfa;">{vault_name}</strong> on WorldStitch — a collaborative
+              worldbuilding platform for creators, storytellers, and game masters.
+            </p>
+            <p style="margin:0 0 28px 0;font-size:15px;color:#9ba0b4;line-height:1.6;">
+              Click the button below to accept your invitation. This link expires in 7 days.
+            </p>
+            <!-- CTA Button -->
+            <table cellpadding="0" cellspacing="0" style="margin:0 0 28px 0;">
+              <tr>
+                <td style="background:linear-gradient(135deg,#6c63ff 0%,#a855f7 100%);border-radius:10px;padding:1px;">
+                  <a href="{invite_url}"
+                     style="display:inline-block;background:#1a1d27;border-radius:9px;padding:14px 32px;font-size:15px;font-weight:600;color:#a78bfa;text-decoration:none;letter-spacing:0.2px;">
+                    Accept Invitation &rarr;
+                  </a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0 0 8px 0;font-size:12px;color:#5a5f78;">Or copy this link into your browser:</p>
+            <p style="margin:0 0 28px 0;font-size:12px;color:#6c63ff;word-break:break-all;">{invite_url}</p>
+            <hr style="border:none;border-top:1px solid #2a2d3e;margin:0 0 24px 0;" />
+            <p style="margin:0;font-size:12px;color:#5a5f78;line-height:1.6;">
+              If you weren't expecting this invitation, you can safely ignore this email.
+              This invitation was sent by <strong style="color:#7a7f9a;">{inviter_name}</strong>.
+            </p>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="padding:16px 40px;background:#13151f;border-top:1px solid #2a2d3e;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#3a3f58;">
+              &copy; WorldStitch &bull; <a href="https://worldstitch.app" style="color:#6c63ff;text-decoration:none;">worldstitch.app</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+    return send_email(to=to, subject=subject, html=html)
+
+
 def send_email(to: str, subject: str, html: str) -> bool:
     """
     Send an email to *to* with the given *subject* and *html* body.

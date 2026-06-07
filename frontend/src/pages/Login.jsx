@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
@@ -16,7 +17,11 @@ function validatePassword(pw) {
 }
 
 export default function Login({ onLogin, needsSetup = false }) {
-  const [mode, setMode] = useState(needsSetup ? 'setup' : 'login');
+  const [params] = useSearchParams();
+  const inviteToken = params.get('token') || '';
+  const urlMode = params.get('mode') || '';
+
+  const [mode, setMode] = useState(needsSetup ? 'setup' : (urlMode === 'register' ? 'register' : 'login'));
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState('');
   const [firstRunNotice, setFirstRunNotice] = useState(false);
@@ -50,6 +55,8 @@ export default function Login({ onLogin, needsSetup = false }) {
     setApiError('');
   };
 
+  const redirectAfterAuth = inviteToken ? `/invite?token=${encodeURIComponent(inviteToken)}` : null;
+
   const handleLogin = async (e) => {
     e.preventDefault();
     if (!email || !password) {
@@ -61,7 +68,7 @@ export default function Login({ onLogin, needsSetup = false }) {
       const data = await auth.login(email, password);
       setToken(data.token);
       setRefreshToken(data.refreshToken);
-      onLogin(data.token, data.user, data.exp ?? null);
+      onLogin(data.token, data.user, data.exp ?? null, redirectAfterAuth);
     } catch (err) {
       if (isRateLimitError(err)) {
         toast.error(RATE_LIMIT_MSG);
@@ -85,7 +92,7 @@ export default function Login({ onLogin, needsSetup = false }) {
       const data = await auth.register(regEmail, regDisplayName, regPassword, regInviteCode);
       setToken(data.token);
       setRefreshToken(data.refreshToken);
-      onLogin(data.token, data.user);
+      onLogin(data.token, data.user, null, redirectAfterAuth);
     } catch (err) {
       toast.error(err.message || 'Registration failed');
     } finally {
@@ -190,6 +197,11 @@ export default function Login({ onLogin, needsSetup = false }) {
           <>
             <h2 className="text-xl font-bold text-txt mb-2">Welcome back</h2>
             <p className="text-txt-secondary text-sm mb-6">Sign in to your account to continue</p>
+            {inviteToken && (
+              <div className="mb-4 p-3 rounded-lg bg-accent/10 border border-accent/20">
+                <p className="text-sm text-accent">Sign in to accept your vault invitation.</p>
+              </div>
+            )}
             {firstRunNotice && (
               <div className="mb-4 p-3 rounded-lg bg-accent/10 border border-accent/20">
                 <p className="text-sm text-accent">
@@ -239,6 +251,11 @@ export default function Login({ onLogin, needsSetup = false }) {
           <>
             <h2 className="text-xl font-bold text-txt mb-2">Create account</h2>
             <p className="text-txt-secondary text-sm mb-6">Join the worlds of WorldStitch</p>
+            {inviteToken && (
+              <div className="mb-4 p-3 rounded-lg bg-accent/10 border border-accent/20">
+                <p className="text-sm text-accent">Create an account to accept your vault invitation.</p>
+              </div>
+            )}
             <form onSubmit={handleRegister} className="space-y-4">
               <Input
                 label="Invite Code"

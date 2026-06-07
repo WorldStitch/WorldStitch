@@ -302,6 +302,16 @@ export const invites = {
   revoke: (id) => request("DELETE", `/invites/${id}`),
 };
 
+// ── Vault email invites ───────────────────────────────────────────────────────
+export const vaultInvites = {
+  send: (vaultId, email) => request("POST", `/vaults/${encodeURIComponent(vaultId)}/invites`, { email }),
+  list: (vaultId) => request("GET", `/vaults/${encodeURIComponent(vaultId)}/invites`),
+  revoke: (vaultId, inviteId) => request("DELETE", `/vaults/${encodeURIComponent(vaultId)}/invites/${inviteId}`),
+  resend: (vaultId, inviteId) => request("POST", `/vaults/${encodeURIComponent(vaultId)}/invites/${inviteId}/resend`),
+  validateToken: (token) => request("GET", `/invites/accept?token=${encodeURIComponent(token)}`),
+  acceptToken: (token) => request("POST", "/invites/accept", { token }),
+};
+
 export const vaults = {
   list: () => request("GET", "/vaults/"),
   listAll: () => request("GET", "/vaults/?all=true"),
