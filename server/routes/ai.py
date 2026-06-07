@@ -1642,7 +1642,9 @@ async def ask(
 
 
 @router.post("/ask/stream")
+@limiter.limit("20/minute")
 async def stream_ask(
+    request: Request,
     req: AskRequest,
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),

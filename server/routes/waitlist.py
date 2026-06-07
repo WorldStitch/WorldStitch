@@ -16,13 +16,14 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from server.deps import get_ctx, require_admin
 from server.email import send_email
+from server.limiter import limiter
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
@@ -62,7 +63,8 @@ def _row_to_dict(r) -> dict:
 
 
 @router.post("/apply", status_code=201)
-def submit_application(body: ApplyRequest, ctx: AppContext = Depends(get_ctx)):
+@limiter.limit("3/minute")
+def submit_application(request: Request, body: ApplyRequest, ctx: AppContext = Depends(get_ctx)):
     """Accept an early access application. Returns 409 if email already submitted."""
     engine = _engine(ctx)
     if not engine:
