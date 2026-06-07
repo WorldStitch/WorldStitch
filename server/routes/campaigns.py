@@ -1,4 +1,4 @@
-﻿"""
+"""
 Campaign CRUD endpoints.
 
 GET  /campaigns?group_id=               — list campaigns for a group
@@ -11,15 +11,14 @@ POST /campaigns/{id}/members            — add / update member role
 """
 
 import logging
-import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -142,6 +141,7 @@ async def delete_campaign(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
         from sqlalchemy import text as _text
+
         with ctx.storage.engine.connect() as conn:
             conn.execute(
                 _text("UPDATE campaigns SET deleted_at = CURRENT_TIMESTAMP WHERE id = :id"),
@@ -182,7 +182,9 @@ async def add_campaign_member(
     _get_campaign_or_404(ctx, campaign_id)
     is_admin = user.system_role in PLATFORM_ADMIN
     if not is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only platform admins can add campaign members")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only platform admins can add campaign members"
+        )
     try:
         return ctx.storage.add_campaign_member(campaign_id, req.user_id, req.role)
     except Exception as exc:

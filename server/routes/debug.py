@@ -1,4 +1,4 @@
-﻿"""
+"""
 Debug endpoints (admin only).
 
 GET  /debug/crash-logs              — list crash log files
@@ -8,16 +8,13 @@ GET  /debug/runtime-log             — return last 500 lines of app.log
 """
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from WorldStitch.context.app_context import AppContext
+from server.deps import PLATFORM_ADMIN, get_current_user
 from WorldStitch.models.user import User
-
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
-
 
 router = APIRouter()
 
@@ -73,8 +70,7 @@ async def list_crash_logs(admin: User = Depends(require_admin)):
     results = []
     for path in sorted(logs_dir.iterdir()):
         if path.is_file() and (
-            path.name.startswith("crash_") and path.suffix == ".txt"
-            or path.name == "last_crash_summary.txt"
+            path.name.startswith("crash_") and path.suffix == ".txt" or path.name == "last_crash_summary.txt"
         ):
             stat = path.stat()
             results.append(

@@ -1,14 +1,17 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import logging
 from typing import Iterable, List, Optional
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 
+from server.deps import PLATFORM_ADMIN
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
-from server.deps import PLATFORM_ADMIN
+
+logger = logging.getLogger(__name__)
 
 
 def _storage_list_vaults(ctx: AppContext) -> List[Vault]:
@@ -16,6 +19,7 @@ def _storage_list_vaults(ctx: AppContext) -> List[Vault]:
         try:
             return list(ctx.storage.list_vaults() or [])
         except Exception:
+            logger.warning("_storage_list_vaults: failed to enumerate vaults", exc_info=True)
             return []
     return []
 
@@ -38,7 +42,7 @@ def is_vault_admin(vault: Vault, user: User, ctx: AppContext) -> bool:
             try:
                 group = ctx.storage.get_group(group_id)
             except Exception:
-                pass
+                logger.debug("is_vault_admin: failed to fetch group %s", group_id)
         if group and user.id in (group.members or []):
             if (group.permissions or {}).get("can_admin"):
                 return True

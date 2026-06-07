@@ -10,8 +10,8 @@ export default class ErrorBoundary extends Component {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error, info) {
-    console.error('ErrorBoundary caught:', error, info);
+  componentDidCatch(_error, _info) {
+    // Errors are surfaced in the render fallback; no console logging in production
   }
 
   handleReset = () => {

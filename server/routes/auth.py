@@ -32,6 +32,7 @@ from server.analytics import track as analytics_track
 from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
 from server.deps import get_ctx, get_current_user
 from server.email import send_email
+from server.limiter import limiter
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.utils.audit_logger import audit
@@ -426,6 +427,7 @@ async def setup_admin(
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("10/minute")
 async def login(
     req: LoginRequest,
     request: Request,
@@ -595,7 +597,9 @@ async def refresh_token(
 
 
 @router.post("/register", response_model=RegisterResponse)
+@limiter.limit("5/minute")
 async def register(
+    request: Request,
     req: RegisterRequest,
     ctx: AppContext = Depends(get_ctx),
 ):
