@@ -1,16 +1,19 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
+from server.vault_access import list_accessible_vaults, resolve_vault
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
-from server.vault_access import list_accessible_vaults, resolve_vault
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -27,6 +30,8 @@ class VaultResponse(BaseModel):
     vault_type: str = "worldbuilding"
     record_version: int = 1
     created_at: Optional[datetime] = None
+    ai_key_shared: bool = False
+    has_ai_key: bool = False
 
 
 class CreateVaultRequest(BaseModel):
@@ -44,8 +49,41 @@ class UpdateVaultRequest(BaseModel):
     backup_cron: Optional[str] = None
 
 
-def _to_response(vault: Vault) -> VaultResponse:
-    return VaultResponse(**vault.model_dump())
+class VaultAiKeyRequest(BaseModel):
+    api_key: str
+
+
+class VaultAiSharingRequest(BaseModel):
+    shared: bool
+
+
+class VaultSearchItem(BaseModel):
+    id: str
+    title: str
+    snippet: str = ""
+    score: float = 0.0
+    folder_id: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class VaultSearchResponse(BaseModel):
+    items: List[VaultSearchItem]
+    total: int
+    skip: int
+    limit: int
+
+
+def _to_response(vault: Vault, ctx: AppContext) -> VaultResponse:
+    has_key = False
+    if hasattr(ctx.storage, "get_vault_ai_key"):
+        try:
+            has_key = bool(ctx.storage.get_vault_ai_key(vault.id))
+        except Exception:
+            logger.debug("_to_response: could not check AI key for vault %s", vault.id)
+    return VaultResponse(
+        **{k: v for k, v in vault.model_dump().items() if k in VaultResponse.model_fields},
+        has_ai_key=has_key,
+    )
 
 
 @router.get("/", response_model=List[VaultResponse])
@@ -54,7 +92,7 @@ async def list_vaults(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    return [_to_response(vault) for vault in list_accessible_vaults(ctx, user, all_vaults=all)]
+    return [_to_response(vault, ctx) for vault in list_accessible_vaults(ctx, user, all_vaults=all)]
 
 
 @router.get("/{vault_id}", response_model=VaultResponse)
@@ -64,7 +102,7 @@ async def get_vault(
     user: User = Depends(get_current_user),
 ):
     vault = resolve_vault(ctx, user, vault_id)
-    return _to_response(vault)
+    return _to_response(vault, ctx)
 
 
 @router.post("/", response_model=VaultResponse, status_code=status.HTTP_201_CREATED)
@@ -79,7 +117,7 @@ async def create_vault(
         description=body.description,
         vault_type=body.vault_type,
     )
-    return _to_response(vault)
+    return _to_response(vault, ctx)
 
 
 @router.put("/{vault_id}", response_model=VaultResponse)
@@ -114,7 +152,7 @@ async def update_vault(
             ctx.storage.schedule_vault_backup(vault.id, body.backup_cron)
         vault.settings["backup_cron"] = body.backup_cron
     ctx.vaults.update_vault(vault)
-    return _to_response(vault)
+    return _to_response(vault, ctx)
 
 
 @router.delete("/{vault_id}")
@@ -158,7 +196,7 @@ async def import_vault(
         raise HTTPException(status_code=501, detail="Vault import is not supported by this backend")
     payload = await file.read()
     vault = ctx.storage.import_vault_zip(payload, owner_id=user.id, name=name)
-    return _to_response(vault)
+    return _to_response(vault, ctx)
 
 
 @router.put("/{vault_id}/backup")
@@ -172,3 +210,97 @@ async def configure_backup(
     if not hasattr(ctx.storage, "schedule_vault_backup"):
         raise HTTPException(status_code=501, detail="Backup scheduling is not supported by this backend")
     return ctx.storage.schedule_vault_backup(vault_id, cron)
+
+
+# ── Vault AI key management ───────────────────────────────────────────────────
+
+
+@router.get("/{vault_id}/ai-key/status")
+async def get_vault_ai_key_status(
+    vault_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Return whether this vault has an AI key set, and whether sharing is enabled."""
+    vault = resolve_vault(ctx, user, vault_id)
+    has_key = False
+    if hasattr(ctx.storage, "get_vault_ai_key"):
+        try:
+            has_key = bool(ctx.storage.get_vault_ai_key(vault_id))
+        except Exception:
+            logger.debug("get_vault_ai_key_status: could not check AI key for vault %s", vault_id)
+    return {
+        "has_ai_key": has_key,
+        "ai_key_shared": getattr(vault, "ai_key_shared", False),
+        "is_owner": vault.owner_id == user.id,
+    }
+
+
+@router.post("/{vault_id}/ai-key", status_code=204)
+async def save_vault_ai_key(
+    vault_id: str,
+    body: VaultAiKeyRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Save an encrypted AI key for this vault. Only the vault owner or platform admin may do this."""
+    vault = resolve_vault(ctx, user, vault_id)
+    if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Only the vault owner can set an AI key.")
+    if not body.api_key.startswith("sk-"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="API key must start with 'sk-'.",
+        )
+    if not hasattr(ctx.storage, "save_vault_ai_key"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vault AI key storage not available.",
+        )
+    ctx.storage.save_vault_ai_key(vault_id, body.api_key)
+
+
+@router.delete("/{vault_id}/ai-key", status_code=204)
+async def remove_vault_ai_key(
+    vault_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Remove this vault's AI key."""
+    vault = resolve_vault(ctx, user, vault_id)
+    if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Only the vault owner can remove the AI key.")
+    if hasattr(ctx.storage, "remove_vault_ai_key"):
+        ctx.storage.remove_vault_ai_key(vault_id)
+
+
+@router.put("/{vault_id}/ai-key/sharing", status_code=204)
+async def set_vault_ai_sharing(
+    vault_id: str,
+    body: VaultAiSharingRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Toggle whether vault members may use this vault's AI key."""
+    vault = resolve_vault(ctx, user, vault_id)
+    if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Only the vault owner can change key sharing.")
+    vault.ai_key_shared = body.shared
+    ctx.vaults.update_vault(vault)
+    if hasattr(ctx.storage, "set_vault_ai_sharing"):
+        ctx.storage.set_vault_ai_sharing(vault_id, body.shared)
+
+
+@router.get("/{vault_id}/search", response_model=VaultSearchResponse)
+async def search_vault_notes(
+    vault_id: str,
+    q: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(20, ge=1, le=100, description="Max results"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Full-text search across all notes in a vault by content and title."""
+    vault = resolve_vault(ctx, user, vault_id)
+    result = ctx.storage.search_notes_fts(q, vault_id=vault.id, skip=offset, limit=limit)
+    return result

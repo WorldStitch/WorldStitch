@@ -16,6 +16,7 @@ from WorldStitch.models.session import Session
 from WorldStitch.models.sound import Sound
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
+from WorldStitch.models.vault_invite import VaultInvite
 
 
 class StorageBackend(ABC):
@@ -223,6 +224,27 @@ class StorageBackend(ABC):
     def list_invites(self) -> List[InviteCode]:
         """Return all invite codes, newest first."""
         pass
+
+    # --- Vault Email Invites ---
+    def save_vault_invite(self, invite: VaultInvite) -> None:
+        """Persist a vault email invite (upsert)."""
+        raise NotImplementedError
+
+    def get_vault_invite_by_token(self, token: str) -> Optional[VaultInvite]:
+        """Look up a vault invite by its URL token."""
+        raise NotImplementedError
+
+    def get_vault_invite_by_id(self, invite_id: str) -> Optional[VaultInvite]:
+        """Look up a vault invite by UUID."""
+        raise NotImplementedError
+
+    def list_vault_invites(self, vault_id: str) -> List[VaultInvite]:
+        """Return all vault invites for a given vault, newest first."""
+        raise NotImplementedError
+
+    def delete_vault_invite(self, invite_id: str) -> None:
+        """Hard-delete a vault invite record."""
+        raise NotImplementedError
 
     # --- PATH HELPERS ---
     @abstractmethod

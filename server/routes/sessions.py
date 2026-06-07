@@ -1,5 +1,5 @@
-﻿"""
-Session Log endpoints — D&D campaign session tracking.
+"""
+Session Log endpoints — campaign session tracking.
 
 Routes support two storage backends selected by which ID param is supplied:
 
@@ -21,10 +21,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from WorldStitch.context.app_context import AppContext
-from WorldStitch.models.user import User
 from server.deps import get_ctx, get_current_user
 from server.vault_access import resolve_vault
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -210,8 +210,8 @@ async def generate_recap(
     try:
         ai = ctx.require_ai()
         prompt = (
-            "You are a D&D session chronicler. Summarize the following session notes "
-            f"into a vivid, narrative-style recap for players: {raw_notes}"
+            "You are a session chronicler. Summarize the following session notes "
+            f"into a vivid, narrative-style recap for the participants: {raw_notes}"
         )
         response, _, _ = ai.ask(prompt)
         update = {"id": session_id, "ai_recap": response}

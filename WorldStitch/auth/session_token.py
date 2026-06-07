@@ -1,9 +1,9 @@
-﻿"""
+"""
 SessionToken — persistent login sessions stored on disk.
 
 On successful login, a UUID token is generated, stored in the Session
-table in SQLite, and saved to ~/.worldstitch_ai/session.token. On next
-launch, the token file is checked and the user is auto-logged in if
+table in the database, and saved to ~/.worldstitch_ai/session.token. On
+next launch, the token file is checked and the user is auto-logged in if
 the session is still valid.
 
 Token file format: plain text, one line — just the UUID token.

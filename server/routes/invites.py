@@ -1,4 +1,4 @@
-﻿"""
+"""
 Invite code management endpoints.
 
 GET /invites — list invite codes (platform admin: all; vault owner/admin: own)
@@ -12,16 +12,19 @@ Permission model:
   - Regular users: no access
 """
 
+import logging
 from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
+from server.vault_access import is_vault_admin, list_accessible_vaults
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
-from server.vault_access import list_accessible_vaults, is_vault_admin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -47,7 +50,7 @@ def _can_create_invites(user: User, ctx: AppContext) -> bool:
             if vault.owner_id == user.id or is_vault_admin(vault, user, ctx):
                 return True
     except Exception:
-        pass
+        logger.warning("_can_create_invites: failed to enumerate accessible vaults for user %s", user.id, exc_info=True)
     return False
 
 
@@ -148,7 +151,10 @@ async def generate_invite(
     Requires platform admin, vault owner, or vault admin.
     """
     if not _can_create_invites(user, ctx):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only platform admins and vault owners/admins can generate invites")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only platform admins and vault owners/admins can generate invites",
+        )
     try:
         invite = ctx.invites.generate_with_expiry(
             created_by_user_id=user.id,
@@ -182,7 +188,10 @@ async def generate_invite_by_hours(
     Requires platform admin, vault owner, or vault admin.
     """
     if not _can_create_invites(user, ctx):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only platform admins and vault owners/admins can generate invites")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only platform admins and vault owners/admins can generate invites",
+        )
     try:
         expiry_days = max(1, round(body.expires_hours / 24)) if body.expires_hours else 7
         invite = ctx.invites.generate_with_expiry(

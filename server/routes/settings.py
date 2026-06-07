@@ -1,4 +1,4 @@
-﻿"""
+"""
 Settings routes for WorldStitch FastAPI server.
 
 Endpoints
@@ -7,14 +7,17 @@ GET /settings   — return current app settings (safe subset, lowercase keys)
 PUT /settings   — update settings (accepts lowercase or uppercase keys)
 """
 
+import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.deps import get_ctx, get_current_user
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-from server.deps import get_ctx, get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -63,7 +66,7 @@ def update_settings(
             try:
                 setattr(ctx.config, upper_key, value)
             except AttributeError:
-                pass
+                logger.debug("update_settings: config attribute %s is not settable", upper_key)
     return get_settings(ctx=ctx, _user=_user)
 
 

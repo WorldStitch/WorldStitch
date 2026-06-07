@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Layers, Plus, Globe, Copy, Check, Trash2, X } from 'lucide-react';
+import { Layers, Plus, Globe, Copy, Check, Trash2, X, Eye, EyeOff, Mail, RefreshCw, Ban } from 'lucide-react';
 import Button from '@/components/Button';
 import Input, { TextArea } from '@/components/Input';
-import { vaults as vaultsApi, invites as invitesApi } from '@/api';
+import { vaults as vaultsApi, vaultInvites as vaultInvitesApi } from '@/api';
 import { useVault } from '@/context/VaultContext';
 
 const VAULT_TYPE_OPTIONS = [
@@ -21,12 +21,16 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
   const [editName, setEditName] = useState(vault.name);
   const [editDesc, setEditDesc] = useState(vault.description || '');
   const [editVaultType, setEditVaultType] = useState(vault.vault_type || 'worldbuilding');
-  const [generatedCode, setGeneratedCode] = useState(null);
+  const [inviteEmail, setInviteEmail] = useState('');
   const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [vaultAiKey, setVaultAiKey] = useState('');
+  const [showVaultKey, setShowVaultKey] = useState(false);
 
   const isPlatformAdmin = ['owner', 'admin'].includes(user?.system_role);
-  const canInvite = vault.owner_id === user?.id || isPlatformAdmin;
+  const isOwner = vault.owner_id === user?.id;
+  const canInvite = isOwner || isPlatformAdmin;
+  const canManageAiKey = isOwner || isPlatformAdmin;
 
   const updateMutation = useMutation({
     mutationFn: (data) => vaultsApi.update(vault.id, data),
@@ -40,10 +44,56 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
     onError: (err) => toast.error(err.message),
   });
 
+  const qc = useQueryClient();
+
   const inviteMutation = useMutation({
-    mutationFn: () => invitesApi.generate({ ttl_days: 7, max_uses: 1 }),
-    onSuccess: (data) => setGeneratedCode(data.code),
+    mutationFn: (email) => vaultInvitesApi.send(vault.id, email),
+    onSuccess: () => {
+      setInviteEmail('');
+      toast.success('Invite sent!');
+      qc.invalidateQueries({ queryKey: ['vault-invites', vault.id] });
+    },
     onError: (err) => toast.error(err.message),
+  });
+
+  const revokeInviteMutation = useMutation({
+    mutationFn: (inviteId) => vaultInvitesApi.revoke(vault.id, inviteId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vault-invites', vault.id] }),
+    onError: (err) => toast.error(err.message),
+  });
+
+  const resendInviteMutation = useMutation({
+    mutationFn: (inviteId) => vaultInvitesApi.resend(vault.id, inviteId),
+    onSuccess: () => toast.success('Invite resent'),
+    onError: (err) => toast.error(err.message),
+  });
+
+  const { data: pendingInvites = [] } = useQuery({
+    queryKey: ['vault-invites', vault.id],
+    queryFn: () => vaultInvitesApi.list(vault.id),
+    enabled: canInvite,
+  });
+
+  const saveVaultKeyMutation = useMutation({
+    mutationFn: () => vaultsApi.saveAiKey(vault.id, vaultAiKey.trim()),
+    onSuccess: () => {
+      setVaultAiKey('');
+      onRefresh();
+      toast.success('Vault AI key saved');
+    },
+    onError: (err) => toast.error(err.message || 'Failed to save vault key'),
+  });
+
+  const removeVaultKeyMutation = useMutation({
+    mutationFn: () => vaultsApi.removeAiKey(vault.id),
+    onSuccess: () => { onRefresh(); toast.success('Vault AI key removed'); },
+    onError: (err) => toast.error(err.message || 'Failed to remove vault key'),
+  });
+
+  const setAiSharingMutation = useMutation({
+    mutationFn: (shared) => vaultsApi.setAiSharing(vault.id, shared),
+    onSuccess: () => { onRefresh(); },
+    onError: (err) => toast.error(err.message || 'Failed to update sharing'),
   });
 
   const handleSave = () => {
@@ -70,10 +120,21 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(generatedCode);
-    setCopied(true);
+  const handleCopyLink = (token) => {
+    // HashRouter: path lives after '#'
+    const url = `${window.location.origin}/#/invite?token=${token}`;
+    navigator.clipboard.writeText(url);
+    setCopied(token);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSaveVaultKey = () => {
+    const trimmed = vaultAiKey.trim();
+    if (!trimmed.startsWith('sk-')) {
+      toast.error("API key must start with 'sk-'");
+      return;
+    }
+    saveVaultKeyMutation.mutate();
   };
 
   return (
@@ -116,7 +177,7 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
               label="Description"
               value={editDesc}
               onChange={(e) => setEditDesc(e.target.value)}
-              placeholder="Describe this vault…"
+              placeholder="Describe this vault..."
             />
             <div>
               <label className="block text-xs font-semibold text-txt-muted uppercase tracking-wider mb-1.5">
@@ -141,7 +202,7 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
               </Button>
             </div>
             <div className="pt-4 text-xs text-txt-muted space-y-1">
-              <div>Members: {vault.members?.length ?? 0}</div>
+              <div>Members: {(vault.members?.length ?? 0) + 1}</div>
               {vault.created_at && (
                 <div>Created: {new Date(vault.created_at).toLocaleDateString()}</div>
               )}
@@ -172,27 +233,79 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
 
             {canInvite && (
               <div>
-                <h3 className="text-sm font-semibold text-txt mb-3">Invite</h3>
-                <Button
-                  variant="secondary"
-                  onClick={() => inviteMutation.mutate()}
-                  disabled={inviteMutation.isPending}
-                >
-                  Generate Invite
-                </Button>
-                {generatedCode && (
-                  <div className="mt-3 space-y-2">
-                    <div className="flex items-center gap-2 bg-elevated rounded-xl px-4 py-3">
-                      <code className="flex-1 text-sm font-mono text-accent">{generatedCode}</code>
-                      <button
-                        onClick={handleCopy}
-                        className="text-txt-muted hover:text-txt transition-colors"
-                        title="Copy to clipboard"
-                      >
-                        {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
-                      </button>
+                <h3 className="text-sm font-semibold text-txt mb-3">Invite by Email</h3>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="collaborator@example.com"
+                    className="flex-1 bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && inviteEmail.trim()) inviteMutation.mutate(inviteEmail.trim());
+                    }}
+                  />
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => inviteMutation.mutate(inviteEmail.trim())}
+                    disabled={!inviteEmail.trim() || inviteMutation.isPending}
+                  >
+                    <Mail size={14} className="mr-1.5" />
+                    Invite
+                  </Button>
+                </div>
+                <p className="text-xs text-txt-muted mt-1.5">
+                  Sends an email with a link to join this vault. Expires in 7 days.
+                </p>
+
+                {pendingInvites.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-2">Pending &amp; Sent</p>
+                    <div className="space-y-2">
+                      {pendingInvites.map((inv) => (
+                        <div
+                          key={inv.id}
+                          className="flex items-center gap-2 bg-surface rounded-xl px-3 py-2.5 text-sm"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-txt truncate">{inv.email}</p>
+                            <p className="text-xs text-txt-muted capitalize">{inv.status}</p>
+                          </div>
+                          {inv.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => inv.token && handleCopyLink(inv.token)}
+                                className="text-txt-muted hover:text-txt transition-colors flex-shrink-0"
+                                title="Copy invite link"
+                              >
+                                {copied === inv.token ? (
+                                  <Check size={14} className="text-green-500" />
+                                ) : (
+                                  <Copy size={14} />
+                                )}
+                              </button>
+                              <button
+                                onClick={() => resendInviteMutation.mutate(inv.id)}
+                                disabled={resendInviteMutation.isPending}
+                                className="text-txt-muted hover:text-accent transition-colors flex-shrink-0"
+                                title="Resend email"
+                              >
+                                <RefreshCw size={14} />
+                              </button>
+                              <button
+                                onClick={() => revokeInviteMutation.mutate(inv.id)}
+                                disabled={revokeInviteMutation.isPending}
+                                className="text-txt-muted hover:text-danger transition-colors flex-shrink-0"
+                                title="Revoke invite"
+                              >
+                                <Ban size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <p className="text-xs text-txt-muted">Share this code for new users to register</p>
                   </div>
                 )}
               </div>
@@ -202,6 +315,96 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
 
         {tab === 'settings' && (
           <div className="space-y-6 max-w-lg">
+
+            {/* AI Key Section */}
+            <div>
+              <h3 className="text-sm font-semibold text-txt mb-1">AI Key</h3>
+              <p className="text-xs text-txt-muted mb-3">
+                Set an OpenAI key for this vault. When sharing is on, all vault members
+                can use AI features without their own key — you are billed for their usage.
+              </p>
+
+              {vault.has_ai_key ? (
+                <div className="bg-elevated rounded-xl p-4 flex items-center justify-between gap-4 mb-3">
+                  <div>
+                    <p className="text-sm font-medium text-txt">Vault AI key is set</p>
+                    <p className="text-xs text-txt-muted mt-0.5">Encrypted at rest.</p>
+                  </div>
+                  {canManageAiKey && (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => removeVaultKeyMutation.mutate()}
+                      disabled={removeVaultKeyMutation.isPending}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                canManageAiKey && (
+                  <div className="flex gap-2 mb-3">
+                    <div className="relative flex-1">
+                      <input
+                        type={showVaultKey ? 'text' : 'password'}
+                        value={vaultAiKey}
+                        onChange={(e) => setVaultAiKey(e.target.value)}
+                        placeholder="sk-..."
+                        className="w-full bg-elevated rounded-xl px-4 py-2.5 text-sm text-txt border-2 border-transparent focus:border-accent focus:outline-none transition pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowVaultKey((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-txt-muted hover:text-txt transition"
+                      >
+                        {showVaultKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSaveVaultKey}
+                      disabled={!vaultAiKey.trim() || saveVaultKeyMutation.isPending}
+                    >
+                      Save key
+                    </Button>
+                  </div>
+                )
+              )}
+
+              {vault.has_ai_key && canManageAiKey && (
+                <div className="rounded-xl border border-border-subtle p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-txt">Share key with vault members</p>
+                      <p className="text-xs text-txt-muted mt-0.5">
+                        Members can use AI features without their own key.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={!!vault.ai_key_shared}
+                        onChange={(e) => setAiSharingMutation.mutate(e.target.checked)}
+                        disabled={setAiSharingMutation.isPending}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-elevated rounded-full peer peer-checked:bg-accent transition-colors" />
+                      <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5" />
+                    </label>
+                  </div>
+                  {vault.ai_key_shared && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
+                      All members of this vault can use your OpenAI key for AI features. You will be billed for their usage.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-border-subtle" />
+
+            {/* Export */}
             <div>
               <h3 className="text-sm font-semibold text-txt mb-2">Export</h3>
               <p className="text-txt-muted text-sm mb-3">Download this vault as a ZIP archive.</p>
@@ -363,7 +566,7 @@ export default function Vaults({ user }) {
                   )}
                 </div>
                 <div className="text-xs text-txt-muted mt-0.5">
-                  {vault.members?.length ?? 0} member{vault.members?.length !== 1 ? 's' : ''}
+                  {(vault.members?.length ?? 0) + 1} member{((vault.members?.length ?? 0) + 1) !== 1 ? 's' : ''}
                 </div>
               </button>
             ))
@@ -417,7 +620,7 @@ export default function Vaults({ user }) {
                 label="Description"
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
-                placeholder="Describe your campaign world…"
+                placeholder="Describe your campaign world..."
               />
               <div>
                 <label className="block text-xs font-semibold text-txt-muted uppercase tracking-wider mb-1.5">

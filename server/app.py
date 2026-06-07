@@ -1,4 +1,4 @@
-﻿"""
+"""
 WorldStitch FastAPI application.
 
 Creates the FastAPI app, wires up AppContext, and registers all route
@@ -8,8 +8,6 @@ Start from the project root (the directory containing both
 ``WorldStitch/`` and ``server/``):
 
     uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
-
-The Electron ``main.cjs`` starts this automatically in production.
 """
 
 import logging
@@ -21,7 +19,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 logging.basicConfig(
@@ -35,12 +32,11 @@ sys.path.insert(0, str(_parent))
 
 from fastapi.responses import JSONResponse
 
-from WorldStitch.config.config import Config
-from WorldStitch.context.app_context import AppContext
 from server.deps import set_app_context
-from server.limiter import limiter
+from server.limiter import _rate_limit_enabled, limiter
 from server.middleware.analytics import AnalyticsMiddleware
 from server.middleware.logging import LoggingMiddleware
+from server.monitoring import init_sentry, metrics_router
 from server.routes import (
     admin_analytics,
     ai,
@@ -58,11 +54,18 @@ from server.routes import (
     sessions,
     settings,
     users,
+    vault_invites,
     vaults,
+    waitlist,
     ws,
 )
+from WorldStitch.config.config import Config
+from WorldStitch.context.app_context import AppContext
 
 logger = logging.getLogger(__name__)
+
+# Initialise Sentry as early as possible (before route handlers are defined).
+init_sentry()
 
 
 # ── App lifespan ──────────────────────────────────────────────────────────────
@@ -90,9 +93,7 @@ async def lifespan(application: FastAPI):
     cfg = Config()
 
     if not cfg.API_KEY_ENCRYPTION_SECRET:
-        logger.warning(
-            "WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext"
-        )
+        logger.warning("WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext")
 
     ctx = AppContext(cfg)
 
@@ -114,10 +115,15 @@ async def lifespan(application: FastAPI):
         def _build_index_bg() -> None:
             try:
                 ctx.ai.index_manager.build_index()
-                ctx.ai._index_ready = True
                 logger.info("AI index build complete")
             except Exception as exc:
-                logger.warning("AI index build failed: %s", exc)
+                # Log the failure but still mark the index as "ready" so the
+                # frontend banner ("Vault index is building…") clears.  AI
+                # still works via the recent-notes fallback; semantic search
+                # simply returns an empty list when the retriever is None.
+                logger.warning("AI index build failed (will use note fallback): %s", exc)
+            finally:
+                ctx.ai._index_ready = True
 
         threading.Thread(target=_build_index_bg, daemon=True).start()
 
@@ -133,18 +139,44 @@ async def lifespan(application: FastAPI):
 app = FastAPI(
     title="WorldStitch API",
     version="1.0.0",
-    description="REST API for the WorldStitch D&D campaign management platform.",
+    description="REST API for the WorldStitch creative worldbuilding platform.",
     lifespan=lifespan,
 )
 
-# Rate-limiting (slowapi)
+# ── Rate-limiting (slowapi) ───────────────────────────────────────────────────
+
+
+async def _custom_rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Return a JSON 429 with Retry-After and X-RateLimit-* headers."""
+    retry_after = 60
+    limit_value = str(exc.detail) if exc.detail else "unknown"
+    response = JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Too many requests. Please slow down.",
+            "retry_after": retry_after,
+        },
+    )
+    response.headers["Retry-After"] = str(retry_after)
+    response.headers["X-RateLimit-Limit"] = limit_value
+    response.headers["X-RateLimit-Remaining"] = "0"
+    return response
+
+
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _custom_rate_limit_handler)
+
+if _rate_limit_enabled:
+    from slowapi.middleware import SlowAPIMiddleware
+
+    app.add_middleware(SlowAPIMiddleware)
+else:
+    logger.info("Rate limiting disabled (RATE_LIMIT_ENABLED=false)")
 
 app.add_middleware(AnalyticsMiddleware)
 app.add_middleware(LoggingMiddleware)
 
-# Allow the Vite dev server (port 5173) and production Electron renderer
+# Allow the Vite dev server (port 5173) and same-origin production requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -153,6 +185,7 @@ app.add_middleware(
         "http://localhost:8741",
         "http://127.0.0.1:8741",
         "https://app.worldstitch.app",
+        "https://worldstitch.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -202,6 +235,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
+# WebSocket route registered directly on the app (not through APIRouter +
+# prefix) to avoid a FastAPI/Starlette bug where prefix-based WebSocket route
+# resolution fails — requests reach /api/ws but the prefixed router doesn't
+# match them.  Must also be first so it wins before the StaticFiles Mount("/")
+# which handles websocket scopes too (Match.FULL for any path).
+app.add_api_websocket_route("/api/ws", ws.websocket_events)
+
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
@@ -214,12 +254,14 @@ app.include_router(dashboard.router)
 app.include_router(settings.router)
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(invites.router, prefix="/invites", tags=["invites"])
+app.include_router(vault_invites.router, tags=["vault-invites"])
 app.include_router(vaults.router, prefix="/vaults", tags=["vaults"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
-app.include_router(ws.router, tags=["ws"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
 app.include_router(admin_analytics.router)
 app.include_router(relationships.router, prefix="/relationships", tags=["relationships"])
+app.include_router(waitlist.router)
+app.include_router(metrics_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
@@ -227,7 +269,7 @@ app.include_router(relationships.router, prefix="/relationships", tags=["relatio
 
 @app.get("/health", tags=["health"])
 def health():
-    """Liveness probe used by the Electron launcher to detect API readiness."""
+    """Liveness probe."""
     return {"status": "ok", "service": "WorldStitch"}
 
 
@@ -236,7 +278,9 @@ def health():
 # A mount is checked AFTER all FastAPI routes, so API endpoints are never
 # shadowed and non-GET methods (POST /vaults/, etc.) work correctly.
 from pathlib import Path as _Path
+
 _frontend_dist = _Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if _frontend_dist.exists():
     from fastapi.staticfiles import StaticFiles
+
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")

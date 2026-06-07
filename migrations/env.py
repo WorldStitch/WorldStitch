@@ -1,15 +1,14 @@
-﻿"""
+"""
 migrations/env.py — Alembic migration environment for WorldStitch.
 
 How it works
 ------------
 * Target metadata is pulled from the canonical 41-table schema defined in
-  WorldStitch/storage/schema.py.  The legacy sqlite_backend.py ORM models
-  are kept for the existing CRUD layer and will be retired in a follow-up PR.
+  WorldStitch/storage/schema.py.
 
-* The database URL is resolved in this order:
-    1. DATABASE_URL environment variable  (preferred for Docker / CI)
-    2. sqlalchemy.url from alembic.ini    (fallback, defaults to sqlite:///worldstitch.db)
+* DATABASE_URL environment variable is required — there is no SQLite fallback.
+  Set it before running any alembic command:
+    export DATABASE_URL=postgresql+psycopg2://user:pass@host:5432/worldstitch
 
 * Both online (real DB connection) and offline (SQL script output) modes are
   supported.
@@ -25,9 +24,8 @@ Common commands
 import os
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
-
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
 # ---------------------------------------------------------------------------
 # Pull in ORM metadata so autogenerate can diff against the live schema
@@ -42,10 +40,17 @@ target_metadata = Base.metadata
 # ---------------------------------------------------------------------------
 config = context.config
 
-# Allow DATABASE_URL env var to override the ini file value
+# DATABASE_URL is required — fail loudly if not set
 db_url = os.environ.get("DATABASE_URL")
-if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
+if not db_url:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set.\n"
+        "WorldStitch requires a PostgreSQL database — there is no SQLite fallback.\n"
+        "Example: export DATABASE_URL=postgresql+psycopg2://user:pass@localhost:5432/worldstitch"
+    )
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+config.set_main_option("sqlalchemy.url", db_url)
 
 # Set up Python logging from alembic.ini
 if config.config_file_name is not None:
@@ -62,8 +67,6 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        # Render as CREATE TABLE … IF NOT EXISTS so scripts are re-runnable
-        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -82,8 +85,6 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            # batch mode required for SQLite ALTER TABLE support
-            render_as_batch=True,
         )
         with context.begin_transaction():
             context.run_migrations()

@@ -1,12 +1,4 @@
-﻿/**
- * WorldStitch API Client
- * Talks to the FastAPI backend on localhost:8741.
- */
-
-const BASE =
-  typeof window !== "undefined" && window.electronAPI
-    ? "http://127.0.0.1:8741"
-    : (import.meta.env.VITE_API_URL || "");
+const BASE = import.meta.env.VITE_API_URL || "";
 
 export function getApiBase() {
   return BASE;
@@ -17,7 +9,7 @@ export function getWsBase() {
   if (BASE.startsWith("https://")) return BASE.replace("https://", "wss://");
   if (typeof window !== "undefined") {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}${BASE}`;
+    return `${proto}//${window.location.host}`;
   }
   return BASE;
 }
@@ -177,8 +169,12 @@ export const auth = {
     }),
   register: async (email, username, password, invite_code) => {
     const data = await request("POST", "/auth/register", { email, username, password, invite_code });
-    return { token: data.access_token, refreshToken: data.refresh_token, user: data.user, exp: data.exp };
+    return { message: data.message, email: data.email };
   },
+  verifyEmail: (token) => request("GET", `/auth/verify-email?token=${encodeURIComponent(token)}`),
+  forgotPassword: (email) => request("POST", "/auth/forgot-password", { email }),
+  resetPassword: (token, new_password) =>
+    request("POST", "/auth/reset-password", { token, new_password }),
 };
 
 // ── Notes ────────────────────────────────────────────────────────────────────
@@ -247,13 +243,27 @@ export const folders = {
 
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
-  ask: (prompt, history = []) => request("POST", "/ai/ask", { prompt, history }),
+  status: () => request("GET", "/ai/status"),
+  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null) =>
+    request("POST", "/ai/ask", {
+      prompt,
+      history,
+      vault_id: vaultId,
+      mode,
+      conversation_id: conversationId,
+    }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
     request("POST", "/ai/suggest-tags", { text, existing_tags: existingTags }),
   proposeLinks: (text, noteNames = []) =>
     request("POST", "/ai/propose-links", { text, note_names: noteNames }),
   usage: () => request("GET", "/ai/usage"),
+  // Conversation history
+  listConversations: (vaultId) =>
+    request("GET", `/ai/conversations/?vault_id=${encodeURIComponent(vaultId)}`),
+  getConversation: (id) => request("GET", `/ai/conversations/${encodeURIComponent(id)}`),
+  deleteConversation: (id) => request("DELETE", `/ai/conversations/${encodeURIComponent(id)}`),
+  saveConversation: (data) => request("POST", "/ai/conversations/", data),
 };
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -296,6 +306,16 @@ export const invites = {
   revoke: (id) => request("DELETE", `/invites/${id}`),
 };
 
+// ── Vault email invites ───────────────────────────────────────────────────────
+export const vaultInvites = {
+  send: (vaultId, email) => request("POST", `/vaults/${encodeURIComponent(vaultId)}/invites`, { email }),
+  list: (vaultId) => request("GET", `/vaults/${encodeURIComponent(vaultId)}/invites`),
+  revoke: (vaultId, inviteId) => request("DELETE", `/vaults/${encodeURIComponent(vaultId)}/invites/${inviteId}`),
+  resend: (vaultId, inviteId) => request("POST", `/vaults/${encodeURIComponent(vaultId)}/invites/${inviteId}/resend`),
+  validateToken: (token) => request("GET", `/invites/accept?token=${encodeURIComponent(token)}`),
+  acceptToken: (token) => request("POST", "/invites/accept", { token }),
+};
+
 export const vaults = {
   list: () => request("GET", "/vaults/"),
   listAll: () => request("GET", "/vaults/?all=true"),
@@ -303,6 +323,10 @@ export const vaults = {
   create: (data) => request("POST", "/vaults/", data),
   update: (id, data) => request("PUT", `/vaults/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}`),
+  getAiKeyStatus: (id) => request("GET", `/vaults/${encodeURIComponent(id)}/ai-key/status`),
+  saveAiKey: (id, api_key) => request("POST", `/vaults/${encodeURIComponent(id)}/ai-key`, { api_key }),
+  removeAiKey: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}/ai-key`),
+  setAiSharing: (id, shared) => request("PUT", `/vaults/${encodeURIComponent(id)}/ai-key/sharing`, { shared }),
   exportZip: async (id) => {
     const headers = {};
     if (_token) headers["Authorization"] = `Bearer ${_token}`;
@@ -324,6 +348,10 @@ export const vaults = {
     return res.json();
   },
   updateBackup: (id, cron) => request("PUT", `/vaults/${encodeURIComponent(id)}/backup?cron=${encodeURIComponent(cron)}`),
+  search: (id, query, { limit = 20, offset = 0 } = {}) => {
+    const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) });
+    return request("GET", `/vaults/${encodeURIComponent(id)}/search?${params.toString()}`);
+  },
 };
 
 export const groups = {
@@ -404,7 +432,7 @@ export const relationships = {
       `/relationships/?vault_id=${encodeURIComponent(vaultId)}${entityId ? `&entity_id=${encodeURIComponent(entityId)}` : ""}`
     ),
   getTypes: () => request("GET", "/relationships/types"),
-  create: (data) => request("POST", "/relationships", data),
+  create: (data) => request("POST", "/relationships/", data),
   update: (id, data) => request("PUT", `/relationships/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/relationships/${encodeURIComponent(id)}`),
 };

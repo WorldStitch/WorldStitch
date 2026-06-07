@@ -28,10 +28,11 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# ── Version control ───────────────────────────────────────────────────────────
+# ── Version control & tooling ─────────────────────────────────────────────────
 .git/
 .gitignore
 .gitattributes
+.claude/
 
 # ── Desktop-app files (not needed server-side) ────────────────────────────────
 *.bat

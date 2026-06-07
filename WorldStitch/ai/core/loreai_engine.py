@@ -1,4 +1,4 @@
-﻿# WorldStitch/ai/core/loreai_engine.py
+# WorldStitch/ai/core/loreai_engine.py
 
 from typing import List, Tuple
 
@@ -38,17 +38,23 @@ class LoreaiAI(AIInterface):
     def update_models(self, embedding_model: str, completion_model: str):
         pass  # embedding model changes require an index rebuild; handled separately
 
-    def ask(self, prompt: str) -> Tuple[str, int, int]:
+    def ask(self, prompt: str, system_prompt: str = "") -> Tuple[str, int, int]:
         raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'ask' through ModelRouter to an LLM backend.")
 
     def summarize(self, text: str) -> Tuple[str, int, int]:
-        raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'summarize' through ModelRouter to an LLM backend.")
+        raise RuntimeError(
+            "LoreaiAI is a retrieval-only engine. Route 'summarize' through ModelRouter to an LLM backend."
+        )
 
     def suggest_tags(self, text: str) -> Tuple[str, int, int]:
-        raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'suggest_tags' through ModelRouter to an LLM backend.")
+        raise RuntimeError(
+            "LoreaiAI is a retrieval-only engine. Route 'suggest_tags' through ModelRouter to an LLM backend."
+        )
 
     def propose_links(self, text: str, note_names: List[str]) -> Tuple[str, int, int]:
-        raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'propose_links' through ModelRouter to an LLM backend.")
+        raise RuntimeError(
+            "LoreaiAI is a retrieval-only engine. Route 'propose_links' through ModelRouter to an LLM backend."
+        )
 
     def search_context(self, query: str, top_k: int = 10) -> List[str]:
         """Retrieve up to top_k relevant note IDs for the given query."""

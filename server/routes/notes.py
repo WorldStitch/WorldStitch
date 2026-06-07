@@ -1,4 +1,4 @@
-﻿"""
+"""
 Note and folder endpoints.
 
 GET /notes — list notes (uses search_notes under the hood)
@@ -78,7 +78,7 @@ class NoteListItem(BaseModel):
     is_deleted: bool = False
     created_at: datetime
     last_modified: datetime
-    snippet: Optional[str] = None  # FTS5 highlighted excerpt, present on search results
+    snippet: Optional[str] = None  # FTS highlighted excerpt, present on search results
 
 
 class NoteDetail(BaseModel):
@@ -329,8 +329,8 @@ async def search_notes(
     """Search notes by title, content, and tags.
 
     Modes:
-    - ``fts``      — FTS5 full-text search with BM25 ranking and snippet highlighting
-                     (falls back to LIKE search if FTS5 unavailable)
+    - ``fts``      — PostgreSQL full-text search with ts_rank ranking and snippet highlighting
+                     (falls back to LIKE search if PostgreSQL FTS is unavailable)
     - ``semantic`` — Vector similarity search via VectorIndexManager
     - ``hybrid``   — Runs both; merges results weighted FTS×0.6 + semantic×0.4
     """
@@ -352,7 +352,16 @@ async def search_notes(
                 date_to=date_to,
             )
             result["mode"] = "fts"
-            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=result.get("total", 0), mode="fts"))
+            asyncio.create_task(
+                analytics_track(
+                    "search.query",
+                    user_id=user.id,
+                    vault_id=vault_id,
+                    query=q,
+                    result_count=result.get("total", 0),
+                    mode="fts",
+                )
+            )
             return result
 
         # ── Semantic mode ─────────────────────────────────────────────────────
@@ -375,7 +384,11 @@ async def search_notes(
 
             total = len(all_results)
             page = all_results[skip : skip + limit]
-            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=total, mode="semantic"))
+            asyncio.create_task(
+                analytics_track(
+                    "search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=total, mode="semantic"
+                )
+            )
             return {
                 "items": [_note_to_list_item(n).model_dump() for n in page],
                 "total": total,
@@ -405,7 +418,7 @@ async def search_notes(
                 sem_notes = ctx.storage.search_notes(q, vault_id=vault_id, top_k=200, search_type="semantic")
                 sem_ids = [n.id for n in sem_notes if not getattr(n, "is_deleted", False)]
             except Exception:
-                pass  # semantic index may not be available
+                logger.debug("search_notes hybrid: semantic leg unavailable, proceeding with FTS results only")
 
             # Merge: FTS weight 0.6, semantic weight 0.4, rank by position
             scores: Dict[str, dict] = {}
@@ -428,7 +441,11 @@ async def search_notes(
             all_items = [m["item"] for m in merged]
             total = len(all_items)
             page = all_items[skip : skip + limit]
-            asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=total, mode="hybrid"))
+            asyncio.create_task(
+                analytics_track(
+                    "search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=total, mode="hybrid"
+                )
+            )
             return {"items": page, "total": total, "skip": skip, "limit": limit, "mode": "hybrid"}
 
         # ── Unknown mode → fall back to FTS ──────────────────────────────────
@@ -443,7 +460,16 @@ async def search_notes(
             date_to=date_to,
         )
         result["mode"] = mode
-        asyncio.create_task(analytics_track("search.query", user_id=user.id, vault_id=vault_id, query=q, result_count=result.get("total", 0), mode=mode))
+        asyncio.create_task(
+            analytics_track(
+                "search.query",
+                user_id=user.id,
+                vault_id=vault_id,
+                query=q,
+                result_count=result.get("total", 0),
+                mode=mode,
+            )
+        )
         return result
 
     except Exception as e:
@@ -465,7 +491,7 @@ async def list_folders(
         vault_id = _resolve_vault_id(ctx, user, vault_id)
         results = []
 
-        # Primary: query folders stored in the SQLite database
+        # Primary: query folders stored in the database
         if hasattr(ctx.storage, "list_all_folders"):
             try:
                 db_folders = ctx.storage.list_all_folders(vault_id=vault_id)
@@ -494,7 +520,7 @@ async def list_folders(
                         try:
                             meta = ctx.storage.get_folder_metadata(fpath)
                         except Exception:
-                            pass
+                            logger.debug("list_folders: could not read metadata for folder path %s", fpath)
 
                         results.append(
                             FolderResponse(
@@ -534,14 +560,14 @@ async def list_notes(
         _set_user_ctx(ctx, user)
         vault_id = _resolve_vault_id(ctx, user, vault_id)
 
-        # Primary: query notes directly from the SQLite database.
+        # Primary: query notes directly from the database.
         # This covers all notes created via the API (which have no .md file on disk).
         if hasattr(ctx.storage, "list_all_notes"):
             all_notes = ctx.storage.list_all_notes(folder=folder, tag=tag, vault_id=vault_id)
             # list_all_notes already filters by folder and tag; skip redundant filters.
             all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
         else:
-            # Fallback for non-SQLite backends: file-based search
+            # Fallback for backends without list_all_notes: file-based search
             all_notes = ctx.storage.search_notes("", vault_id=vault_id, top_k=10000)
 
             if folder:
@@ -662,10 +688,7 @@ async def update_note(
                     )
                 note.permissions[next_group_id] = "write"
             note.group_id = next_group_id
-            if (
-                previous_group_id
-                and previous_group_id != next_group_id
-            ):
+            if previous_group_id and previous_group_id != next_group_id:
                 note.permissions.pop(previous_group_id, None)
 
         ctx.notes.update_note(note, actor_id=user.id)
@@ -873,17 +896,19 @@ async def get_note_backlinks(
             try:
                 forward_ids = ctx.storage.get_relationships(note_id) or []
             except Exception:
-                pass
+                logger.warning("get_note_backlinks: failed to fetch forward links for note %s", note_id)
 
         for tid in forward_ids:
             other = ctx.notes.get_note(tid) if tid else None
-            results.append({
-                "direction": "from",
-                "relation_type": "wikilink",
-                "label": other.title if other else tid,
-                "other_entity_id": tid,
-                "other_entity_type": "note",
-            })
+            results.append(
+                {
+                    "direction": "from",
+                    "relation_type": "wikilink",
+                    "label": other.title if other else tid,
+                    "other_entity_id": tid,
+                    "other_entity_type": "note",
+                }
+            )
 
         # Back links: sources → this note
         backward_ids = []
@@ -891,17 +916,19 @@ async def get_note_backlinks(
             try:
                 backward_ids = ctx.storage.get_backlinks(note_id) or []
             except Exception:
-                pass
+                logger.warning("get_note_backlinks: failed to fetch back links for note %s", note_id)
 
         for sid in backward_ids:
             other = ctx.notes.get_note(sid) if sid else None
-            results.append({
-                "direction": "to",
-                "relation_type": "wikilink",
-                "label": other.title if other else sid,
-                "other_entity_id": sid,
-                "other_entity_type": "note",
-            })
+            results.append(
+                {
+                    "direction": "to",
+                    "relation_type": "wikilink",
+                    "label": other.title if other else sid,
+                    "other_entity_id": sid,
+                    "other_entity_type": "note",
+                }
+            )
 
         return results
     except HTTPException:
@@ -929,7 +956,9 @@ async def create_note_relationship(
         _get_note_or_404(ctx, note_id)
         if hasattr(ctx.storage, "upsert_relationship"):
             ctx.storage.upsert_relationship(note_id, req.target_id)
-        asyncio.create_task(analytics_track("relationship.created", user_id=user.id, source_id=note_id, target_id=req.target_id))
+        asyncio.create_task(
+            analytics_track("relationship.created", user_id=user.id, source_id=note_id, target_id=req.target_id)
+        )
         return {"created": True, "source_id": note_id, "target_id": req.target_id}
     except HTTPException:
         raise
