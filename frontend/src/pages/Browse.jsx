@@ -8,7 +8,7 @@ import FolderTree from '@/components/browse/FolderTree';
 import NoteEditor from '@/components/browse/NoteEditor';
 import EntryDetailsPanel from '@/components/browse/EntryDetailsPanel';
 import Graph from '@/pages/Graph';
-import { notes, folders, ai, groups, users, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
+import { notes, folders, ai, groups, users, vaults, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { useVault } from '@/context/VaultContext';
 import { useRealtime } from '@/context/RealtimeContext';
 
@@ -42,6 +42,7 @@ export default function Browse({ user }) {
   // ── Search ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [searchHistory, setSearchHistory] = useState([]);
   const searchTimeout = useRef(null);
 
@@ -140,12 +141,16 @@ export default function Browse({ user }) {
 
   // ── Search (debounced) ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!activeVaultId) { setSearchResults(null); return; }
-    if (!searchQuery.trim()) { setSearchResults(null); return; }
+    if (!activeVaultId || !searchQuery.trim()) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
     clearTimeout(searchTimeout.current);
     searchTimeout.current = setTimeout(async () => {
       try {
-        const data = await notes.search(searchQuery, { vault_id: activeVaultId });
+        const data = await vaults.search(activeVaultId, searchQuery);
         setSearchResults(data.items || []);
         setSearchHistory((prev) => {
           const deduped = prev.filter((q) => q !== searchQuery);
@@ -153,6 +158,8 @@ export default function Browse({ user }) {
         });
       } catch {
         setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
       }
     }, 300);
     return () => clearTimeout(searchTimeout.current);
@@ -680,6 +687,7 @@ export default function Browse({ user }) {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             searchResults={searchResults}
+            searchLoading={searchLoading}
             allTags={allTags}
             tagFilter={tagFilter}
             onTagFilter={setTagFilter}
