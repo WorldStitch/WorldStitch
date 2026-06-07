@@ -3,6 +3,9 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-
 import { useQuery } from "@tanstack/react-query";
 import Sidebar from "./components/Sidebar";
 import ErrorBoundary from "./components/ErrorBoundary";
+import VerifyEmail from "./pages/VerifyEmail";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
 import Browse from "./pages/Browse";
@@ -129,6 +132,18 @@ export default function App() {
     if (nextVaultId && nextVaultId !== activeVaultId) setActiveVaultId(nextVaultId);
     if (nextVaultId) localStorage.setItem("me_active_vault", nextVaultId);
   }, [vaultList, activeVaultId]);
+
+  // Public routes accessible without authentication
+  const PUBLIC_PATHS = ["/verify-email", "/forgot-password", "/reset-password"];
+  if (PUBLIC_PATHS.includes(location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+      </Routes>
+    );
+  }
 
   if (loading) {
     return (

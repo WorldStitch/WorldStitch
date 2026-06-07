@@ -169,8 +169,12 @@ export const auth = {
     }),
   register: async (email, username, password, invite_code) => {
     const data = await request("POST", "/auth/register", { email, username, password, invite_code });
-    return { token: data.access_token, refreshToken: data.refresh_token, user: data.user, exp: data.exp };
+    return { message: data.message, email: data.email };
   },
+  verifyEmail: (token) => request("GET", `/auth/verify-email?token=${encodeURIComponent(token)}`),
+  forgotPassword: (email) => request("POST", "/auth/forgot-password", { email }),
+  resetPassword: (token, new_password) =>
+    request("POST", "/auth/reset-password", { token, new_password }),
 };
 
 // ── Notes ────────────────────────────────────────────────────────────────────

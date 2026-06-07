@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
@@ -30,6 +30,8 @@ export default function Login({ onLogin, needsSetup = false }) {
   const [regEmail, setRegEmail] = useState('');
   const [regDisplayName, setRegDisplayName] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regDone, setRegDone] = useState(false);
+  const [regDoneEmail, setRegDoneEmail] = useState('');
 
   // Setup form state
   const [setupEmail, setSetupEmail] = useState('');
@@ -48,6 +50,7 @@ export default function Login({ onLogin, needsSetup = false }) {
   const switchMode = (next) => {
     setMode(next);
     setApiError('');
+    setRegDone(false);
   };
 
   const handleLogin = async (e) => {
@@ -83,9 +86,8 @@ export default function Login({ onLogin, needsSetup = false }) {
     setLoading(true);
     try {
       const data = await auth.register(regEmail, regDisplayName, regPassword, regInviteCode);
-      setToken(data.token);
-      setRefreshToken(data.refreshToken);
-      onLogin(data.token, data.user);
+      setRegDoneEmail(data.email);
+      setRegDone(true);
     } catch (err) {
       toast.error(err.message || 'Registration failed');
     } finally {
@@ -223,7 +225,15 @@ export default function Login({ onLogin, needsSetup = false }) {
                 {loading ? 'Signing in...' : 'Sign In'}
               </Button>
             </form>
-            <div className="mt-6 text-center">
+            <div className="mt-4 text-center">
+              <a
+                href="/forgot-password"
+                className="text-txt-muted text-sm hover:text-accent transition"
+              >
+                Forgot your password?
+              </a>
+            </div>
+            <div className="mt-4 text-center">
               <p className="text-txt-muted text-sm">
                 Have an invite code?{' '}
                 <button onClick={() => switchMode('register')} className="text-accent hover:text-accent/80 font-medium transition">
@@ -235,7 +245,7 @@ export default function Login({ onLogin, needsSetup = false }) {
         )}
 
         {/* ── Register Mode ── */}
-        {mode === 'register' && (
+        {mode === 'register' && !regDone && (
           <>
             <h2 className="text-xl font-bold text-txt mb-2">Create account</h2>
             <p className="text-txt-secondary text-sm mb-6">Join the worlds of WorldStitch</p>
@@ -281,6 +291,26 @@ export default function Login({ onLogin, needsSetup = false }) {
               </p>
             </div>
           </>
+        )}
+
+        {/* ── Register success — check email ── */}
+        {mode === 'register' && regDone && (
+          <div className="text-center">
+            <div className="text-5xl mb-4">📬</div>
+            <h2 className="text-xl font-bold text-txt mb-3">Check your email</h2>
+            <p className="text-txt-secondary text-sm mb-6">
+              We sent a verification link to{' '}
+              <span className="text-accent font-medium">{regDoneEmail}</span>.
+              Click it to activate your account, then sign in.
+            </p>
+            <Button
+              variant="primary"
+              className="w-full"
+              onClick={() => switchMode('login')}
+            >
+              Go to Sign In
+            </Button>
+          </div>
         )}
       </Card>
     </div>
