@@ -42,7 +42,6 @@ export default function Universe() {
       }));
       setEvents(mapped);
     } catch (err) {
-      console.error('Failed to load timeline:', err);
       toast.error('Failed to load timeline');
     } finally {
       setLoading(false);
@@ -63,8 +62,8 @@ export default function Universe() {
         date: detail.meta?.event_date || evt.date,
         category: detail.meta?.category || evt.category,
       });
-    } catch (err) {
-      console.error('Failed to load event:', err);
+    } catch {
+      // Event detail failed to load — selected event keeps its list-level data
     }
   };
 
@@ -90,6 +89,8 @@ export default function Universe() {
     setFormCategory(evt.category || 'event');
     notes.get(evt.id).then((detail) => {
       setFormDescription(detail.content || '');
+    }).catch(() => {
+      // Could not pre-fill description — user can type manually
     });
     setShowForm(true);
   };

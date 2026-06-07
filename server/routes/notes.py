@@ -418,7 +418,7 @@ async def search_notes(
                 sem_notes = ctx.storage.search_notes(q, vault_id=vault_id, top_k=200, search_type="semantic")
                 sem_ids = [n.id for n in sem_notes if not getattr(n, "is_deleted", False)]
             except Exception:
-                pass  # semantic index may not be available
+                logger.debug("search_notes hybrid: semantic leg unavailable, proceeding with FTS results only")
 
             # Merge: FTS weight 0.6, semantic weight 0.4, rank by position
             scores: Dict[str, dict] = {}
@@ -520,7 +520,7 @@ async def list_folders(
                         try:
                             meta = ctx.storage.get_folder_metadata(fpath)
                         except Exception:
-                            pass
+                            logger.debug("list_folders: could not read metadata for folder path %s", fpath)
 
                         results.append(
                             FolderResponse(
@@ -896,7 +896,7 @@ async def get_note_backlinks(
             try:
                 forward_ids = ctx.storage.get_relationships(note_id) or []
             except Exception:
-                pass
+                logger.warning("get_note_backlinks: failed to fetch forward links for note %s", note_id)
 
         for tid in forward_ids:
             other = ctx.notes.get_note(tid) if tid else None
@@ -916,7 +916,7 @@ async def get_note_backlinks(
             try:
                 backward_ids = ctx.storage.get_backlinks(note_id) or []
             except Exception:
-                pass
+                logger.warning("get_note_backlinks: failed to fetch back links for note %s", note_id)
 
         for sid in backward_ids:
             other = ctx.notes.get_note(sid) if sid else None

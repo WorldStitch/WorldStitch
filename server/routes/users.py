@@ -1,4 +1,4 @@
-﻿"""
+"""
 User management endpoints (admin only).
 
 GET /users — list all users
@@ -12,7 +12,6 @@ NOTE: StorageBackend has no list_users() method. We query the SQLAlchemy
 UserRecord table directly through the storage engine.
 """
 
-import json
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -22,11 +21,9 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
+from server.deps import get_ctx, require_permission
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-
-from server.deps import get_ctx, get_current_user, require_permission
-
 
 router = APIRouter()
 
@@ -38,6 +35,7 @@ router = APIRouter()
 
 class UserListItem(BaseModel):
     """User item in list response"""
+
     id: str
     username: str
     email: str
@@ -48,11 +46,13 @@ class UserListItem(BaseModel):
 
 class UpdateRolesRequest(BaseModel):
     """Request body for PUT /users/{id}/roles"""
+
     roles: List[str]
 
 
 class ResetPasswordRequest(BaseModel):
     """Request body for POST /users/{id}/reset-password"""
+
     new_password: str
 
     @field_validator("new_password")
@@ -79,8 +79,10 @@ def _list_all_users(ctx: AppContext) -> List[User]:
         storage = ctx.storage
         if hasattr(storage, "engine"):
             from sqlalchemy.orm import Session as SASession
+
             # Import the ORM model from the sqlite backend
             from WorldStitch.storage.sqlite_backend import UserRecord
+
             with SASession(storage.engine) as session:
                 for rec in session.query(UserRecord).all():
                     try:

@@ -7,11 +7,15 @@ GET /dashboard/stats  — note/character/session counts
 GET /dashboard/recent — most-recently-modified notes
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, Query
 
 from server.deps import get_ctx, get_current_user
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -32,12 +36,14 @@ def stats(
         folders = ctx.storage.list_folders(vault_id=effective_id)
         folder_count = len(folders) if isinstance(folders, list) else 0
     except Exception:
+        logger.warning("dashboard/stats: could not count folders for vault_id=%s", effective_id)
         folder_count = 0
 
     try:
         chars = ctx.storage.list_characters(campaign_id=effective_id or None, vault_id=effective_id)
         char_count = len(chars) if isinstance(chars, list) else 0
     except Exception:
+        logger.warning("dashboard/stats: could not count characters for vault_id=%s", effective_id)
         char_count = 0
 
     sessions_total = 0
@@ -45,6 +51,7 @@ def stats(
         try:
             _, sessions_total = ctx.storage.list_play_sessions(effective_id, limit=0)
         except Exception:
+            logger.warning("dashboard/stats: could not count play sessions for vault_id=%s", effective_id)
             sessions_total = 0
     if not sessions_total:
         try:
@@ -90,7 +97,7 @@ def recent(
                     try:
                         data = _json.loads(rec.data or "{}")
                     except Exception:
-                        pass
+                        logger.debug("dashboard/recent: could not parse data JSON for note %s", rec.id)
                     items.append(
                         {
                             "id": rec.id,
@@ -101,7 +108,7 @@ def recent(
                     )
                 return items
     except Exception:
-        pass
+        logger.warning("dashboard/recent: DB query failed; falling back to filesystem listing", exc_info=True)
 
     # Fallback: filesystem-based (HybridStorage)
     paths = ctx.storage.list_notes()
@@ -136,7 +143,7 @@ def _count_meta(ctx: AppContext, subfolder: str) -> int:
             if d.is_dir():
                 return len(list(d.glob("*.json")))
     except Exception:
-        pass
+        logger.debug("_count_meta: could not count .ws_meta/%s files", subfolder)
     return 0
 
 

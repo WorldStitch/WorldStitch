@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -11,6 +12,8 @@ from server.vault_access import list_accessible_vaults, resolve_vault
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -60,7 +63,7 @@ def _to_response(vault: Vault, ctx: AppContext) -> VaultResponse:
         try:
             has_key = bool(ctx.storage.get_vault_ai_key(vault.id))
         except Exception:
-            pass
+            logger.debug("_to_response: could not check AI key for vault %s", vault.id)
     return VaultResponse(
         **{k: v for k, v in vault.model_dump().items() if k in VaultResponse.model_fields},
         has_ai_key=has_key,
@@ -209,7 +212,7 @@ async def get_vault_ai_key_status(
         try:
             has_key = bool(ctx.storage.get_vault_ai_key(vault_id))
         except Exception:
-            pass
+            logger.debug("get_vault_ai_key_status: could not check AI key for vault %s", vault_id)
     return {
         "has_ai_key": has_key,
         "ai_key_shared": getattr(vault, "ai_key_shared", False),

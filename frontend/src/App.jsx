@@ -72,14 +72,14 @@ export default function App() {
             setToken(null);
           }
         }
-      } catch (err) {
-        console.error("Init failed:", err);
+      } catch {
+        // Ignore init errors — loading will complete regardless
       } finally {
         setLoading(false);
       }
     };
     init();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- intentional: run once on mount only
 
   // Session expiry countdown (Item 56)
   useSessionExpiry(
@@ -105,7 +105,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    auth.logout().catch((err) => console.error('Logout failed:', err));
+    auth.logout().catch(() => { /* best-effort logout — token discarded regardless */ });
     setToken(null);
     setRefreshToken(null);
     setUser(null);
