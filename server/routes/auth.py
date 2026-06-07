@@ -8,6 +8,9 @@ POST /auth/logout — invalidate session (client drops token)
 GET /auth/me — get current user info
 POST /auth/change-password — change password
 POST /auth/register — create new account with invite code
+GET /auth/verify-email?token=TOKEN — verify email address
+POST /auth/forgot-password — request a password reset email
+POST /auth/reset-password — set a new password via reset token
 
 NOTE: We bypass AuthManager here because it inherits QObject (PyQt6),
 which is unavailable in the headless FastAPI server context. Instead we
@@ -16,22 +19,27 @@ use UserManager directly for credential verification.
 
 import asyncio
 import logging
+import secrets
 import time
+import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
 
 from server.analytics import track as analytics_track
 from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
 from server.deps import get_ctx, get_current_user
+from server.email import send_email
 from server.limiter import limiter
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.utils.audit_logger import audit
 
 logger = logging.getLogger(__name__)
+
+_APP_BASE_URL = "https://app.worldstitch.app"
 
 
 # ============================================================================
@@ -65,6 +73,7 @@ class RateLimiter:
 
 
 _login_limiter = RateLimiter(max_attempts=5, window_seconds=900)  # 5 per 15 min
+_reset_limiter = RateLimiter(max_attempts=5, window_seconds=3600)  # 5 per hour
 
 # Token TTL must match TokenStore default (30 days) so exp in response is accurate
 _TOKEN_TTL_SECONDS = 30 * 24 * 3600
@@ -171,13 +180,10 @@ class RefreshResponse(BaseModel):
 
 
 class RegisterResponse(BaseModel):
-    """Response body for successful registration (auto-login)"""
+    """Response body for successful registration"""
 
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    exp: datetime
-    user: dict
+    message: str
+    email: str
 
 
 class SetupRequest(BaseModel):
@@ -203,6 +209,24 @@ class SetupResponse(BaseModel):
     user: dict
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Request body for POST /auth/forgot-password"""
+
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request body for POST /auth/reset-password"""
+
+    token: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def check_new_password(cls, v):
+        return validate_password_strength(v)
+
+
 # ============================================================================
 # Helper: count users via SQLAlchemy
 # ============================================================================
@@ -222,6 +246,103 @@ def _count_users(ctx: AppContext) -> int:
     except Exception as exc:
         logger.warning("_count_users: database query failed: %s", exc)
     return -1  # unknown
+
+
+def _get_engine(ctx: AppContext):
+    """Return the SQLAlchemy engine from the storage backend, or None."""
+    storage = ctx.storage
+    if hasattr(storage, "engine"):
+        return storage.engine
+    return None
+
+
+# ============================================================================
+# Email templates
+# ============================================================================
+
+_EMAIL_STYLES = """
+  body { font-family: Georgia, serif; background: #0f0e17; color: #fffffe; margin: 0; padding: 0; }
+  .container { max-width: 560px; margin: 40px auto; background: #1a1a2e; border-radius: 12px;
+               border: 1px solid #2a2a4a; overflow: hidden; }
+  .header { background: linear-gradient(135deg, #6c3082 0%, #1a237e 100%);
+            padding: 32px 40px; text-align: center; }
+  .logo { font-size: 40px; margin-bottom: 8px; }
+  .brand { font-size: 22px; font-weight: bold; color: #fffffe; letter-spacing: 1px; }
+  .body { padding: 36px 40px; }
+  h2 { color: #a78bfa; margin-top: 0; font-size: 20px; }
+  p { color: #b8b8cc; line-height: 1.7; margin: 12px 0; }
+  .btn { display: inline-block; margin: 24px 0; padding: 14px 32px;
+         background: linear-gradient(135deg, #7c3aed, #4f46e5);
+         color: #fffffe !important; text-decoration: none; border-radius: 8px;
+         font-weight: bold; font-size: 15px; letter-spacing: 0.5px; }
+  .footer { padding: 20px 40px; border-top: 1px solid #2a2a4a; text-align: center; }
+  .footer p { font-size: 12px; color: #6b6b8a; margin: 4px 0; }
+  .expiry { font-size: 13px; color: #6b6b8a; margin-top: 20px; }
+"""
+
+
+def _verification_email_html(username: str, verify_url: str) -> str:
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>{_EMAIL_STYLES}</style></head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">&#9889;</div>
+      <div class="brand">WorldStitch</div>
+    </div>
+    <div class="body">
+      <h2>Hail, {username}! Your scroll of verification awaits.</h2>
+      <p>You have registered for WorldStitch &mdash; your portal to extraordinary worlds and epic tales.</p>
+      <p>Before your quest can truly begin, the Arcane Council requires proof that this missive
+         has reached its rightful recipient.</p>
+      <p style="text-align:center">
+        <a href="{verify_url}" class="btn">&#10022; Verify My Email &#10022;</a>
+      </p>
+      <p>Or paste this link into your browser:</p>
+      <p style="word-break:break-all; font-size:13px; color:#7c7ca0;">{verify_url}</p>
+      <p class="expiry">This link expires in 24 hours. If you did not register for WorldStitch,
+         you may safely ignore this message &mdash; no action is required.</p>
+    </div>
+    <div class="footer">
+      <p>WorldStitch &mdash; Weave your world</p>
+      <p>hello@worldstitch.app</p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+def _reset_email_html(username: str, reset_url: str) -> str:
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>{_EMAIL_STYLES}</style></head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">&#9889;</div>
+      <div class="brand">WorldStitch</div>
+    </div>
+    <div class="body">
+      <h2>Your quest to reclaim your account begins here...</h2>
+      <p>Greetings, {username}. The Arcane Scribes have received a request to reset the password
+         for your WorldStitch account.</p>
+      <p>Click the rune below to forge a new password and restore your access to the realm:</p>
+      <p style="text-align:center">
+        <a href="{reset_url}" class="btn">&#9876; Reset My Password &#9876;</a>
+      </p>
+      <p>Or paste this link into your browser:</p>
+      <p style="word-break:break-all; font-size:13px; color:#7c7ca0;">{reset_url}</p>
+      <p class="expiry">This link expires in 1 hour. If you did not request a password reset,
+         your account remains safe &mdash; no action is needed.</p>
+    </div>
+    <div class="footer">
+      <p>WorldStitch &mdash; Weave your world</p>
+      <p>hello@worldstitch.app</p>
+    </div>
+  </div>
+</body>
+</html>"""
 
 
 # ============================================================================
@@ -308,8 +429,8 @@ async def setup_admin(
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("10/minute")
 async def login(
-    request: Request,
     req: LoginRequest,
+    request: Request,
     ctx: AppContext = Depends(get_ctx),
 ):
     """
@@ -483,8 +604,9 @@ async def register(
     ctx: AppContext = Depends(get_ctx),
 ):
     """
-    Register a new user with an invite code, then auto-login.
-    Returns a JWT + user dict so the frontend can start a session immediately.
+    Register a new user with an invite code.
+    Sends a verification email and returns a message asking the user to check their inbox.
+    Email verification is tracked but not enforced at login (yet).
     """
     try:
         # Validate invite code
@@ -507,25 +629,39 @@ async def register(
         ctx.invites.redeem(req.invite_code, user.id)
         asyncio.create_task(analytics_track("user.registered", user_id=user.id))
 
-        role = _jwt_role(user)
-        token = create_jwt(user.id, user.email, role)
-        refresh = create_refresh_token(user.id)
-        exp = datetime.utcnow() + timedelta(hours=1)
+        # Issue and store a verification token
+        ver_token = secrets.token_urlsafe(32)
+        engine = _get_engine(ctx)
+        if engine:
+            from sqlalchemy.orm import Session as SASession
+
+            from WorldStitch.storage.sqlite_backend import EmailVerificationTokenRecord
+
+            with SASession(engine) as db:
+                record = EmailVerificationTokenRecord(
+                    id=str(uuid.uuid4()),
+                    user_id=user.id,
+                    token=ver_token,
+                    expires_at=datetime.utcnow() + timedelta(hours=24),
+                    used=False,
+                    created_at=datetime.utcnow(),
+                )
+                db.add(record)
+                db.commit()
+
+        verify_url = f"{_APP_BASE_URL}/verify-email?token={ver_token}"
+        asyncio.create_task(
+            asyncio.to_thread(
+                send_email,
+                user.email,
+                "Verify your WorldStitch account",
+                _verification_email_html(user.username, verify_url),
+            )
+        )
 
         return RegisterResponse(
-            access_token=token,
-            refresh_token=refresh,
-            token_type="bearer",
-            exp=exp,
-            user={
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "roles": user.roles or [],
-                "system_role": user.system_role,
-                "groups": user.groups,
-                "is_active": user.is_active,
-            },
+            message="Account created! Check your email to verify your address before signing in.",
+            email=user.email,
         )
     except HTTPException:
         raise
@@ -539,3 +675,140 @@ async def register(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}",
         )
+
+
+@router.get("/verify-email")
+async def verify_email(
+    token: str = Query(...),
+    ctx: AppContext = Depends(get_ctx),
+):
+    """
+    Validate an email verification token, mark the user verified, and mark the token used.
+    """
+    engine = _get_engine(ctx)
+    if not engine:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+
+    from sqlalchemy.orm import Session as SASession
+
+    from WorldStitch.storage.sqlite_backend import EmailVerificationTokenRecord, UserRecord
+
+    with SASession(engine) as db:
+        record = db.query(EmailVerificationTokenRecord).filter_by(token=token).first()
+
+        if not record:
+            raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+        if record.used:
+            raise HTTPException(status_code=400, detail="This verification link has already been used")
+        if record.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=400, detail="This verification link has expired")
+
+        record.used = True
+
+        user_row = db.query(UserRecord).filter_by(id=record.user_id).first()
+        if user_row:
+            user_row.email_verified = True
+
+        db.commit()
+
+    return {"message": "Email verified successfully. You can now sign in."}
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    req: ForgotPasswordRequest,
+    ctx: AppContext = Depends(get_ctx),
+):
+    """
+    Request a password reset email. Always returns 200 to prevent email enumeration.
+    Rate-limited to 5 requests per hour per email address.
+    """
+    email_key = req.email.lower()
+    if _reset_limiter.is_blocked(email_key):
+        # Return the same message — don't leak that this address is throttled
+        return {"message": "If that email is registered, you'll receive a reset link shortly."}
+
+    _reset_limiter.record(email_key)
+
+    async def _send_reset():
+        try:
+            user = ctx.users.get_user_by_email(req.email)
+            if not user or not user.is_active:
+                return
+
+            rst_token = secrets.token_urlsafe(32)
+            engine = _get_engine(ctx)
+            if not engine:
+                return
+
+            from sqlalchemy.orm import Session as SASession
+
+            from WorldStitch.storage.sqlite_backend import PasswordResetTokenRecord
+
+            with SASession(engine) as db:
+                record = PasswordResetTokenRecord(
+                    id=str(uuid.uuid4()),
+                    user_id=user.id,
+                    token=rst_token,
+                    expires_at=datetime.utcnow() + timedelta(hours=1),
+                    used=False,
+                    created_at=datetime.utcnow(),
+                )
+                db.add(record)
+                db.commit()
+
+            reset_url = f"{_APP_BASE_URL}/reset-password?token={rst_token}"
+            await asyncio.to_thread(
+                send_email,
+                user.email,
+                "Reset your WorldStitch password",
+                _reset_email_html(user.username, reset_url),
+            )
+        except Exception as exc:
+            logger.warning("forgot_password background task failed: %s", exc)
+
+    asyncio.create_task(_send_reset())
+    return {"message": "If that email is registered, you'll receive a reset link shortly."}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    req: ResetPasswordRequest,
+    ctx: AppContext = Depends(get_ctx),
+):
+    """
+    Reset a user's password using a valid single-use reset token.
+    Marks the token used and updates the password hash.
+    """
+    engine = _get_engine(ctx)
+    if not engine:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+
+    from sqlalchemy.orm import Session as SASession
+
+    from WorldStitch.storage.sqlite_backend import PasswordResetTokenRecord
+
+    with SASession(engine) as db:
+        record = db.query(PasswordResetTokenRecord).filter_by(token=req.token).first()
+
+        if not record:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+        if record.used:
+            raise HTTPException(status_code=400, detail="This reset link has already been used")
+        if record.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=400, detail="This reset link has expired")
+
+        user = ctx.users.get_user(record.user_id)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+        # Hash and persist the new password
+        user.password_hash = ctx.users._hash_password(req.new_password)
+        ctx.users.update_user(user)
+        audit("PASSWORD_RESET", "auth", user.id, user_id=user.id)
+
+        # Consume the token
+        record.used = True
+        db.commit()
+
+    return {"message": "Password reset successfully. You can now sign in with your new password."}

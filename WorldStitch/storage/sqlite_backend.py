@@ -71,6 +71,33 @@ class UserRecord(Base):
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
     analytics_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
     system_role: Mapped[str] = mapped_column(String(20), nullable=False, default="user", server_default="user")
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
+
+
+class EmailVerificationTokenRecord(Base):
+    """Single-use email verification token."""
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    token: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class PasswordResetTokenRecord(Base):
+    """Single-use password reset token."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    token: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class GroupRecord(Base):
