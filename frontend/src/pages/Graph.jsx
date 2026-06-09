@@ -91,13 +91,13 @@ export default function Graph() {
     // Connection counts for node sizing
     const connCount = new Map();
     filteredRels.forEach(r => {
-      connCount.set(r.source_id, (connCount.get(r.source_id) || 0) + 1);
-      connCount.set(r.target_id, (connCount.get(r.target_id) || 0) + 1);
+      connCount.set(r.source_note_id, (connCount.get(r.source_note_id) || 0) + 1);
+      connCount.set(r.target_note_id, (connCount.get(r.target_note_id) || 0) + 1);
     });
 
     const linkData = filteredRels
-      .filter(r => nodeById.has(r.source_id) && nodeById.has(r.target_id))
-      .map(r => ({ ...r, source: r.source_id, target: r.target_id }));
+      .filter(r => nodeById.has(r.source_note_id) && nodeById.has(r.target_note_id))
+      .map(r => ({ ...r, source: r.source_note_id, target: r.target_note_id }));
 
     // Arrowhead marker
     const defs = svg.append('defs');
@@ -147,8 +147,8 @@ export default function Graph() {
       .join('line')
         .attr('stroke', '#7c5cfc')
         .attr('stroke-opacity', 0.35)
-        .attr('stroke-width', d => Math.max(1, (d.weight || 1) * 1.5))
-        .attr('marker-end', d => d.direction === 'unidirectional' ? 'url(#ws-arrow)' : null)
+        .attr('stroke-width', 1.5)
+        .attr('marker-end', null)
         .style('cursor', 'default')
         .on('mouseenter', (event, d) => {
           setTooltip({

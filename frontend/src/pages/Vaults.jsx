@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Layers, Plus, Globe, Copy, Check, Trash2, X, Eye, EyeOff, Mail, RefreshCw, Ban } from 'lucide-react';
+import { Layers, Plus, Globe, Copy, Check, Trash2, X, Eye, EyeOff, Mail, RefreshCw, Ban, Users, ChevronDown, UserMinus } from 'lucide-react';
 import Button from '@/components/Button';
 import Input, { TextArea } from '@/components/Input';
-import { vaults as vaultsApi, vaultInvites as vaultInvitesApi } from '@/api';
+import { vaults as vaultsApi, vaultInvites as vaultInvitesApi, vaultMembers as vaultMembersApi } from '@/api';
 import { useVault } from '@/context/VaultContext';
 
 const VAULT_TYPE_OPTIONS = [
@@ -15,6 +15,95 @@ const VAULT_TYPE_OPTIONS = [
   { value: 'film', label: 'Film / TV' },
   { value: 'custom', label: 'Custom' },
 ];
+
+const VAULT_ROLES = ['owner', 'admin', 'editor', 'viewer', 'player'];
+
+const ROLE_COLORS = {
+  owner:  'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
+  admin:  'bg-red-500/15 text-red-400 border-red-500/30',
+  editor: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+  viewer: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30',
+  player: 'bg-green-500/15 text-green-400 border-green-500/30',
+};
+
+function RoleBadge({ role }) {
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${ROLE_COLORS[role] ?? ROLE_COLORS.viewer}`}>
+      {role}
+    </span>
+  );
+}
+
+function MemberInitials({ username }) {
+  const initials = (username || '?').slice(0, 2).toUpperCase();
+  return (
+    <div className="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center text-xs font-bold flex-shrink-0">
+      {initials}
+    </div>
+  );
+}
+
+function MembersPanel({ members, vaultOwnerId, currentUser, canManage, onChangeRole, onRemove }) {
+  return (
+    <div className="space-y-4 max-w-lg">
+      <div className="flex items-center gap-2 mb-1">
+        <Users size={16} className="text-txt-muted" />
+        <h3 className="text-sm font-semibold text-txt">Members of the Realm</h3>
+        <span className="text-xs text-txt-muted">({members.length})</span>
+      </div>
+
+      {members.length === 0 ? (
+        <p className="text-txt-muted text-sm italic">No members yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {members.map((m) => {
+            const isOwner = m.vault_role === 'owner' || m.user_id === vaultOwnerId;
+            const isSelf = m.user_id === currentUser?.id;
+            return (
+              <div
+                key={m.user_id}
+                className="flex items-center gap-3 bg-elevated rounded-xl px-4 py-3"
+              >
+                <MemberInitials username={m.username ?? m.email} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-txt truncate">
+                    {m.username ?? m.email ?? m.user_id}
+                    {isSelf && <span className="ml-1.5 text-[10px] text-txt-muted">(you)</span>}
+                  </div>
+                  {m.email && m.username && (
+                    <div className="text-xs text-txt-muted truncate">{m.email}</div>
+                  )}
+                </div>
+                {canManage && !isOwner ? (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <select
+                      value={m.vault_role}
+                      onChange={(e) => onChangeRole(m.user_id, e.target.value)}
+                      className="text-xs bg-surface border border-border-subtle rounded-lg px-2 py-1 text-txt focus:outline-none focus:border-accent"
+                    >
+                      {VAULT_ROLES.filter(r => r !== 'owner').map(r => (
+                        <option key={r} value={r} className="capitalize">{r}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => onRemove(m.user_id)}
+                      className="text-txt-muted hover:text-danger transition-colors p-1"
+                      title="Remove member"
+                    >
+                      <UserMinus size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <RoleBadge role={m.vault_role} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
   const [tab, setTab] = useState('overview');
@@ -72,6 +161,23 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
     queryKey: ['vault-invites', vault.id],
     queryFn: () => vaultInvitesApi.list(vault.id),
     enabled: canInvite,
+  });
+
+  const { data: membersList = [], refetch: refetchMembers } = useQuery({
+    queryKey: ['vault-members', vault.id],
+    queryFn: () => vaultMembersApi.list(vault.id),
+  });
+
+  const changeRoleMutation = useMutation({
+    mutationFn: ({ userId, vault_role }) => vaultMembersApi.updateRole(vault.id, userId, vault_role),
+    onSuccess: () => { refetchMembers(); toast.success('Role updated'); },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: (userId) => vaultMembersApi.remove(vault.id, userId),
+    onSuccess: () => { refetchMembers(); toast.success('Member removed'); },
+    onError: (err) => toast.error(err.message),
   });
 
   const saveVaultKeyMutation = useMutation({
@@ -150,7 +256,7 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
       </div>
 
       <div className="flex gap-1 px-6 pt-4 border-b border-border-subtle">
-        {['overview', 'access', 'settings'].map((t) => (
+        {['overview', 'members', 'access', 'settings'].map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -202,12 +308,23 @@ function VaultDetailPanel({ vault, user, onRefresh, onDelete }) {
               </Button>
             </div>
             <div className="pt-4 text-xs text-txt-muted space-y-1">
-              <div>Members: {(vault.members?.length ?? 0) + 1}</div>
+              <div>Members: {membersList.length || '—'}</div>
               {vault.created_at && (
                 <div>Created: {new Date(vault.created_at).toLocaleDateString()}</div>
               )}
             </div>
           </div>
+        )}
+
+        {tab === 'members' && (
+          <MembersPanel
+            members={membersList}
+            vaultOwnerId={vault.owner_id}
+            currentUser={user}
+            canManage={isOwner || isPlatformAdmin}
+            onChangeRole={(userId, vault_role) => changeRoleMutation.mutate({ userId, vault_role })}
+            onRemove={(userId) => removeMemberMutation.mutate(userId)}
+          />
         )}
 
         {tab === 'access' && (
@@ -565,8 +682,8 @@ export default function Vaults({ user }) {
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-txt-muted mt-0.5">
-                  {(vault.members?.length ?? 0) + 1} member{((vault.members?.length ?? 0) + 1) !== 1 ? 's' : ''}
+                <div className="text-xs text-txt-muted mt-0.5 capitalize">
+                  {vault.vault_type?.replace('_', ' ') || 'worldbuilding'}
                 </div>
               </button>
             ))

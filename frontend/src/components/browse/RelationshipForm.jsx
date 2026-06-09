@@ -21,20 +21,16 @@ export default function RelationshipForm({
 }) {
 	const isEdit = !!existing;
 
-	const [targetId, setTargetId] = useState(existing?.target_id ?? "");
+	const [targetId, setTargetId] = useState(existing?.target_note_id ?? "");
 	const [targetInput, setTargetInput] = useState(() => {
-		if (existing?.target_id && allNotes) {
-			const found = allNotes.find((n) => n.id === existing.target_id);
-			return found ? found.title : existing.target_id;
+		if (existing?.target_note_id && allNotes) {
+			const found = allNotes.find((n) => n.id === existing.target_note_id);
+			return found ? found.title : existing.target_note_id;
 		}
 		return "";
 	});
 	const [relType, setRelType] = useState(existing?.relationship_type ?? "");
-	const [direction, setDirection] = useState(
-		existing?.direction ?? "bidirectional",
-	);
 	const [label, setLabel] = useState(existing?.label ?? "");
-	const [weight, setWeight] = useState(existing?.weight ?? 1.0);
 	const [error, setError] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [activeCategory, setActiveCategory] = useState(null);
@@ -53,13 +49,6 @@ export default function RelationshipForm({
 		}
 	}, [types, activeCategory]);
 
-	// Auto-set direction from type registry.
-	useEffect(() => {
-		if (!isEdit && relType) {
-			const entry = types.find((t) => t.type === relType);
-			if (entry) setDirection(entry.default_direction ?? "bidirectional");
-		}
-	}, [relType, isEdit, types]);
 
 	const grouped = groupByCategory(types);
 	const categories = Object.keys(grouped);
@@ -84,18 +73,14 @@ export default function RelationshipForm({
 			if (isEdit) {
 				await relApi.update(existing.id, {
 					relationship_type: relType,
-					direction,
 					label: label.trim() || null,
-					weight,
 				});
 			} else {
 				await relApi.create({
-					source_id: entityId,
-					target_id: targetId.trim(),
+					source_note_id: entityId,
+					target_note_id: targetId.trim(),
 					relationship_type: relType,
-					direction,
 					label: label.trim() || null,
-					weight,
 					vault_id: vaultId,
 				});
 			}
@@ -201,77 +186,18 @@ export default function RelationshipForm({
 				)}
 			</div>
 
-			{/* Advanced options — collapsed by default */}
-			<details className="mb-1">
-				<summary className="text-[10px] text-txt-muted cursor-pointer hover:text-txt select-none">
-					Advanced options ▾
-				</summary>
-				<div className="mt-2 space-y-2 pl-2 border-l border-txt-muted/10">
-					{/* Direction */}
-					<div>
-						<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-							Direction
-						</p>
-						<div className="flex gap-2">
-							<button
-								type="button"
-								onClick={() => setDirection("bidirectional")}
-								className={`text-xs px-2.5 py-1 rounded-lg border transition ${
-									direction === "bidirectional"
-										? "bg-accent text-white border-accent"
-										: "border-txt-muted/20 text-txt hover:border-accent/50"
-								}`}
-							>
-								↔ Both ways
-							</button>
-							<button
-								type="button"
-								onClick={() => setDirection("unidirectional")}
-								className={`text-xs px-2.5 py-1 rounded-lg border transition ${
-									direction === "unidirectional"
-										? "bg-accent text-white border-accent"
-										: "border-txt-muted/20 text-txt hover:border-accent/50"
-								}`}
-							>
-								→ One way
-							</button>
-						</div>
-					</div>
-
-					{/* Label */}
-					<div>
-						<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-							Label{" "}
-							<span className="normal-case font-normal">(optional)</span>
-						</p>
-						<input
-							value={label}
-							onChange={(e) => setLabel(e.target.value)}
-							placeholder="Custom display label…"
-							className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-						/>
-					</div>
-
-					{/* Weight */}
-					<div>
-						<p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-1">
-							Weight{" "}
-							<span className="normal-case font-normal text-txt-muted">
-								{weight.toFixed(2)}
-							</span>
-						</p>
-						<input
-							type="range"
-							min="0"
-							max="1"
-							step="0.05"
-							value={weight}
-							onChange={(e) => setWeight(parseFloat(e.target.value))}
-							className="w-full accent-[var(--color-accent)]"
-						/>
-					</div>
-				</div>
-			</details>
+			{/* Label (optional) */}
+			<div>
+				<label className="text-[10px] uppercase tracking-widest text-txt-muted font-bold block mb-1">
+					Label <span className="normal-case font-normal">(optional)</span>
+				</label>
+				<input
+					value={label}
+					onChange={(e) => setLabel(e.target.value)}
+					placeholder="Custom display label…"
+					className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+				/>
+			</div>
 
 			{/* Error */}
 			{error && (
