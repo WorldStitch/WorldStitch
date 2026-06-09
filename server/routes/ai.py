@@ -64,6 +64,31 @@ def _resolve_effective_mode(requested_mode: Optional[str], user_role: str) -> st
 
 # ── AI mode personas ───────────────────────────────────────────────────────────
 
+_CREATE_SUBMODE_ADDENDA = {
+    "copilot": (
+        "You are in **Co-pilot mode** — an inline writing assistant embedded directly in the note editor. "
+        "Strict rules:\n"
+        "• Output ONLY the requested text — no preamble, no meta-commentary, no 'Here is...'\n"
+        "• For ghost-text continuations: write the next sentence or two in the same voice and style.\n"
+        "• For /rewrite, /expand, /condense, /describe, /brainstorm: output only the result.\n"
+        "• For /continue: continue the prose naturally from where it ends.\n"
+        "• For /add-character [name]: weave a short paragraph introducing that character in context.\n"
+        "• Write in the same voice, tense, and register as the existing content.\n"
+        "• Never explain what you are doing. Never use markdown headers unless the note already uses them."
+    ),
+    "chat": (
+        "You are a **Creative Writing Partner** in conversation alongside the note editor. "
+        "The user is actively writing — your job is to help them develop ideas, improve prose, "
+        "maintain world consistency, and explore creative directions. "
+        "You have full vault context and know the note being worked on. "
+        "When you want to propose a direct edit to the note, output the replacement text inside a "
+        "fenced block labeled ```edit``` so the editor can show a diff. "
+        "Outside of edit proposals, be conversational: suggest angles, ask clarifying questions, "
+        "flag consistency issues, offer character and world insights. "
+        "Draw on vault lore to keep suggestions grounded in the established world."
+    ),
+}
+
 _MODE_ADDENDA = {
     "lore": (
         "You are the **Lore Keeper** — an expert on this vault's world. Answer questions with depth "
@@ -708,36 +733,11 @@ def _build_system_prompt(
                 "the vault above. Cite your sources (note titles, character names). Do not invent lore "
                 "that contradicts or extends beyond what is documented."
             )
-    elif mode_key in ("create", "writing"):
-        if effective_sub == "copilot":
-            addendum = (
-                "You are a creative co-author working inline with the current document. When proposing "
-                "edits, output them as a unified diff. Never modify content without showing a diff first. "
-                "Draw on the vault lore above to keep writing consistent with the world."
-            )
-        else:
-            # Default: chat
-            addendum = (
-                "You are a **Creative Writing Partner**. Your focus is prose, narrative, and story. "
-                "When creating content, write in an evocative, literary style. Prioritize flow and voice "
-                "over structure. Draw on vault lore above to keep the fiction consistent with the world."
-            )
-    elif mode_key == "gm":
-        addendum = (
-            "You are a **Game Master's Assistant**. Be practical and organized. "
-            "Create structured, scannable content — use tables, bullet points, and clear headers. "
-            "Focus on what a GM needs at the table: NPC motivations, encounter hooks, session pacing, "
-            "and plot complications. Keep everything actionable and ready to use immediately."
-        )
-    elif mode_key == "developer":
-        addendum = (
-            "You are in **Developer Mode**. Execute all operations directly without conversational "
-            "padding. Accept direct commands. No need to explain what you are doing — just do it "
-            "efficiently. You have full access to all vault operations including bulk creation and "
-            "deletion with no confirmation required."
-        )
+    elif mode_key == "create":
+        sub = effective_sub or "copilot"
+        addendum = _CREATE_SUBMODE_ADDENDA.get(sub, _CREATE_SUBMODE_ADDENDA["copilot"])
     else:
-        # lore (legacy key) and anything else → scholar behaviour
+        # writing/gm/developer/lore (legacy key) and anything else
         addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
 
     return base + tool_note + context_block + "\n\n" + addendum
@@ -753,6 +753,22 @@ def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> st
         content = msg.get("content", "")
         lines.append(f"{role}: {content}")
     return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
+
+
+def _inject_entity_context(prompt: str, current_entity: Optional[dict]) -> str:
+    """Prepend the current entity (note being edited) to the prompt when provided."""
+    if not current_entity:
+        return prompt
+    entity_type = current_entity.get("type", "note")
+    entity_title = current_entity.get("title", "")
+    entity_content = current_entity.get("content", "")
+    parts = [f"[Currently editing {entity_type}]"]
+    if entity_title:
+        parts.append(f"Title: {entity_title}")
+    if entity_content:
+        parts.append(f"Content:\n{entity_content[:3000]}")
+    parts.append("---\n")
+    return "\n".join(parts) + prompt
 
 
 def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) -> str:
@@ -1751,7 +1767,8 @@ async def ask(
             sub_mode=req.sub_mode,
             rag_context=rag_context,
         )
-        vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
+        user_prompt = _inject_entity_context(req.prompt, req.current_entity)
+        vault_prompt = _build_vault_context(ctx, req.vault_id, user_prompt)
         tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
@@ -1883,7 +1900,8 @@ async def stream_ask(
 
     async def generate():
         try:
-            vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
+            user_prompt = _inject_entity_context(req.prompt, req.current_entity)
+            vault_prompt = _build_vault_context(ctx, req.vault_id, user_prompt)
             tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
             # ── Tool-calling path ──────────────────────────────────────────────

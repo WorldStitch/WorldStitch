@@ -741,6 +741,7 @@ export default function Browse({ user }) {
             editingPresence={editingPresence}
             onCursorChange={(cursor) => selectedNoteId && updateCursor(selectedNoteId, cursor)}
             onNavigate={(label) => handleNavigateByLink(label, 'note', label)}
+            vaultId={activeVaultId}
           />
 
           {/* RIGHT PANEL — 280px, collapsible */}
