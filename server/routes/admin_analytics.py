@@ -19,9 +19,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from server.deps import get_ctx, require_admin
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-from server.deps import get_ctx, require_admin
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin-analytics"])
 

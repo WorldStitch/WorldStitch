@@ -8,6 +8,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
+import Explore from "./pages/Explore";
 import Browse from "./pages/Browse";
 import Characters from "./pages/Characters";
 import Create from "./pages/Create";
@@ -198,6 +199,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Dashboard user={user} />} />
                 <Route path="/chat" element={<Chat user={user} />} />
+                <Route path="/explore" element={<Explore user={user} />} />
                 <Route path="/browse" element={<Browse user={user} />} />
                 <Route path="/graph" element={<Graph user={user} />} />
                 <Route path="/characters" element={<Characters />} />

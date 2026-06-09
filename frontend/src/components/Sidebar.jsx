@@ -11,6 +11,7 @@ import {
   Settings,
   LogOut,
   ShieldCheck,
+  Compass,
 } from 'lucide-react';
 import { useRealtime } from '@/context/RealtimeContext';
 
@@ -23,6 +24,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
 
   const mainItems = [
     { icon: Home, label: 'Dashboard', path: '/' },
+    { icon: Compass, label: 'Explore', path: '/explore' },
     { icon: Sparkles, label: 'AI', path: '/chat' },
   ];
 

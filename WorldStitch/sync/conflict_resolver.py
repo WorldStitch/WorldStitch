@@ -22,7 +22,6 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Default strategy — change here or expose via config UI when settings_manager
 # is introduced.
