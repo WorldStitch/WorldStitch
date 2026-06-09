@@ -244,23 +244,15 @@ export const folders = {
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
   status: () => request("GET", "/ai/status"),
-<<<<<<< HEAD
-  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null, extras = {}) =>
-=======
   ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null, opts = {}) =>
->>>>>>> origin/main
     request("POST", "/ai/ask", {
       prompt,
       history,
       vault_id: vaultId,
       mode,
       conversation_id: conversationId,
-<<<<<<< HEAD
-      ...extras,
-=======
       ...(opts.sub_mode ? { sub_mode: opts.sub_mode } : {}),
       ...(opts.current_entity ? { current_entity: opts.current_entity } : {}),
->>>>>>> origin/main
     }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>

@@ -20,7 +20,8 @@ from sqlalchemy import Date, Integer, String, Text, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 try:
-    from cryptography.fernet import Fernet, InvalidToken as _InvalidToken
+    from cryptography.fernet import Fernet
+    from cryptography.fernet import InvalidToken as _InvalidToken
 
     _HAS_FERNET = True
 except ImportError:
