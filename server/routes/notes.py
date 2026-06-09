@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from server.analytics import track as analytics_track
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
+from server.embeddings import embed_entity, get_api_key_for_vault
 from server.realtime import hub
 from server.vault_access import resolve_vault
 from WorldStitch.context.app_context import AppContext
@@ -641,6 +642,19 @@ async def create_note(
         _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.created", user_id=user.id, vault_id=vault_id))
+        # Fire-and-forget embedding — does not block the response
+        _embed_key = get_api_key_for_vault(vault_id, user, ctx)
+        _embed_engine = getattr(ctx.storage, "engine", None)
+        if _embed_key and _embed_engine:
+            asyncio.create_task(
+                embed_entity(
+                    "notes",
+                    note.id,
+                    f"{note.title}\n\n{note.content or ''}",
+                    _embed_key,
+                    _embed_engine,
+                )
+            )
         return _note_to_detail(note)
     except Exception as e:
         raise HTTPException(
@@ -695,6 +709,19 @@ async def update_note(
         _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.updated", user_id=user.id, vault_id=note.vault_id))
+        # Fire-and-forget re-embedding
+        _embed_key = get_api_key_for_vault(note.vault_id, user, ctx)
+        _embed_engine = getattr(ctx.storage, "engine", None)
+        if _embed_key and _embed_engine:
+            asyncio.create_task(
+                embed_entity(
+                    "notes",
+                    note.id,
+                    f"{note.title}\n\n{getattr(note, 'content', '') or ''}",
+                    _embed_key,
+                    _embed_engine,
+                )
+            )
         return _note_to_detail(note)
     except HTTPException:
         raise

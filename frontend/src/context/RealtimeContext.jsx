@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { getToken, getWsBase, auth } from '@/api';
 
 const RealtimeContext = createContext(null);
 
 export function RealtimeProvider({ user, activeVaultId, children }) {
+  const queryClient = useQueryClient();
   const socketRef = useRef(null);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [editing, setEditing] = useState([]);
@@ -50,6 +52,24 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
           if (payload.type === 'presence.snapshot') {
             setOnlineUsers(payload.users || []);
             setEditing(payload.editing || []);
+          }
+          if (payload.type === 'ai_tool_executed') {
+            // Invalidate relevant cache keys so the UI refreshes automatically
+            // after the AI mutates vault data (create/update/delete).
+            const entityType = payload.entity_type;
+            if (entityType === 'note' || entityType === 'folder') {
+              queryClient.invalidateQueries({ queryKey: ['notes'] });
+              queryClient.invalidateQueries({ queryKey: ['folders'] });
+            } else if (entityType === 'character') {
+              queryClient.invalidateQueries({ queryKey: ['characters'] });
+            } else if (entityType === 'map') {
+              queryClient.invalidateQueries({ queryKey: ['maps'] });
+            } else {
+              // Generic fallback — refresh everything browseable
+              queryClient.invalidateQueries({ queryKey: ['notes'] });
+              queryClient.invalidateQueries({ queryKey: ['characters'] });
+              queryClient.invalidateQueries({ queryKey: ['maps'] });
+            }
           }
         } catch {
           // Ignore malformed events

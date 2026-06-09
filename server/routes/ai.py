@@ -30,7 +30,10 @@ from sqlalchemy.orm import Session
 
 from server.analytics import track as analytics_track
 from server.deps import PLATFORM_ADMIN, PLATFORM_KEY_ROLES, get_ctx, get_current_user
+from server.embeddings import get_api_key_for_vault
 from server.limiter import limiter
+from server.rag import build_context, format_context_for_prompt
+from server.realtime import hub
 from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
@@ -552,8 +555,10 @@ class AskRequest(BaseModel):
     vault_id: Optional[str] = None
     history: Optional[list[dict]] = None
     mode: Optional[str] = "lore"
+    sub_mode: Optional[str] = None  # "scholar"|"immersive" for explore; "copilot"|"chat" for create
     conversation_id: Optional[str] = None
     attachments: Optional[list[AttachmentItem]] = None
+    current_entity: Optional[dict] = None  # {type: "note"|"character"|"map", id: str, content: str}
 
 
 class AskResponse(BaseModel):
@@ -626,10 +631,19 @@ class ConversationResponse(BaseModel):
 # ============================================================================
 
 
-def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], mode: Optional[str]) -> str:
+def _build_system_prompt(
+    ctx: AppContext,
+    user: User,
+    vault_id: Optional[str],
+    mode: Optional[str],
+    sub_mode: Optional[str] = None,
+    rag_context: Optional[dict] = None,
+) -> str:
     """
     Build the WorldStitch identity system prompt.
     Injected as a system message before every AI call — never skipped.
+    When rag_context is provided, injects structured vault context before the
+    mode-specific addendum.
     """
     username = getattr(user, "username", None) or getattr(user, "email", "explorer")
     vault_name = "your vault"
@@ -669,9 +683,64 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
         "If asked to create multiple items, use bulk_create_notes or call create_note multiple times."
     )
 
+    # ── Inject RAG context block ──────────────────────────────────────────────
+    context_block = ""
+    if rag_context:
+        formatted = format_context_for_prompt(rag_context)
+        if formatted:
+            context_block = f"\n\n---\n{formatted}\n---"
+
+    # ── Mode-specific addenda (aligned with CLAUDE.md AI modes spec) ──────────
     mode_key = (mode or "lore").lower()
-    addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
-    return base + tool_note + "\n\n" + addendum
+    effective_sub = (sub_mode or "").lower()
+
+    if mode_key in ("explore",):
+        if effective_sub == "immersive":
+            addendum = (
+                "You are the narrator of this world. Stay in voice. Use the vault content above as your "
+                "ground truth — never contradict established lore. The user is experiencing the world "
+                "first-hand. Speak as the world speaks."
+            )
+        else:
+            # Default: scholar
+            addendum = (
+                "You are a deep expert on this world. Answer questions using only what is established in "
+                "the vault above. Cite your sources (note titles, character names). Do not invent lore "
+                "that contradicts or extends beyond what is documented."
+            )
+    elif mode_key in ("create", "writing"):
+        if effective_sub == "copilot":
+            addendum = (
+                "You are a creative co-author working inline with the current document. When proposing "
+                "edits, output them as a unified diff. Never modify content without showing a diff first. "
+                "Draw on the vault lore above to keep writing consistent with the world."
+            )
+        else:
+            # Default: chat
+            addendum = (
+                "You are a **Creative Writing Partner**. Your focus is prose, narrative, and story. "
+                "When creating content, write in an evocative, literary style. Prioritize flow and voice "
+                "over structure. Draw on vault lore above to keep the fiction consistent with the world."
+            )
+    elif mode_key == "gm":
+        addendum = (
+            "You are a **Game Master's Assistant**. Be practical and organized. "
+            "Create structured, scannable content — use tables, bullet points, and clear headers. "
+            "Focus on what a GM needs at the table: NPC motivations, encounter hooks, session pacing, "
+            "and plot complications. Keep everything actionable and ready to use immediately."
+        )
+    elif mode_key == "developer":
+        addendum = (
+            "You are in **Developer Mode**. Execute all operations directly without conversational "
+            "padding. Accept direct commands. No need to explain what you are doing — just do it "
+            "efficiently. You have full access to all vault operations including bulk creation and "
+            "deletion with no confirmation required."
+        )
+    else:
+        # lore (legacy key) and anything else → scholar behaviour
+        addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
+
+    return base + tool_note + context_block + "\n\n" + addendum
 
 
 def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
@@ -901,14 +970,16 @@ def _set_user_ctx_for_tools(ctx: AppContext, user: User) -> None:
     )
 
 
-def _execute_tool_call(
+async def _execute_tool_call(
     tool_name: str,
     tool_args: dict,
     ctx: AppContext,
     vault_id: str,
     user: User,
 ) -> dict:
-    """Execute a single AI tool call against the database. Returns a result dict."""
+    """Execute a single AI tool call against the database. Returns a result dict.
+    Broadcasts an ai_tool_executed WebSocket event after mutating operations.
+    Must remain async def — see CLAUDE.md architecture notes."""
     logger.info("[tool] executing %s  args=%s", tool_name, tool_args)
     _set_user_ctx_for_tools(ctx, user)
 
@@ -930,6 +1001,16 @@ def _execute_tool_call(
                 folder_id=folder_id,
                 tags=tags,
             )
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "note",
+                    "entity_id": note.id,
+                    "action": "created",
+                },
+            )
             return {"success": True, "note_id": note.id, "title": note.title}
 
         elif tool_name == "create_folder":
@@ -949,6 +1030,16 @@ def _execute_tool_call(
                 parent_id=parent_id,
                 description=description,
             )
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "folder",
+                    "entity_id": folder.id,
+                    "action": "created",
+                },
+            )
             return {"success": True, "folder_id": folder.id, "name": folder.name}
 
         elif tool_name == "update_note":
@@ -967,6 +1058,16 @@ def _execute_tool_call(
             if tool_args.get("tags") is not None:
                 note.tags = tool_args["tags"]
             ctx.notes.update_note(note, actor_id=str(user.id))
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "note",
+                    "entity_id": note.id,
+                    "action": "updated",
+                },
+            )
             return {"success": True, "note_id": note.id, "title": note.title}
 
         elif tool_name == "create_character":
@@ -986,6 +1087,16 @@ def _execute_tool_call(
                 ai_memory=None,
             )
             ctx.storage.save_character(char)
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "character",
+                    "entity_id": char.id,
+                    "action": "created",
+                },
+            )
             return {"success": True, "character_id": char.id, "name": char.name}
 
         elif tool_name == "bulk_create_notes":
@@ -1003,6 +1114,16 @@ def _execute_tool_call(
                     tags=["ai-generated"],
                 )
                 created.append({"note_id": note.id, "title": note.title})
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "note",
+                    "entity_id": None,
+                    "action": "created",
+                },
+            )
             return {"success": True, "created_count": len(created), "notes": created}
 
         elif tool_name == "search_vault":
@@ -1205,6 +1326,16 @@ def _execute_tool_call(
             if tool_args.get("description") is not None:
                 char.description = tool_args["description"]
             ctx.characters.update_character(char)
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "character",
+                    "entity_id": char.id,
+                    "action": "updated",
+                },
+            )
             return {"success": True, "character_id": char.id, "name": char.name}
 
         elif tool_name == "delete_note":
@@ -1224,6 +1355,16 @@ def _execute_tool_call(
                     "note_id": note_id,
                 }
             ctx.storage.soft_delete_note(note_id)
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "note",
+                    "entity_id": note_id,
+                    "action": "deleted",
+                },
+            )
             return {"success": True, "deleted_note_id": note_id, "title": note.title}
 
         elif tool_name == "delete_character":
@@ -1243,6 +1384,16 @@ def _execute_tool_call(
                     "character_id": character_id,
                 }
             ctx.storage.soft_delete_character(character_id)
+            await hub.broadcast(
+                vault_id,
+                {
+                    "type": "ai_tool_executed",
+                    "tool": tool_name,
+                    "entity_type": "character",
+                    "entity_id": character_id,
+                    "action": "deleted",
+                },
+            )
             return {"success": True, "deleted_character_id": character_id, "name": char.name}
 
         elif tool_name == "delete_folder":
@@ -1361,15 +1512,24 @@ def _build_messages_for_tools(
     return messages
 
 
-def _make_tool_executor(ctx: AppContext, vault_id: str, user: User):
+def _make_tool_executor(ctx: AppContext, vault_id: str, user: User, loop=None):
     """
     Return a synchronous callable that executes a named tool and returns a result
     dict.  Suitable as the ``tool_executor`` argument to engine.ask_with_tools().
+
+    ``loop`` must be the running asyncio event loop from the main thread so the
+    async _execute_tool_call coroutine can be dispatched via
+    run_coroutine_threadsafe from worker threads.
     """
     _set_user_ctx_for_tools(ctx, user)
+    _loop = loop or asyncio.get_event_loop()
 
     def executor(tool_name: str, tool_args: dict) -> dict:
-        return _execute_tool_call(tool_name, tool_args, ctx, vault_id, user)
+        future = asyncio.run_coroutine_threadsafe(
+            _execute_tool_call(tool_name, tool_args, ctx, vault_id, user),
+            _loop,
+        )
+        return future.result(timeout=60)
 
     return executor
 
@@ -1383,6 +1543,7 @@ def _run_ask_with_tools(
     ctx: AppContext,
     vault_id: Optional[str],
     user: User,
+    loop=None,
 ) -> tuple:
     """
     Run one full tool-calling conversation and return
@@ -1391,6 +1552,10 @@ def _run_ask_with_tools(
     Delegates to engine.ask_with_tools() when available (covers both OpenaiAI
     directly and ModelRouter-wrapped engines).  Falls back to plain ask() when
     the engine does not support tools.
+
+    ``loop`` must be the asyncio event loop from the calling thread (captured
+    before asyncio.to_thread) so the sync executor can dispatch the async
+    _execute_tool_call back onto it via run_coroutine_threadsafe.
     """
     _vid = vault_id or ""
 
@@ -1401,7 +1566,7 @@ def _run_ask_with_tools(
         return text, pt, ct, []
 
     logger.info("[ai] calling ask_with_tools with %d tool(s)", len(tools))
-    executor = _make_tool_executor(ctx, _vid, user)
+    executor = _make_tool_executor(ctx, _vid, user, loop=loop)
 
     text, pt, ct, calls = ai_engine.ask_with_tools(
         vault_prompt,
@@ -1559,12 +1724,43 @@ async def ask(
         _apply_preferred_model(ctx)
         ai_engine = _get_ai_for_user(str(user.id), ctx)
         effective_mode = _resolve_effective_mode(req.mode, user.system_role)
-        system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
+
+        # Build RAG context (best-effort — never blocks the request if it fails)
+        rag_context: Optional[dict] = None
+        if req.vault_id:
+            try:
+                embedding_key = get_api_key_for_vault(req.vault_id, user, ctx)
+                engine = getattr(ctx.storage, "engine", None)
+                if engine is not None:
+                    rag_context = await build_context(
+                        query=req.prompt,
+                        vault_id=req.vault_id,
+                        current_entity=req.current_entity,
+                        mode=effective_mode,
+                        engine=engine,
+                        api_key=embedding_key,
+                    )
+            except Exception:
+                logger.debug("RAG context build failed — proceeding without vault context", exc_info=True)
+
+        system_prompt = _build_system_prompt(
+            ctx,
+            user,
+            req.vault_id,
+            effective_mode,
+            sub_mode=req.sub_mode,
+            rag_context=rag_context,
+        )
         vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
         tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
+
+        # Capture the running event loop here (in async context) so the
+        # sync tool executor inside the worker thread can dispatch async
+        # _execute_tool_call back onto it via run_coroutine_threadsafe.
+        _loop = asyncio.get_running_loop()
 
         # Run blocking OpenAI calls in a thread so we don't stall the event loop.
         response, prompt_tokens, completion_tokens, tool_results = await asyncio.to_thread(
@@ -1577,6 +1773,7 @@ async def ask(
             ctx,
             req.vault_id,
             user,
+            _loop,
         )
 
         cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
@@ -1656,7 +1853,33 @@ async def stream_ask(
         raise
 
     effective_mode = _resolve_effective_mode(req.mode, user.system_role)
-    system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
+
+    # Build RAG context before entering the generator so the system prompt is ready.
+    rag_context: Optional[dict] = None
+    if req.vault_id:
+        try:
+            embedding_key = get_api_key_for_vault(req.vault_id, user, ctx)
+            engine = getattr(ctx.storage, "engine", None)
+            if engine is not None:
+                rag_context = await build_context(
+                    query=req.prompt,
+                    vault_id=req.vault_id,
+                    current_entity=req.current_entity,
+                    mode=effective_mode,
+                    engine=engine,
+                    api_key=embedding_key,
+                )
+        except Exception:
+            logger.debug("RAG context build failed for stream — proceeding without vault context", exc_info=True)
+
+    system_prompt = _build_system_prompt(
+        ctx,
+        user,
+        req.vault_id,
+        effective_mode,
+        sub_mode=req.sub_mode,
+        rag_context=rag_context,
+    )
 
     async def generate():
         try:
@@ -1674,13 +1897,18 @@ async def stream_ask(
 
                 status_q: _queue.SimpleQueue = _queue.SimpleQueue()
                 _vid = req.vault_id or ""
+                _loop = asyncio.get_running_loop()
 
                 # Tool executor runs inside the worker thread; it pushes status
                 # labels into the queue so we can forward them as SSE events.
                 def _executor(tool_name: str, tool_args: dict) -> dict:
                     label = _tool_status_label(tool_name, tool_args)
                     status_q.put(("tool_status", label))
-                    result = _execute_tool_call(tool_name, tool_args, ctx, _vid, user)
+                    future = asyncio.run_coroutine_threadsafe(
+                        _execute_tool_call(tool_name, tool_args, ctx, _vid, user),
+                        _loop,
+                    )
+                    result = future.result(timeout=60)
                     status_q.put(("tool_status", ""))
                     return result
 
