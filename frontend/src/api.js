@@ -244,13 +244,14 @@ export const folders = {
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
   status: () => request("GET", "/ai/status"),
-  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null) =>
+  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null, extras = {}) =>
     request("POST", "/ai/ask", {
       prompt,
       history,
       vault_id: vaultId,
       mode,
       conversation_id: conversationId,
+      ...extras,
     }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
