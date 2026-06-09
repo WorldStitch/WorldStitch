@@ -244,14 +244,15 @@ export const folders = {
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
   status: () => request("GET", "/ai/status"),
-  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null, extras = {}) =>
+  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null, opts = {}) =>
     request("POST", "/ai/ask", {
       prompt,
       history,
       vault_id: vaultId,
       mode,
       conversation_id: conversationId,
-      ...extras,
+      ...(opts.sub_mode ? { sub_mode: opts.sub_mode } : {}),
+      ...(opts.current_entity ? { current_entity: opts.current_entity } : {}),
     }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
@@ -315,6 +316,16 @@ export const vaultInvites = {
   resend: (vaultId, inviteId) => request("POST", `/vaults/${encodeURIComponent(vaultId)}/invites/${inviteId}/resend`),
   validateToken: (token) => request("GET", `/invites/accept?token=${encodeURIComponent(token)}`),
   acceptToken: (token) => request("POST", "/invites/accept", { token }),
+};
+
+export const vaultMembers = {
+  list: (vaultId) => request("GET", `/vaults/${encodeURIComponent(vaultId)}/members`),
+  add: (vaultId, user_id, vault_role) =>
+    request("POST", `/vaults/${encodeURIComponent(vaultId)}/members`, { user_id, vault_role }),
+  updateRole: (vaultId, userId, vault_role) =>
+    request("PUT", `/vaults/${encodeURIComponent(vaultId)}/members/${encodeURIComponent(userId)}`, { vault_role }),
+  remove: (vaultId, userId) =>
+    request("DELETE", `/vaults/${encodeURIComponent(vaultId)}/members/${encodeURIComponent(userId)}`),
 };
 
 export const vaults = {

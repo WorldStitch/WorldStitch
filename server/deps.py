@@ -41,6 +41,20 @@ MOD_AND_ABOVE = {"owner", "admin", "mod"}
 # "guest" is intentionally excluded (unauthenticated / read-only tier).
 PLATFORM_KEY_ROLES = {"owner", "admin", "mod", "support", "tester", "beta", "user", "system"}
 
+# ── Vault role sets ───────────────────────────────────────────────────────────
+# Vault roles are separate from platform roles — a platform "user" can be a
+# vault "owner" within their own vault.
+#
+#   owner   — created the vault; full control including delete
+#   admin   — can manage members, content, settings
+#   editor  — can create/edit/delete notes, characters, maps
+#   viewer  — read-only access to vault content
+#   player  — TTRPG participant; can join sessions, limited content editing
+
+VAULT_ROLES = ["owner", "admin", "editor", "viewer", "player"]
+VAULT_EDITOR_AND_ABOVE = ["owner", "admin", "editor"]
+VAULT_ADMIN_AND_ABOVE = ["owner", "admin"]
+
 
 def set_app_context(ctx: AppContext) -> None:
     """Called once at startup to register the AppContext."""

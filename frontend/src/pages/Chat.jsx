@@ -9,6 +9,7 @@ import {
   isRateLimitError, RATE_LIMIT_MSG,
 } from '@/api';
 import { useVault } from '@/context/VaultContext';
+import { useAIContext } from '@/context/AIContext';
 
 const COST_PER_TOKEN = 0.000003;
 const MAX_STORED_MESSAGES = 200;
@@ -133,6 +134,7 @@ export default function Chat({ user }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { activeVaultId, vaults = [] } = useVault();
+  const { currentEntity } = useAIContext();
   const activeVault = vaults.find(v => v.id === activeVaultId);
   const vaultName = activeVault?.name || 'your vault';
   const storageKey = `ws_chat_${activeVaultId || 'global'}`;
@@ -350,7 +352,10 @@ export default function Chat({ user }) {
 
   const handleRegularAsk = async (userPrompt, history) => {
     try {
-      const response = await ai.ask(userPrompt, history, activeVaultId, mode, conversationId);
+      const response = await ai.ask(
+        userPrompt, history, activeVaultId, mode, conversationId,
+        { current_entity: currentEntity || undefined },
+      );
       const msgTokens = (response.prompt_tokens || 0) + (response.completion_tokens || 0);
       setSessionTokens(prev => prev + msgTokens);
       if (response.conversation_id) {
@@ -408,6 +413,7 @@ export default function Chat({ user }) {
           vault_id: activeVaultId,
           mode,
           conversation_id: conversationId,
+          ...(currentEntity ? { current_entity: currentEntity } : {}),
         }),
       });
 

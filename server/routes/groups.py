@@ -5,10 +5,10 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user, require_admin
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.group import Group
 from WorldStitch.models.user import User
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user, require_admin
 
 router = APIRouter()
 

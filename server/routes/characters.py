@@ -1,4 +1,4 @@
-﻿"""
+"""
 Character CRUD endpoints.
 
 GET  /characters?vault_id=&type=  — paginated list {items, total}
@@ -8,6 +8,7 @@ PUT  /characters/{id}             — partial update
 DELETE /characters/{id}           — soft delete
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -16,11 +17,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.deps import get_ctx, get_current_user
+from server.embeddings import embed_entity, get_api_key_for_vault
+from server.vault_access import resolve_vault
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.character import Character
 from WorldStitch.models.user import User
-from server.deps import get_ctx, get_current_user
-from server.vault_access import resolve_vault
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -175,6 +177,19 @@ async def create_character(
         )
         ctx.storage.save_character(char)
         ctx.analytics.track("character.created", user_id=user.id, data={"char_type": req.char_type})
+        # Fire-and-forget embedding
+        _embed_key = get_api_key_for_vault(effective_id, user, ctx)
+        _embed_engine = getattr(ctx.storage, "engine", None)
+        if _embed_key and _embed_engine:
+            asyncio.create_task(
+                embed_entity(
+                    "characters",
+                    char.id,
+                    f"{char.name}\n\n{char.description or ''}",
+                    _embed_key,
+                    _embed_engine,
+                )
+            )
         return _to_response(char)
     except Exception as exc:
         logger.exception("create_character failed")
@@ -216,6 +231,20 @@ async def update_character(
         char.last_modified = datetime.utcnow()
 
         ctx.storage.save_character(char)
+        # Fire-and-forget re-embedding
+        _vault_id = getattr(char, "vault_id", None) or getattr(char, "campaign_id", None) or ""
+        _embed_key = get_api_key_for_vault(_vault_id, user, ctx)
+        _embed_engine = getattr(ctx.storage, "engine", None)
+        if _embed_key and _embed_engine:
+            asyncio.create_task(
+                embed_entity(
+                    "characters",
+                    char.id,
+                    f"{char.name}\n\n{getattr(char, 'description', '') or ''}",
+                    _embed_key,
+                    _embed_engine,
+                )
+            )
         return _to_response(char)
     except Exception as exc:
         logger.exception("update_character failed")

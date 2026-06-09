@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
+from server.vault_access import resolve_vault
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.relationship import Relationship
 from WorldStitch.models.relationship_types import RELATIONSHIP_TYPES
 from WorldStitch.models.user import User
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
-from server.vault_access import resolve_vault
 
 router = APIRouter()
 

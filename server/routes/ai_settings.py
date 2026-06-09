@@ -12,9 +12,9 @@ POST   /admin/users/{user_id}/ai-limit   — admin: set a user's monthly limit
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from server.deps import get_ctx, get_current_user, require_admin
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
-from server.deps import get_ctx, get_current_user, require_admin
 
 router = APIRouter(tags=["ai-settings"])
 

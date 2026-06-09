@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
+from server.deps import PLATFORM_ADMIN, VAULT_ROLES, get_ctx, get_current_user
 from server.vault_access import list_accessible_vaults, resolve_vault
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
@@ -117,6 +117,12 @@ async def create_vault(
         description=body.description,
         vault_type=body.vault_type,
     )
+    # Insert the creator as vault owner in vault_members
+    if hasattr(ctx.storage, "add_vault_member"):
+        try:
+            ctx.storage.add_vault_member(vault.id, user.id, "owner")
+        except Exception:
+            logger.warning("create_vault: failed to insert vault_member for owner", exc_info=True)
     return _to_response(vault, ctx)
 
 
@@ -304,3 +310,98 @@ async def search_vault_notes(
     vault = resolve_vault(ctx, user, vault_id)
     result = ctx.storage.search_notes_fts(q, vault_id=vault.id, skip=offset, limit=limit)
     return result
+
+
+# ── Vault member management ───────────────────────────────────────────────────
+
+
+class AddMemberRequest(BaseModel):
+    user_id: str
+    vault_role: str = Field("viewer", description="owner/admin/editor/viewer/player")
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    vault_role: str = Field(..., description="owner/admin/editor/viewer/player")
+
+
+def _require_vault_admin(vault: Vault, user: User, ctx: AppContext) -> None:
+    """Raise 403 unless the user is vault owner/admin or platform admin."""
+    from server.vault_access import is_vault_admin
+
+    if not is_vault_admin(vault, user, ctx) and user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Vault admin required.")
+
+
+@router.get("/{vault_id}/members")
+async def list_vault_members(
+    vault_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """List all members of a vault with their roles."""
+    resolve_vault(ctx, user, vault_id)
+    if not hasattr(ctx.storage, "list_vault_members"):
+        return []
+    return ctx.storage.list_vault_members(vault_id)
+
+
+@router.post("/{vault_id}/members", status_code=status.HTTP_201_CREATED)
+async def add_vault_member(
+    vault_id: str,
+    body: AddMemberRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Add or update a vault member. Requires vault admin or platform admin."""
+    vault = resolve_vault(ctx, user, vault_id)
+    if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Vault admin required to manage members.")
+    if body.vault_role not in VAULT_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid vault_role. Must be one of: {', '.join(VAULT_ROLES)}",
+        )
+    if not hasattr(ctx.storage, "add_vault_member"):
+        raise HTTPException(status_code=501, detail="Vault member management not available.")
+    ctx.storage.add_vault_member(vault_id, body.user_id, body.vault_role, invited_by=user.id)
+    return {"added": True, "vault_id": vault_id, "user_id": body.user_id, "vault_role": body.vault_role}
+
+
+@router.put("/{vault_id}/members/{member_user_id}")
+async def update_vault_member_role(
+    vault_id: str,
+    member_user_id: str,
+    body: UpdateMemberRoleRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Change a vault member's role. Requires vault admin or platform admin."""
+    vault = resolve_vault(ctx, user, vault_id)
+    if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Vault admin required to manage members.")
+    if body.vault_role not in VAULT_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid vault_role. Must be one of: {', '.join(VAULT_ROLES)}",
+        )
+    if not hasattr(ctx.storage, "add_vault_member"):
+        raise HTTPException(status_code=501, detail="Vault member management not available.")
+    ctx.storage.add_vault_member(vault_id, member_user_id, body.vault_role)
+    return {"updated": True, "vault_id": vault_id, "user_id": member_user_id, "vault_role": body.vault_role}
+
+
+@router.delete("/{vault_id}/members/{member_user_id}")
+async def remove_vault_member(
+    vault_id: str,
+    member_user_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Remove a user from a vault. Requires vault admin or platform admin."""
+    vault = resolve_vault(ctx, user, vault_id)
+    if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
+        raise HTTPException(status_code=403, detail="Vault admin required to manage members.")
+    if not hasattr(ctx.storage, "remove_vault_member"):
+        raise HTTPException(status_code=501, detail="Vault member management not available.")
+    ctx.storage.remove_vault_member(vault_id, member_user_id)
+    return {"removed": True, "vault_id": vault_id, "user_id": member_user_id}
