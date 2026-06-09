@@ -3,37 +3,19 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Users, Plus, Search, Trash2, Save, X, AlertCircle, Layers } from 'lucide-react';
-import { characters as charsApi, notes as notesApi } from '@/api';
+import { characters as charsApi } from '@/api';
 import { useVault } from '@/context/VaultContext';
-import { useVaultTerms } from '@/hooks/useVaultTerms';
 import { SkeletonListItem } from '@/components/Skeleton';
-
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const EMPTY_FORM = {
   name: '',
-  char_type: 'npc',
-  race: '',
-  char_class: '',
-  attributes: [],
-  backstory: '',
-  ai_memory: '',
-  note_ids: [],
+  description: '',
+  image_url: '',
+  metadata: '{}',
   vault_id: '',
 };
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
 function CharCard({ char, isSelected, onClick }) {
-  const terms = useVaultTerms();
-  const typeLabels = {
-    player: terms.charTypePc,
-    npc: terms.charTypeNpc,
-    antagonist: terms.charTypeAntagonist,
-    background: terms.charTypeBackground,
-  };
-  const subtitle = [char.race, char.char_class].filter(Boolean).join(' · ');
-  const isAccent = char.char_type === 'player' || char.char_type === 'antagonist';
   return (
     <button
       onClick={onClick}
@@ -45,18 +27,9 @@ function CharCard({ char, isSelected, onClick }) {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-semibold text-txt truncate">{char.name}</span>
-        <span
-          className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
-            isAccent
-              ? 'bg-accent-soft text-accent'
-              : 'bg-surface-raised text-txt-muted'
-          }`}
-        >
-          {typeLabels[char.char_type] ?? char.char_type}
-        </span>
       </div>
-      {subtitle && (
-        <div className="text-xs text-txt-muted mt-0.5 truncate">{subtitle}</div>
+      {char.description && (
+        <div className="text-xs text-txt-muted mt-0.5 truncate">{char.description}</div>
       )}
     </button>
   );
@@ -81,12 +54,9 @@ function TextInput({ value, onChange, placeholder, className = '' }) {
   );
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
-
 export default function Characters() {
   const qc = useQueryClient();
   const { activeVaultId } = useVault();
-  const terms = useVaultTerms();
   const navigate = useNavigate();
 
   if (!activeVaultId) {
@@ -105,18 +75,18 @@ export default function Characters() {
     );
   }
 
-  const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [isCreating, setIsCreating] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [metaError, setMetaError] = useState('');
   const [dirty, setDirty] = useState(false);
 
   // ── Data queries ────────────────────────────────────────────────────────────
 
   const { data: listData, isLoading, isError, refetch } = useQuery({
-    queryKey: ['characters', activeVaultId, filter],
-    queryFn: () => charsApi.list(activeVaultId, filter === 'all' ? null : filter),
+    queryKey: ['characters', activeVaultId],
+    queryFn: () => charsApi.list(activeVaultId),
     enabled: !!activeVaultId,
   });
   const allChars = listData?.items ?? [];
@@ -125,33 +95,24 @@ export default function Characters() {
     if (isError) toast.error('Failed to load characters');
   }, [isError]);
 
-  const { data: notesData } = useQuery({
-    queryKey: ['notes', activeVaultId],
-    queryFn: () => notesApi.list('', '', activeVaultId),
-    enabled: !!activeVaultId,
-  });
-  const allNotes = Array.isArray(notesData) ? notesData : notesData?.items ?? [];
-
   const { data: selectedChar } = useQuery({
     queryKey: ['character', selectedId],
     queryFn: () => charsApi.get(selectedId),
     enabled: !!selectedId && !isCreating,
   });
 
-  // Populate form when a character is selected
   useEffect(() => {
     if (selectedChar && !isCreating) {
       setForm({
         name: selectedChar.name ?? '',
-        char_type: selectedChar.char_type ?? 'npc',
-        race: selectedChar.race ?? '',
-        char_class: selectedChar.char_class ?? '',
-        attributes: selectedChar.attributes ?? [],
-        backstory: selectedChar.backstory ?? '',
-        ai_memory: selectedChar.ai_memory ?? '',
-        note_ids: selectedChar.note_ids ?? [],
+        description: selectedChar.description ?? '',
+        image_url: selectedChar.image_url ?? '',
+        metadata: selectedChar.metadata
+          ? JSON.stringify(selectedChar.metadata, null, 2)
+          : '{}',
         vault_id: selectedChar.vault_id ?? activeVaultId,
       });
+      setMetaError('');
       setDirty(false);
     }
   }, [selectedChar, isCreating]);
@@ -197,12 +158,14 @@ export default function Characters() {
   const setField = (key, val) => {
     setForm((f) => ({ ...f, [key]: val }));
     setDirty(true);
+    if (key === 'metadata') setMetaError('');
   };
 
   const handleNew = () => {
     setIsCreating(true);
     setSelectedId(null);
     setForm({ ...EMPTY_FORM, vault_id: activeVaultId });
+    setMetaError('');
     setDirty(false);
   };
 
@@ -213,31 +176,23 @@ export default function Characters() {
   };
 
   const handleSave = () => {
-    if (isCreating) createMut.mutate(form);
-    else updateMut.mutate(form);
-  };
-
-  const addNote = (noteId) => {
-    if (noteId && !form.note_ids.includes(noteId)) {
-      setField('note_ids', [...form.note_ids, noteId]);
+    let parsedMeta = {};
+    try {
+      parsedMeta = form.metadata.trim() ? JSON.parse(form.metadata) : {};
+    } catch {
+      setMetaError('Metadata is not valid JSON');
+      return;
     }
+    const payload = {
+      name: form.name,
+      description: form.description,
+      image_url: form.image_url || null,
+      metadata: parsedMeta,
+      vault_id: form.vault_id || activeVaultId,
+    };
+    if (isCreating) createMut.mutate(payload);
+    else updateMut.mutate(payload);
   };
-
-  const removeNote = (noteId) => {
-    setField('note_ids', form.note_ids.filter((id) => id !== noteId));
-  };
-
-  const addAttribute = () =>
-    setField('attributes', [...(form.attributes || []), { key: '', value: '' }]);
-
-  const updateAttribute = (i, field, val) => {
-    const attrs = [...(form.attributes || [])];
-    attrs[i] = { ...attrs[i], [field]: val };
-    setField('attributes', attrs);
-  };
-
-  const removeAttribute = (i) =>
-    setField('attributes', (form.attributes || []).filter((_, idx) => idx !== i));
 
   const filtered = allChars.filter(
     (c) => !search || c.name.toLowerCase().includes(search.toLowerCase())
@@ -252,12 +207,11 @@ export default function Characters() {
     <div className="h-full flex overflow-hidden">
       {/* ── Left panel ────────────────────────────────────────────── */}
       <div className="w-[300px] border-r border-border-subtle flex flex-col h-full bg-surface flex-shrink-0">
-        {/* Header */}
         <div className="px-4 pt-5 pb-3 border-b border-border-subtle">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-lg font-bold text-txt flex items-center gap-2">
               <Users size={20} />
-              {terms.characters}
+              Characters
             </h1>
             <button
               onClick={handleNew}
@@ -268,8 +222,7 @@ export default function Characters() {
             </button>
           </div>
 
-          {/* Search */}
-          <div className="relative mb-2">
+          <div className="relative">
             <Search
               size={14}
               className="absolute left-3 top-1/2 -translate-y-1/2 text-txt-muted pointer-events-none"
@@ -282,30 +235,8 @@ export default function Characters() {
               className="w-full pl-8 pr-3 py-1.5 text-sm bg-base border border-border-subtle rounded-lg text-txt placeholder:text-txt-muted focus:outline-none focus:border-accent"
             />
           </div>
-
-          {/* Filter tabs */}
-          <div className="flex gap-1">
-            {[
-              { value: 'all', label: 'All' },
-              { value: 'player', label: terms.charTypePc },
-              { value: 'npc', label: terms.charTypeNpc },
-            ].map(({ value, label }) => (
-              <button
-                key={value}
-                onClick={() => setFilter(value)}
-                className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors ${
-                  filter === value
-                    ? 'bg-accent text-white'
-                    : 'bg-base text-txt-muted hover:text-txt'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
 
-        {/* Character list */}
         <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-2">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, i) => <SkeletonListItem key={i} />)
@@ -313,10 +244,7 @@ export default function Characters() {
             <div className="flex flex-col items-center gap-2 py-6 text-center">
               <AlertCircle size={20} className="text-red-400 opacity-70" />
               <p className="text-txt-muted text-xs">Failed to load characters.</p>
-              <button
-                onClick={() => refetch()}
-                className="text-xs text-accent hover:underline"
-              >
+              <button onClick={() => refetch()} className="text-xs text-accent hover:underline">
                 Retry
               </button>
             </div>
@@ -346,10 +274,9 @@ export default function Characters() {
           </div>
         ) : (
           <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
-            {/* ── Title + action buttons ─────────────────────────── */}
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-xl font-bold text-txt truncate">
-                {isCreating ? `New ${terms.character}` : (form.name || 'Unnamed')}
+                {isCreating ? 'New Character' : (form.name || 'Unnamed')}
               </h2>
               <div className="flex gap-2 flex-shrink-0">
                 <button
@@ -373,164 +300,64 @@ export default function Characters() {
               </div>
             </div>
 
-            {/* ── Identity fields ────────────────────────────────── */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <FieldLabel>Name</FieldLabel>
-                <TextInput
-                  value={form.name}
-                  onChange={(v) => setField('name', v)}
-                  placeholder="Character name"
-                />
-              </div>
-
-              <div className="col-span-2">
-                <FieldLabel>Type</FieldLabel>
-                <select
-                  value={form.char_type}
-                  onChange={(e) => setField('char_type', e.target.value)}
-                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
-                >
-                  <option value="player">{terms.charTypePc}</option>
-                  <option value="npc">{terms.charTypeNpc}</option>
-                </select>
-              </div>
-
-              <div>
-                <FieldLabel>{terms.charSpecies}</FieldLabel>
-                <TextInput
-                  value={form.race}
-                  onChange={(v) => setField('race', v)}
-                  placeholder="e.g. Human, Elf, Android…"
-                />
-              </div>
-
-              <div>
-                <FieldLabel>{terms.charRole}</FieldLabel>
-                <TextInput
-                  value={form.char_class}
-                  onChange={(v) => setField('char_class', v)}
-                  placeholder="e.g. Warrior, Trickster, Scholar…"
-                />
-              </div>
+            {/* Name */}
+            <div>
+              <FieldLabel>Name *</FieldLabel>
+              <TextInput
+                value={form.name}
+                onChange={(v) => setField('name', v)}
+                placeholder="Character name"
+              />
             </div>
 
-            {/* ── Custom attributes ──────────────────────────────── */}
+            {/* Description */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <FieldLabel>Attributes</FieldLabel>
-                <button
-                  onClick={addAttribute}
-                  className="text-xs text-accent hover:opacity-80 transition flex items-center gap-1"
-                >
-                  <Plus size={12} /> Add
-                </button>
-              </div>
-              {(form.attributes || []).length === 0 ? (
-                <p className="text-xs text-txt-muted">
-                  No attributes yet — add things like Age, Alignment, Occupation, Power Level…
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {(form.attributes || []).map((attr, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <input
-                        value={attr.key}
-                        onChange={(e) => updateAttribute(i, 'key', e.target.value)}
-                        placeholder="Label"
-                        className="w-1/3 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-txt text-sm focus:outline-none focus:border-accent"
-                      />
-                      <input
-                        value={attr.value}
-                        onChange={(e) => updateAttribute(i, 'value', e.target.value)}
-                        placeholder="Value"
-                        className="flex-1 bg-surface border border-border-subtle rounded-lg px-2 py-1.5 text-txt text-sm focus:outline-none focus:border-accent"
-                      />
-                      <button
-                        onClick={() => removeAttribute(i)}
-                        className="text-txt-muted hover:text-danger transition flex-shrink-0"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* ── Backstory ──────────────────────────────────────── */}
-            <div>
-              <FieldLabel>Backstory</FieldLabel>
+              <FieldLabel>Description</FieldLabel>
               <textarea
-                value={form.backstory}
-                onChange={(e) => setField('backstory', e.target.value)}
-                placeholder="Character history, background, motivations…"
+                value={form.description}
+                onChange={(e) => setField('description', e.target.value)}
+                placeholder="Who is this character? Background, personality, role in the world…"
                 rows={4}
                 className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent resize-none"
               />
             </div>
 
-            {/* ── AI Memory ──────────────────────────────────────── */}
+            {/* Image URL */}
             <div>
-              <FieldLabel>AI Memory</FieldLabel>
+              <FieldLabel>Image URL</FieldLabel>
+              <TextInput
+                value={form.image_url}
+                onChange={(v) => setField('image_url', v)}
+                placeholder="https://… portrait or avatar image"
+              />
+              {form.image_url && (
+                <img
+                  src={form.image_url}
+                  alt=""
+                  className="mt-2 w-24 h-24 rounded-xl object-cover border border-border-subtle"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              )}
+            </div>
+
+            {/* Metadata */}
+            <div>
+              <FieldLabel>Metadata (JSON)</FieldLabel>
               <p className="text-xs text-txt-muted mb-1.5">
-                Notes the AI can reference about this character
+                World-specific attributes — race, class, backstory, alignment, abilities, etc.
               </p>
               <textarea
-                value={form.ai_memory}
-                onChange={(e) => setField('ai_memory', e.target.value)}
-                placeholder="Key facts, personality traits, recent events, secrets…"
-                rows={4}
-                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent resize-none"
+                value={form.metadata}
+                onChange={(e) => setField('metadata', e.target.value)}
+                rows={8}
+                spellCheck={false}
+                className={`w-full bg-surface border rounded-lg px-3 py-2 text-txt text-sm font-mono focus:outline-none focus:border-accent resize-y ${
+                  metaError ? 'border-red-500' : 'border-border-subtle'
+                }`}
               />
-            </div>
-
-            {/* ── Attached notes ─────────────────────────────────── */}
-            <div>
-              <FieldLabel>Attached Notes</FieldLabel>
-
-              {form.note_ids.length > 0 ? (
-                <ul className="space-y-1 mb-3">
-                  {form.note_ids.map((noteId) => {
-                    const note = allNotes.find((n) => n.id === noteId);
-                    return (
-                      <li
-                        key={noteId}
-                        className="flex items-center justify-between bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm"
-                      >
-                        <span className="text-txt truncate">{note?.title ?? noteId}</span>
-                        <button
-                          onClick={() => removeNote(noteId)}
-                          className="ml-2 flex-shrink-0 text-txt-muted hover:text-red-400 transition-colors"
-                          title="Remove"
-                        >
-                          <X size={14} />
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="text-xs text-txt-muted mb-2">No notes attached.</p>
+              {metaError && (
+                <p className="text-xs text-red-400 mt-1">{metaError}</p>
               )}
-
-              <select
-                defaultValue=""
-                onChange={(e) => {
-                  addNote(e.target.value);
-                  e.target.value = '';
-                }}
-                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
-              >
-                <option value="">Attach a note…</option>
-                {allNotes
-                  .filter((n) => !form.note_ids.includes(n.id))
-                  .map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.title}
-                    </option>
-                  ))}
-              </select>
             </div>
 
             {dirty && (

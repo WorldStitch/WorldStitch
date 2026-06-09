@@ -8,6 +8,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
+import Explore from "./pages/Explore";
 import Browse from "./pages/Browse";
 import Characters from "./pages/Characters";
 import Create from "./pages/Create";
@@ -28,6 +29,7 @@ import { auth, setToken, getToken, setRefreshToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
 import { RealtimeProvider } from "./context/RealtimeContext";
+import { AIContextProvider } from "./context/AIContext";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -170,6 +172,7 @@ export default function App() {
 
   return (
     <VaultProvider value={{ vaults: vaultList, activeVaultId, setActiveVaultId }}>
+      <AIContextProvider>
       <RealtimeProvider user={user} activeVaultId={activeVaultId}>
         <div className="h-screen flex bg-base overflow-hidden">
           {expiryWarning && (
@@ -196,6 +199,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Dashboard user={user} />} />
                 <Route path="/chat" element={<Chat user={user} />} />
+                <Route path="/explore" element={<Explore user={user} />} />
                 <Route path="/browse" element={<Browse user={user} />} />
                 <Route path="/graph" element={<Graph user={user} />} />
                 <Route path="/characters" element={<Characters />} />
@@ -220,6 +224,7 @@ export default function App() {
           </main>
         </div>
       </RealtimeProvider>
+      </AIContextProvider>
     </VaultProvider>
   );
 }

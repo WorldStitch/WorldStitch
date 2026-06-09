@@ -1,4 +1,4 @@
-﻿"""
+"""
 Map endpoints.
 
 GET /maps?vault_id=&type= — paginated list
@@ -8,6 +8,7 @@ PUT /maps/{id}             — update map
 DELETE /maps/{id}          — soft delete map
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -15,11 +16,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
+from server.embeddings import embed_entity, get_api_key_for_vault
+from server.vault_access import resolve_vault
 from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.map import Map
 from WorldStitch.models.user import User
-from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
-from server.vault_access import resolve_vault
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +218,19 @@ async def create_map(
         m.markers = [marker.model_dump() for marker in req.markers]
         ctx.storage.save_map(m)
         ctx.analytics.track("map.created", user_id=user.id, data={"map_type": req.map_type})
+        # Fire-and-forget embedding
+        _embed_key = get_api_key_for_vault(effective_id, user, ctx)
+        _embed_engine = getattr(ctx.storage, "engine", None)
+        if _embed_key and _embed_engine:
+            asyncio.create_task(
+                embed_entity(
+                    "maps",
+                    m.id,
+                    f"{m.name}\n\n{m.description or ''}",
+                    _embed_key,
+                    _embed_engine,
+                )
+            )
         return _map_to_detail(m)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create map: {e}")
@@ -250,6 +265,20 @@ async def update_map(
             m.tags = _tags_str_to_list(req.tags)
 
         ctx.maps.update_map(m)
+        # Fire-and-forget re-embedding
+        _vault_id = getattr(m, "vault_id", None) or getattr(m, "campaign_id", None) or ""
+        _embed_key = get_api_key_for_vault(_vault_id, user, ctx)
+        _embed_engine = getattr(ctx.storage, "engine", None)
+        if _embed_key and _embed_engine:
+            asyncio.create_task(
+                embed_entity(
+                    "maps",
+                    m.id,
+                    f"{m.name}\n\n{getattr(m, 'description', '') or ''}",
+                    _embed_key,
+                    _embed_engine,
+                )
+            )
         return _map_to_detail(m)
     except HTTPException:
         raise
