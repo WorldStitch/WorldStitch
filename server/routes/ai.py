@@ -61,6 +61,31 @@ def _resolve_effective_mode(requested_mode: Optional[str], user_role: str) -> st
 
 # ── AI mode personas ───────────────────────────────────────────────────────────
 
+_CREATE_SUBMODE_ADDENDA = {
+    "copilot": (
+        "You are in **Co-pilot mode** — an inline writing assistant embedded directly in the note editor. "
+        "Strict rules:\n"
+        "• Output ONLY the requested text — no preamble, no meta-commentary, no 'Here is...'\n"
+        "• For ghost-text continuations: write the next sentence or two in the same voice and style.\n"
+        "• For /rewrite, /expand, /condense, /describe, /brainstorm: output only the result.\n"
+        "• For /continue: continue the prose naturally from where it ends.\n"
+        "• For /add-character [name]: weave a short paragraph introducing that character in context.\n"
+        "• Write in the same voice, tense, and register as the existing content.\n"
+        "• Never explain what you are doing. Never use markdown headers unless the note already uses them."
+    ),
+    "chat": (
+        "You are a **Creative Writing Partner** in conversation alongside the note editor. "
+        "The user is actively writing — your job is to help them develop ideas, improve prose, "
+        "maintain world consistency, and explore creative directions. "
+        "You have full vault context and know the note being worked on. "
+        "When you want to propose a direct edit to the note, output the replacement text inside a "
+        "fenced block labeled ```edit``` so the editor can show a diff. "
+        "Outside of edit proposals, be conversational: suggest angles, ask clarifying questions, "
+        "flag consistency issues, offer character and world insights. "
+        "Draw on vault lore to keep suggestions grounded in the established world."
+    ),
+}
+
 _MODE_ADDENDA = {
     "lore": (
         "You are the **Lore Keeper** — an expert on this vault's world. Answer questions with depth "
@@ -552,6 +577,8 @@ class AskRequest(BaseModel):
     vault_id: Optional[str] = None
     history: Optional[list[dict]] = None
     mode: Optional[str] = "lore"
+    sub_mode: Optional[str] = None
+    current_entity: Optional[dict] = None
     conversation_id: Optional[str] = None
     attachments: Optional[list[AttachmentItem]] = None
 
@@ -626,7 +653,9 @@ class ConversationResponse(BaseModel):
 # ============================================================================
 
 
-def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], mode: Optional[str]) -> str:
+def _build_system_prompt(
+    ctx: AppContext, user: User, vault_id: Optional[str], mode: Optional[str], sub_mode: Optional[str] = None
+) -> str:
     """
     Build the WorldStitch identity system prompt.
     Injected as a system message before every AI call — never skipped.
@@ -670,7 +699,11 @@ def _build_system_prompt(ctx: AppContext, user: User, vault_id: Optional[str], m
     )
 
     mode_key = (mode or "lore").lower()
-    addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
+    if mode_key == "create":
+        sub = (sub_mode or "copilot").lower()
+        addendum = _CREATE_SUBMODE_ADDENDA.get(sub, _CREATE_SUBMODE_ADDENDA["copilot"])
+    else:
+        addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
     return base + tool_note + "\n\n" + addendum
 
 
@@ -684,6 +717,22 @@ def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> st
         content = msg.get("content", "")
         lines.append(f"{role}: {content}")
     return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
+
+
+def _inject_entity_context(prompt: str, current_entity: Optional[dict]) -> str:
+    """Prepend the current entity (note being edited) to the prompt when provided."""
+    if not current_entity:
+        return prompt
+    entity_type = current_entity.get("type", "note")
+    entity_title = current_entity.get("title", "")
+    entity_content = current_entity.get("content", "")
+    parts = [f"[Currently editing {entity_type}]"]
+    if entity_title:
+        parts.append(f"Title: {entity_title}")
+    if entity_content:
+        parts.append(f"Content:\n{entity_content[:3000]}")
+    parts.append("---\n")
+    return "\n".join(parts) + prompt
 
 
 def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) -> str:
@@ -1559,8 +1608,9 @@ async def ask(
         _apply_preferred_model(ctx)
         ai_engine = _get_ai_for_user(str(user.id), ctx)
         effective_mode = _resolve_effective_mode(req.mode, user.system_role)
-        system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
-        vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
+        system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode, req.sub_mode)
+        user_prompt = _inject_entity_context(req.prompt, req.current_entity)
+        vault_prompt = _build_vault_context(ctx, req.vault_id, user_prompt)
         tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
@@ -1656,11 +1706,12 @@ async def stream_ask(
         raise
 
     effective_mode = _resolve_effective_mode(req.mode, user.system_role)
-    system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode)
+    system_prompt = _build_system_prompt(ctx, user, req.vault_id, effective_mode, req.sub_mode)
 
     async def generate():
         try:
-            vault_prompt = _build_vault_context(ctx, req.vault_id, req.prompt)
+            user_prompt = _inject_entity_context(req.prompt, req.current_entity)
+            vault_prompt = _build_vault_context(ctx, req.vault_id, user_prompt)
             tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
             # ── Tool-calling path ──────────────────────────────────────────────
