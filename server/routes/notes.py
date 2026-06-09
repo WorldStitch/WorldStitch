@@ -955,7 +955,9 @@ async def create_note_relationship(
         _set_user_ctx(ctx, user)
         _get_note_or_404(ctx, note_id)
         if hasattr(ctx.storage, "upsert_relationship"):
-            ctx.storage.upsert_relationship(note_id, req.target_id)
+            note = _get_note_or_404(ctx, note_id)
+            vault_id = getattr(note, "vault_id", "") or ""
+            ctx.storage.upsert_relationship(note_id, req.target_id, vault_id=vault_id)
         asyncio.create_task(
             analytics_track("relationship.created", user_id=user.id, source_id=note_id, target_id=req.target_id)
         )
