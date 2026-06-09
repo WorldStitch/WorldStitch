@@ -13,11 +13,13 @@ export default function OwnerGroups() {
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [color, setColor] = useState('#6366f1');
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedRole, setSelectedRole] = useState('member');
   const [groupName, setGroupName] = useState('');
   const [groupDescription, setGroupDescription] = useState('');
+  const [groupColor, setGroupColor] = useState('#6366f1');
 
   const { data: groupList = [] } = useQuery({ queryKey: ['groups'], queryFn: groups.list });
   const { data: userList = [] } = useQuery({ queryKey: ['users'], queryFn: users.list });
@@ -29,6 +31,7 @@ export default function OwnerGroups() {
   useEffect(() => {
     setGroupName(selectedGroup?.name || '');
     setGroupDescription(selectedGroup?.description || '');
+    setGroupColor(selectedGroup?.color || '#6366f1');
   }, [selectedGroup]);
 
   const refresh = () => {
@@ -37,10 +40,11 @@ export default function OwnerGroups() {
   };
 
   const createGroup = useMutation({
-    mutationFn: () => groups.create({ name: name.trim(), description: description.trim() || undefined }),
+    mutationFn: () => groups.create({ name: name.trim(), description: description.trim() || undefined, color }),
     onSuccess: (group) => {
       setName('');
       setDescription('');
+      setColor('#6366f1');
       setSelectedGroupId(group.id);
       refresh();
       toast.success('Group created');
@@ -49,7 +53,7 @@ export default function OwnerGroups() {
   });
 
   const renameGroup = useMutation({
-    mutationFn: ({ id, payload }) => groups.update(id, payload),
+    mutationFn: ({ id, payload }) => groups.update(id, { ...payload, color: groupColor }),
     onSuccess: () => {
       refresh();
       toast.success('Group updated');
@@ -92,6 +96,18 @@ export default function OwnerGroups() {
         <Card className="p-6 space-y-4">
           <Input label="Group name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <div>
+            <label className="block text-txt-muted text-sm mb-1.5 font-medium">Color</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="w-10 h-10 rounded-lg cursor-pointer border border-border-subtle bg-transparent"
+              />
+              <span className="text-xs text-txt-muted font-mono">{color}</span>
+            </div>
+          </div>
           <Button onClick={() => createGroup.mutate()} disabled={name.trim().length < MIN_GROUP_NAME_LENGTH}>Create group</Button>
           <div className="space-y-2 pt-2 border-t border-border-subtle">
             {groupList.map((group) => (
@@ -100,8 +116,15 @@ export default function OwnerGroups() {
                 onClick={() => setSelectedGroupId(group.id)}
                 className={`w-full text-left rounded-xl px-4 py-3 ${selectedGroupId === group.id ? 'bg-accent-soft text-accent' : 'bg-elevated text-txt'}`}
               >
-                <div className="font-semibold">{group.name}</div>
-                <div className="text-xs text-txt-muted">{group.members.length} members</div>
+                <div className="flex items-center gap-2">
+                  {group.color && (
+                    <span
+                      className="inline-block w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ background: group.color }}
+                    />
+                  )}
+                  <span className="font-semibold">{group.name}</span>
+                </div>
               </button>
             ))}
           </div>
@@ -126,6 +149,18 @@ export default function OwnerGroups() {
                 <Button variant="danger" onClick={() => deleteGroup.mutate(selectedGroup.id)}>Delete group</Button>
               </div>
               <Input label="Description" value={groupDescription} onChange={(e) => setGroupDescription(e.target.value)} />
+              <div>
+                <label className="block text-txt-muted text-sm mb-1.5 font-medium">Color</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={groupColor}
+                    onChange={(e) => setGroupColor(e.target.value)}
+                    className="w-10 h-10 rounded-lg cursor-pointer border border-border-subtle bg-transparent"
+                  />
+                  <span className="text-xs text-txt-muted font-mono">{groupColor}</span>
+                </div>
+              </div>
 
               <div className="grid md:grid-cols-[1fr,160px,120px] gap-3 items-end">
                 <div>
@@ -157,7 +192,7 @@ export default function OwnerGroups() {
               </div>
 
               <div className="space-y-2 pt-3 border-t border-border-subtle">
-                {selectedGroup.members.map((memberId) => {
+                {(selectedGroup.members ?? []).map((memberId) => {
                   const user = userList.find((item) => item.id === memberId);
                   return (
                     <div key={memberId} className="flex items-center gap-3 bg-elevated rounded-xl px-4 py-3">
@@ -171,7 +206,7 @@ export default function OwnerGroups() {
                     </div>
                   );
                 })}
-                {!selectedGroup.members.length && <p className="text-sm text-txt-muted">No members yet.</p>}
+                {!(selectedGroup.members?.length) && <p className="text-sm text-txt-muted">No members yet.</p>}
               </div>
             </>
           )}

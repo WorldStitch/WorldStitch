@@ -17,7 +17,8 @@ const mapSchema = z.object({
   name: z.string().min(1, "Name is required"),
   map_type: z.string().default("region"),
   description: z.string().default(""),
-  image_path: z.string().default(""),
+  image_url: z.string().default(""),
+  map_url: z.string().default(""),
   tags: z.string().default(""),
 });
 
@@ -100,12 +101,13 @@ export default function Maps() {
   const populateForm = (d) => {
     reset({
       name: d.name,
-      map_type: d.map_type,
-      description: d.description,
-      image_path: d.image_path,
-      tags: (d.tags ?? []).join(", "),
+      map_type: d.map_type ?? "region",
+      description: d.description ?? "",
+      image_url: d.image_url ?? "",
+      map_url: d.map_url ?? "",
+      tags: Array.isArray(d.tags) ? d.tags.join(", ") : (d.metadata?.tags ?? []).join(", "),
     });
-    setMarkers(d.markers ?? []);
+    setMarkers(d.markers ?? d.metadata?.markers ?? []);
   };
 
   if (detail && detail.id === selectedId) {
@@ -153,7 +155,8 @@ export default function Maps() {
       name: values.name,
       map_type: values.map_type,
       description: values.description,
-      image_path: values.image_path,
+      image_url: values.image_url,
+      map_url: values.map_url,
       tags: values.tags,
       markers: markers.map((mk, i) => ({ id: mk.id || String(i), ...mk })),
     };
@@ -170,7 +173,7 @@ export default function Maps() {
     setSelectedId(null);
     setMarkers([]);
     setShowMarkerForm(false);
-    reset({ name: "", map_type: "region", description: "", image_path: "", tags: "" });
+    reset({ name: "", map_type: "region", description: "", image_url: "", map_url: "", tags: "" });
   };
 
   // ── Add marker ──────────────────────────────────────────────────────────────
@@ -375,15 +378,24 @@ export default function Maps() {
               />
             </div>
 
-            {/* Image path */}
+            {/* Image URL */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-txt mb-1">Image Path</label>
+              <label className="block text-sm font-medium text-txt mb-1">Image URL</label>
               <input
-                {...register("image_path")}
-                placeholder="Enter file path to map image"
+                {...register("image_url")}
+                placeholder="https://… thumbnail or preview image"
                 className="w-full bg-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-txt placeholder:text-txt-muted focus:outline-none focus:ring-1 focus:ring-accent"
               />
-              <p className="text-xs text-txt-muted mt-1">Enter file path to the map image</p>
+            </div>
+
+            {/* Map URL */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-txt mb-1">Map URL</label>
+              <input
+                {...register("map_url")}
+                placeholder="https://… full-resolution map file"
+                className="w-full bg-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-txt placeholder:text-txt-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              />
             </div>
 
             {/* Tags */}

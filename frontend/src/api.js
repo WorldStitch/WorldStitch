@@ -316,6 +316,16 @@ export const vaultInvites = {
   acceptToken: (token) => request("POST", "/invites/accept", { token }),
 };
 
+export const vaultMembers = {
+  list: (vaultId) => request("GET", `/vaults/${encodeURIComponent(vaultId)}/members`),
+  add: (vaultId, user_id, vault_role) =>
+    request("POST", `/vaults/${encodeURIComponent(vaultId)}/members`, { user_id, vault_role }),
+  updateRole: (vaultId, userId, vault_role) =>
+    request("PUT", `/vaults/${encodeURIComponent(vaultId)}/members/${encodeURIComponent(userId)}`, { vault_role }),
+  remove: (vaultId, userId) =>
+    request("DELETE", `/vaults/${encodeURIComponent(vaultId)}/members/${encodeURIComponent(userId)}`),
+};
+
 export const vaults = {
   list: () => request("GET", "/vaults/"),
   listAll: () => request("GET", "/vaults/?all=true"),

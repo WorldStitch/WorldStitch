@@ -6,22 +6,10 @@ import { relationships as relApi } from "@/api";
 import { SkeletonLine } from "@/components/Skeleton";
 import RelationshipForm from "./RelationshipForm";
 
-// Weight displayed as a dot-opacity indicator.
-function WeightDot({ weight }) {
-const opacity = Math.max(0.2, weight);
-return (
-<span
-className="inline-block w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0"
-style={{ opacity }}
-title={`Weight: ${weight.toFixed(2)}`}
-/>
-);
-}
-
 function RelRow({ rel, entityId, allNotes, onNavigate, onEdit, onDelete }) {
-const isSource = rel.source_id === entityId;
+const isSource = rel.source_note_id === entityId;
 const displayLabel = rel.label || rel.relationship_type;
-const otherId = isSource ? rel.target_id : rel.source_id;
+const otherId = isSource ? rel.target_note_id : rel.source_note_id;
 const otherNote = allNotes.find((n) => n.id === otherId);
 const otherTitle = otherNote?.title || otherId;
 
@@ -38,7 +26,6 @@ title={otherTitle}
 <span className="text-[10px] text-txt-muted">→</span>
 <span className="inline-flex items-center gap-1 text-[10px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded-full flex-shrink-0">
 {displayLabel}
-<WeightDot weight={rel.weight} />
 </span>
 </div>
 <div className="hidden group-hover:flex items-center gap-1 flex-shrink-0">
