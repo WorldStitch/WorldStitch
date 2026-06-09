@@ -244,23 +244,7 @@ export const folders = {
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
   status: () => request("GET", "/ai/status"),
-  ask: (
-    prompt,
-    history = [],
-    vaultId = null,
-    mode = "lore",
-    conversationId = null,
-    optsOrSubMode = {},
-    legacyCurrentEntity = null
-  ) => {
-    const opts =
-      optsOrSubMode && typeof optsOrSubMode === "object" && !Array.isArray(optsOrSubMode)
-        ? optsOrSubMode
-        : {
-            ...(optsOrSubMode ? { sub_mode: optsOrSubMode } : {}),
-            ...(legacyCurrentEntity ? { current_entity: legacyCurrentEntity } : {}),
-          };
-    return (
+  ask: (prompt, history = [], vaultId = null, mode = "lore", conversationId = null, opts = {}) =>
     request("POST", "/ai/ask", {
       prompt,
       history,
@@ -269,9 +253,7 @@ export const ai = {
       conversation_id: conversationId,
       ...(opts.sub_mode ? { sub_mode: opts.sub_mode } : {}),
       ...(opts.current_entity ? { current_entity: opts.current_entity } : {}),
-    })
-    );
-  },
+    }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
     request("POST", "/ai/suggest-tags", { text, existing_tags: existingTags }),

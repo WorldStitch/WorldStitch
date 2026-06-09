@@ -166,8 +166,12 @@ export default function NoteEditor({
           vaultId,
           'create',
           null,
-          'copilot',
-          { type: 'note', id: selectedNote.id, title: selectedNote.title, content: textBefore }
+          {
+            sub_mode: 'copilot',
+            current_entity: {
+              type: 'note', id: selectedNote.id, title: selectedNote.title, content: textBefore,
+            },
+          }
         );
         if (signal?.aborted) return null;
         const text = resp?.response?.trim() || null;
@@ -368,8 +372,12 @@ export default function NoteEditor({
           vaultId,
           'create',
           null,
-          'copilot',
-          { type: 'note', id: selectedNote.id, title: selectedNote.title, content: useText }
+          {
+            sub_mode: 'copilot',
+            current_entity: {
+              type: 'note', id: selectedNote.id, title: selectedNote.title, content: useText,
+            },
+          }
         );
 
         const newText = resp?.response?.trim() || '';
