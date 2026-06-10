@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import {
   Home,
-  Sparkles,
+  PenLine,
   BookOpen,
   Scroll,
   User,
@@ -22,10 +22,14 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
   const canAccessAdmin = ADMIN_ROLES.includes(user?.system_role);
   const activeVaultName = vaults.find((v) => v.id === activeVaultId)?.name;
 
-  const mainItems = [
+  const workspaceItems = [
     { icon: Home, label: 'Dashboard', path: '/' },
+    { icon: Layers, label: 'Vaults', path: '/vaults' },
+  ];
+
+  const aiItems = [
     { icon: Compass, label: 'Explore', path: '/explore' },
-    { icon: Sparkles, label: 'AI', path: '/chat' },
+    { icon: PenLine, label: 'Create', path: '/chat' },
   ];
 
   const contentItems = [
@@ -34,10 +38,6 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Map, label: 'Maps', path: '/maps' },
     { icon: Globe, label: 'Universe', path: '/universe' },
-  ];
-
-  const workspaceItems = [
-    { icon: Layers, label: 'Vaults', path: '/vaults' },
   ];
 
   return (
@@ -100,7 +100,34 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
       {/* Navigation Section */}
       <div className="px-4 py-4 flex-1 overflow-y-auto min-h-0">
         <nav className="flex flex-col gap-1">
-          {mainItems.map((item) => {
+          <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mb-1 px-1">
+            Workspace
+          </p>
+          {workspaceItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPath === item.path;
+
+            return (
+              <button
+                key={item.path}
+                onClick={() => onNavigate(item.path)}
+                className={clsx(
+                  'flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all text-left w-full',
+                  isActive
+                    ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
+                    : 'text-txt-dim hover:bg-hover'
+                )}
+              >
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+
+          <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mt-4 mb-1 px-1">
+            AI
+          </p>
+          {aiItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentPath === item.path;
 
@@ -125,30 +152,6 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
             Content
           </p>
           {contentItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentPath === item.path;
-
-            return (
-              <button
-                key={item.path}
-                onClick={() => onNavigate(item.path)}
-                className={clsx(
-                  'flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all text-left w-full',
-                  isActive
-                    ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
-                    : 'text-txt-dim hover:bg-hover'
-                )}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-
-          <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mt-4 mb-1 px-1">
-            Workspace
-          </p>
-          {workspaceItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentPath === item.path;
 
