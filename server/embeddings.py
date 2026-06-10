@@ -7,10 +7,12 @@ pgvector columns so the RAG layer can do semantic similarity queries.
 Key hierarchy (same as ai.py): user key → vault shared key → platform key.
 """
 
-import asyncio
 import logging
 import os
 from typing import Optional
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
 
 
-def get_api_key_for_vault(vault_id: Optional[str], user, ctx) -> Optional[str]:
+async def get_api_key_for_vault(vault_id: Optional[str], user, ctx) -> Optional[str]:
     """
     Resolve an OpenAI API key using the standard hierarchy:
       1. User's personal key
@@ -26,20 +28,19 @@ def get_api_key_for_vault(vault_id: Optional[str], user, ctx) -> Optional[str]:
       3. Platform OPENAI_API_KEY env var
     Returns None if no key is available anywhere.
     """
-    store = getattr(ctx.storage, "user_api_keys", None)
+    from server.storage import Actor
 
     # 1. Personal key
-    if store is not None:
-        personal_key = store.get_personal_key(str(user.id))
-        if personal_key:
-            return personal_key
+    personal_key = await ctx.storage.get_personal_ai_key(str(user.id))
+    if personal_key:
+        return personal_key
 
     # 2. Vault shared key
-    if vault_id and hasattr(ctx.storage, "get_vault_ai_key"):
+    if vault_id:
         try:
-            vault = ctx.storage.get_vault_by_id(vault_id)
+            vault = await ctx.storage.get_vault_by_id(Actor.from_user(user), vault_id)
             if vault and getattr(vault, "ai_key_shared", False):
-                vault_key = ctx.storage.get_vault_ai_key(vault_id)
+                vault_key = await ctx.storage.get_vault_ai_key(vault_id)
                 if vault_key:
                     return vault_key
         except Exception:
@@ -53,12 +54,12 @@ def get_api_key_for_vault(vault_id: Optional[str], user, ctx) -> Optional[str]:
     return None
 
 
-async def embed_text(text: str, api_key: str) -> Optional[list[float]]:
+async def embed_text(text_value: str, api_key: str) -> Optional[list[float]]:
     """
     Embed a text string using text-embedding-3-small.
     Returns None on any failure — callers must handle a missing embedding gracefully.
     """
-    if not text or not api_key:
+    if not text_value or not api_key:
         return None
     try:
         from openai import AsyncOpenAI
@@ -66,7 +67,7 @@ async def embed_text(text: str, api_key: str) -> Optional[list[float]]:
         client = AsyncOpenAI(api_key=api_key)
         response = await client.embeddings.create(
             model=EMBEDDING_MODEL,
-            input=text[:8000],  # model's practical token limit is ~8k tokens
+            input=text_value[:8000],  # model's practical token limit is ~8k tokens
         )
         return response.data[0].embedding
     except Exception:
@@ -74,23 +75,14 @@ async def embed_text(text: str, api_key: str) -> Optional[list[float]]:
         return None
 
 
-async def _write_embedding(table: str, entity_id: str, embedding: list[float], engine) -> None:
-    """Write an embedding vector to the specified table row (sync SA engine via thread)."""
-
-    from sqlalchemy import text
-    from sqlalchemy.orm import Session
-
+async def _write_embedding(table: str, entity_id: str, embedding: list[float], engine: AsyncEngine) -> None:
+    """Write an embedding vector to the specified table row."""
     vector_literal = "[" + ",".join(str(x) for x in embedding) + "]"
-
-    def _do_write():
-        with Session(engine) as session:
-            session.execute(
-                text(f"UPDATE {table} SET embedding = :vec::vector WHERE id = :id"),
-                {"vec": vector_literal, "id": entity_id},
-            )
-            session.commit()
-
-    await asyncio.to_thread(_do_write)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(f"UPDATE {table} SET embedding = :vec::vector WHERE id = :id"),
+            {"vec": vector_literal, "id": entity_id},
+        )
 
 
 async def embed_entity(
@@ -98,7 +90,7 @@ async def embed_entity(
     entity_id: str,
     text_content: str,
     api_key: str,
-    engine,
+    engine: AsyncEngine,
 ) -> None:
     """
     Compute and store an embedding for a vault entity.

@@ -6,10 +6,10 @@ import traceback
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from server.auth_utils import decode_jwt
+from server.context import AppContext
 from server.deps import get_ctx
 from server.realtime import hub
 from server.vault_access import resolve_vault
-from WorldStitch.context.app_context import AppContext
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def websocket_events(
         return
 
     sub = payload.get("sub", "")
-    user = ctx.users.get_user(sub)
+    user = await ctx.storage.get_user_by_id(sub)
     logger.info("WS user lookup - sub=%s found=%s", sub, bool(user))
     if not user:
         logger.warning("WS auth failed - user not found for sub: %s", sub)
@@ -58,7 +58,7 @@ async def websocket_events(
     logger.info("WS connected - user: %s, vault: %s", user.username, vault_id)
 
     try:
-        vault = resolve_vault(ctx, user, vault_id)
+        vault = await resolve_vault(ctx, user, vault_id)
     except HTTPException as e:
         logger.warning("WS closing — vault resolve failed: %s", e.detail)
         await reject()

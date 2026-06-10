@@ -7,9 +7,6 @@ PUT /users/{id}/roles — update user roles
 POST /users/{id}/disable — disable user
 POST /users/{id}/enable — enable user
 POST /users/{id}/reset-password — admin password reset
-
-NOTE: StorageBackend has no list_users() method. We query the SQLAlchemy
-UserRecord table directly through the storage engine.
 """
 
 import logging
@@ -20,9 +17,12 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
+from sqlalchemy import select
 
+from server.context import AppContext
 from server.deps import get_ctx, require_permission
-from WorldStitch.context.app_context import AppContext
+from server.orm import UserRecord
+from server.storage import hash_password
 from WorldStitch.models.user import User
 
 router = APIRouter()
@@ -67,37 +67,25 @@ class ResetPasswordRequest(BaseModel):
         return v
 
 
-def _list_all_users(ctx: AppContext) -> List[User]:
-    """
-    List all users by querying the SQLAlchemy storage directly.
-    StorageBackend doesn't have a list_users() method, so we access
-    the engine and UserRecord table.
-    """
+async def _list_all_users(ctx: AppContext) -> List[User]:
+    """List all users by querying AsyncStorage directly."""
     users = []
     try:
-        # Access the SQLAlchemy engine from the storage backend
-        storage = ctx.storage
-        if hasattr(storage, "engine"):
-            from sqlalchemy.orm import Session as SASession
-
-            # Import the ORM model from the sqlite backend
-            from WorldStitch.storage.sqlite_backend import UserRecord
-
-            with SASession(storage.engine) as session:
-                for rec in session.query(UserRecord).all():
-                    try:
-                        user = User.model_validate_json(rec.data)
-                        users.append(user)
-                    except Exception as exc:
-                        logger.warning("_list_all_users: skipping corrupt user record: %s", exc)
+        async with ctx.storage._sf() as session:
+            for rec in (await session.scalars(select(UserRecord))).all():
+                try:
+                    user = User.model_validate_json(rec.data)
+                    users.append(user)
+                except Exception as exc:
+                    logger.warning("_list_all_users: skipping corrupt user record: %s", exc)
     except Exception as exc:
         logger.error("_list_all_users: database query failed: %s", exc)
     return users
 
 
-def _get_creator_user(ctx: AppContext) -> Optional[User]:
+async def _get_creator_user(ctx: AppContext) -> Optional[User]:
     """Return the original creator account (earliest created user)."""
-    users = _list_all_users(ctx)
+    users = await _list_all_users(ctx)
     if not users:
         return None
     eligible_users = [u for u in users if getattr(u, "id", None)]
@@ -123,7 +111,7 @@ async def list_users(
     List all users in the system. Requires moderator or above.
     """
     try:
-        users = _list_all_users(ctx)
+        users = await _list_all_users(ctx)
         return [
             UserListItem(
                 id=u.id,
@@ -151,7 +139,7 @@ async def get_user(
     """
     Get a single user by ID. Requires moderator or above.
     """
-    user = ctx.users.get_user(user_id)
+    user = await ctx.storage.get_user_by_id(user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -178,7 +166,7 @@ async def update_user_roles(
     Update user roles. Requires admin role.
     """
     try:
-        user = ctx.users.get_user(user_id)
+        user = await ctx.storage.get_user_by_id(user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -194,7 +182,7 @@ async def update_user_roles(
         if not normalized_roles:
             normalized_roles = []
 
-        creator = _get_creator_user(ctx)
+        creator = await _get_creator_user(ctx)
         creator_id = creator.id if creator else None
 
         if "admin" in normalized_roles and user.id != creator_id:
@@ -209,7 +197,7 @@ async def update_user_roles(
             )
 
         user.roles = normalized_roles
-        ctx.users.update_user(user)
+        await ctx.storage.update_user(user)
         return {"message": "Roles updated successfully", "user_id": user.id}
     except HTTPException:
         raise
@@ -230,7 +218,7 @@ async def disable_user(
     Disable a user (prevent login). Requires admin role.
     """
     try:
-        user = ctx.users.get_user(user_id)
+        user = await ctx.storage.get_user_by_id(user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -238,7 +226,7 @@ async def disable_user(
             )
 
         user.is_active = False
-        ctx.users.update_user(user)
+        await ctx.storage.update_user(user)
         return {"message": "User disabled successfully", "user_id": user.id}
     except HTTPException:
         raise
@@ -259,7 +247,7 @@ async def enable_user(
     Enable a previously disabled user. Requires admin role.
     """
     try:
-        user = ctx.users.get_user(user_id)
+        user = await ctx.storage.get_user_by_id(user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -267,7 +255,7 @@ async def enable_user(
             )
 
         user.is_active = True
-        ctx.users.update_user(user)
+        await ctx.storage.update_user(user)
         return {"message": "User enabled successfully", "user_id": user.id}
     except HTTPException:
         raise
@@ -289,15 +277,15 @@ async def reset_password(
     Reset a user's password (admin action). Requires admin role.
     """
     try:
-        user = ctx.users.get_user(user_id)
+        user = await ctx.storage.get_user_by_id(user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
 
-        user.password_hash = ctx.users._hash_password(req.new_password)
-        ctx.users.update_user(user)
+        user.password_hash = await hash_password(req.new_password)
+        await ctx.storage.update_user(user)
         return {"message": "Password reset successfully", "user_id": user.id}
     except HTTPException:
         raise

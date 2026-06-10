@@ -19,9 +19,9 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.vault_access import is_vault_admin, list_accessible_vaults
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ router = APIRouter()
 # ============================================================================
 
 
-def _can_create_invites(user: User, ctx: AppContext) -> bool:
+async def _can_create_invites(user: User, ctx: AppContext) -> bool:
     """
     Return True if the user is allowed to generate invite codes.
     Permitted for:
@@ -45,9 +45,9 @@ def _can_create_invites(user: User, ctx: AppContext) -> bool:
     if user.system_role in PLATFORM_ADMIN:
         return True
     try:
-        vaults = list_accessible_vaults(ctx, user)
+        vaults = await list_accessible_vaults(ctx, user)
         for vault in vaults:
-            if vault.owner_id == user.id or is_vault_admin(vault, user, ctx):
+            if vault.owner_id == user.id or await is_vault_admin(vault, user, ctx):
                 return True
     except Exception:
         logger.warning("_can_create_invites: failed to enumerate accessible vaults for user %s", user.id, exc_info=True)
@@ -107,10 +107,10 @@ async def list_invites(
     List invite codes.
     Platform admins see all invites. Vault owners/admins see only invites they created.
     """
-    if not _can_create_invites(user, ctx):
+    if not await _can_create_invites(user, ctx):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view invites")
     try:
-        invite_list = ctx.storage.list_invites() or []
+        invite_list = await ctx.storage.list_invites() or []
         # Non-platform-admins see only invites they created
         if user.system_role not in PLATFORM_ADMIN:
             invite_list = [inv for inv in invite_list if inv.created_by == user.id]
@@ -150,13 +150,13 @@ async def generate_invite(
     Generate a new invite code with ttl_days and max_uses.
     Requires platform admin, vault owner, or vault admin.
     """
-    if not _can_create_invites(user, ctx):
+    if not await _can_create_invites(user, ctx):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only platform admins and vault owners/admins can generate invites",
         )
     try:
-        invite = ctx.invites.generate_with_expiry(
+        invite = await ctx.storage.generate_invite(
             created_by_user_id=user.id,
             expiry_days=body.ttl_days,
             max_uses=body.max_uses,
@@ -187,14 +187,14 @@ async def generate_invite_by_hours(
     Generate a new invite code with an optional expires_hours param.
     Requires platform admin, vault owner, or vault admin.
     """
-    if not _can_create_invites(user, ctx):
+    if not await _can_create_invites(user, ctx):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only platform admins and vault owners/admins can generate invites",
         )
     try:
         expiry_days = max(1, round(body.expires_hours / 24)) if body.expires_hours else 7
-        invite = ctx.invites.generate_with_expiry(
+        invite = await ctx.storage.generate_invite(
             created_by_user_id=user.id,
             expiry_days=expiry_days,
             max_uses=1,
@@ -225,10 +225,10 @@ async def revoke_invite(
     Revoke an invite code (mark as inactive).
     Platform admins can revoke any invite. Vault owners/admins can revoke invites they created.
     """
-    if not _can_create_invites(user, ctx):
+    if not await _can_create_invites(user, ctx):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to revoke invites")
     try:
-        invite = ctx.storage.get_invite_by_code(code)
+        invite = await ctx.storage.get_invite_by_code(code)
         if not invite:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -242,7 +242,7 @@ async def revoke_invite(
                 detail="You can only revoke invites you created",
             )
 
-        ctx.invites.revoke(invite.id)
+        await ctx.storage.revoke_invite(invite.id)
 
         return {"message": "Invite revoked successfully", "code": code}
     except HTTPException:

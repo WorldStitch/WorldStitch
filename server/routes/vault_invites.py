@@ -18,10 +18,11 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, EmailStr
 
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.email import send_vault_invite_email
+from server.storage import SYSTEM_ACTOR
 from server.vault_access import is_vault_admin, resolve_vault
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.models.vault_invite import VaultInvite
 
@@ -33,14 +34,10 @@ router = APIRouter()
 # ============================================================================
 
 
-def _can_manage_invites(vault, user: User, ctx: AppContext) -> bool:
+async def _can_manage_invites(vault, user: User, ctx: AppContext) -> bool:
     if user.system_role in PLATFORM_ADMIN:
         return True
-    return vault.owner_id == user.id or is_vault_admin(vault, user, ctx)
-
-
-def _storage(ctx: AppContext):
-    return ctx.storage
+    return vault.owner_id == user.id or await is_vault_admin(vault, user, ctx)
 
 
 # ============================================================================
@@ -91,22 +88,20 @@ async def send_vault_invite(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = resolve_vault(ctx, user, vault_id)
-    if not _can_manage_invites(vault, user, ctx):
+    vault = await resolve_vault(ctx, user, vault_id)
+    if not await _can_manage_invites(vault, user, ctx):
         raise HTTPException(status_code=403, detail="Only vault owners and admins can invite members")
 
     email = body.email.lower().strip()
 
     # If this email belongs to an existing user, check membership
-    existing_user = None
-    if hasattr(ctx.storage, "get_user_by_email"):
-        existing_user = ctx.storage.get_user_by_email(email)
+    existing_user = await ctx.storage.get_user_by_email(email)
     if existing_user:
         if existing_user.id == vault.owner_id or existing_user.id in (vault.members or []):
             raise HTTPException(status_code=409, detail="Already a member of this vault")
 
     # Deduplicate pending invites to the same email
-    existing = _storage(ctx).list_vault_invites(vault_id)
+    existing = await ctx.storage.list_vault_invites(vault_id)
     for inv in existing:
         if inv.email == email and inv.status == "pending":
             raise HTTPException(status_code=409, detail="A pending invite for this email already exists")
@@ -119,7 +114,7 @@ async def send_vault_invite(
         invited_by=user.id,
         expires_at=datetime.utcnow() + timedelta(days=7),
     )
-    _storage(ctx).save_vault_invite(invite)
+    await ctx.storage.save_vault_invite(invite)
 
     inviter_name = getattr(user, "username", None) or user.id
     send_vault_invite_email(
@@ -138,11 +133,11 @@ async def list_vault_invites(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = resolve_vault(ctx, user, vault_id)
-    if not _can_manage_invites(vault, user, ctx):
+    vault = await resolve_vault(ctx, user, vault_id)
+    if not await _can_manage_invites(vault, user, ctx):
         raise HTTPException(status_code=403, detail="Only vault owners and admins can view invites")
 
-    invites = _storage(ctx).list_vault_invites(vault_id)
+    invites = await ctx.storage.list_vault_invites(vault_id)
     return [
         VaultInviteItem(
             id=inv.id,
@@ -167,16 +162,16 @@ async def revoke_vault_invite(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = resolve_vault(ctx, user, vault_id)
-    if not _can_manage_invites(vault, user, ctx):
+    vault = await resolve_vault(ctx, user, vault_id)
+    if not await _can_manage_invites(vault, user, ctx):
         raise HTTPException(status_code=403, detail="Only vault owners and admins can revoke invites")
 
-    invite = _storage(ctx).get_vault_invite_by_id(invite_id)
+    invite = await ctx.storage.get_vault_invite_by_id(invite_id)
     if not invite or invite.vault_id != vault_id:
         raise HTTPException(status_code=404, detail="Invite not found")
 
     invite.is_active = False
-    _storage(ctx).save_vault_invite(invite)
+    await ctx.storage.save_vault_invite(invite)
 
 
 @router.post("/vaults/{vault_id}/invites/{invite_id}/resend", status_code=200)
@@ -186,11 +181,11 @@ async def resend_vault_invite(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = resolve_vault(ctx, user, vault_id)
-    if not _can_manage_invites(vault, user, ctx):
+    vault = await resolve_vault(ctx, user, vault_id)
+    if not await _can_manage_invites(vault, user, ctx):
         raise HTTPException(status_code=403, detail="Only vault owners and admins can resend invites")
 
-    invite = _storage(ctx).get_vault_invite_by_id(invite_id)
+    invite = await ctx.storage.get_vault_invite_by_id(invite_id)
     if not invite or invite.vault_id != vault_id:
         raise HTTPException(status_code=404, detail="Invite not found")
     if not invite.is_active:
@@ -200,7 +195,7 @@ async def resend_vault_invite(
 
     # Refresh expiry
     invite.expires_at = datetime.utcnow() + timedelta(days=7)
-    _storage(ctx).save_vault_invite(invite)
+    await ctx.storage.save_vault_invite(invite)
 
     inviter_name = getattr(user, "username", None) or user.id
     send_vault_invite_email(
@@ -224,7 +219,7 @@ async def validate_invite_token(
 ):
     """Public endpoint — validates a token and returns vault info so the UI
     can show 'You've been invited to join <VaultName>' before the user logs in."""
-    invite = _storage(ctx).get_vault_invite_by_token(token)
+    invite = await ctx.storage.get_vault_invite_by_token(token)
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found")
     if not invite.is_active:
@@ -234,14 +229,12 @@ async def validate_invite_token(
     if datetime.utcnow() >= invite.expires_at:
         raise HTTPException(status_code=410, detail="Invite has expired")
 
-    vault = None
-    if hasattr(ctx.storage, "get_vault_by_id"):
-        vault = ctx.storage.get_vault_by_id(invite.vault_id)
+    vault = await ctx.storage.get_vault_by_id(SYSTEM_ACTOR, invite.vault_id)
     if not vault:
         raise HTTPException(status_code=404, detail="Vault not found")
 
     inviter_name = invite.invited_by
-    inviter = ctx.users.get_user(invite.invited_by)
+    inviter = await ctx.storage.get_user_by_id(invite.invited_by)
     if inviter:
         inviter_name = getattr(inviter, "username", None) or invite.invited_by
 
@@ -261,7 +254,7 @@ async def accept_invite(
     user: User = Depends(get_current_user),
 ):
     """Accept a vault invite. Adds the current user as a vault member."""
-    invite = _storage(ctx).get_vault_invite_by_token(body.token)
+    invite = await ctx.storage.get_vault_invite_by_token(body.token)
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found")
     if not invite.is_active:
@@ -271,19 +264,17 @@ async def accept_invite(
     if datetime.utcnow() >= invite.expires_at:
         raise HTTPException(status_code=410, detail="Invite has expired")
 
-    vault = None
-    if hasattr(ctx.storage, "get_vault_by_id"):
-        vault = ctx.storage.get_vault_by_id(invite.vault_id)
+    vault = await ctx.storage.get_vault_by_id(SYSTEM_ACTOR, invite.vault_id)
     if not vault:
         raise HTTPException(status_code=404, detail="Vault not found")
 
     if vault.owner_id == user.id or user.id in (vault.members or []):
         raise HTTPException(status_code=409, detail="Already a member of this vault")
 
-    ctx.vaults.add_member(invite.vault_id, user.id)
+    await ctx.storage.add_vault_member(invite.vault_id, user.id, vault_role="viewer")
 
     invite.accepted = True
     invite.accepted_by = user.id
-    _storage(ctx).save_vault_invite(invite)
+    await ctx.storage.save_vault_invite(invite)
 
     return {"message": "Welcome to the vault!", "vault_id": invite.vault_id, "vault_name": vault.name}

@@ -21,9 +21,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from server.context import AppContext
 from server.deps import get_ctx, get_current_user
 from server.vault_access import resolve_vault
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -63,18 +63,18 @@ class SessionLogUpdate(BaseModel):
 # ============================================================================
 
 
-def _get_play_session_or_404(ctx: AppContext, session_id: str, campaign_id: Optional[str] = None) -> dict:
-    session = ctx.storage.get_play_session(session_id, campaign_id=campaign_id)
+async def _get_play_session_or_404(ctx: AppContext, session_id: str, campaign_id: Optional[str] = None) -> dict:
+    session = await ctx.storage.get_play_session(session_id, campaign_id=campaign_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
 
-def _get_legacy_session_or_404(ctx: AppContext, user: User, session_id: str) -> dict:
-    session = ctx.storage.get_session_log(session_id)
+async def _get_legacy_session_or_404(ctx: AppContext, user: User, session_id: str) -> dict:
+    session = await ctx.storage.get_session_log(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    resolve_vault(ctx, user, session.get("vault_id"))
+    await resolve_vault(ctx, user, session.get("vault_id"))
     return session
 
 
@@ -94,12 +94,12 @@ async def list_sessions(
 ):
     """List sessions. campaign_id uses the new play_sessions table; vault_id uses the legacy table."""
     if campaign_id:
-        items, total = ctx.storage.list_play_sessions(campaign_id, skip=skip, limit=limit)
+        items, total = await ctx.storage.list_play_sessions(campaign_id, skip=skip, limit=limit)
         return {"items": items, "total": total, "skip": skip, "limit": limit}
     # Legacy path
-    resolved_vault = resolve_vault(ctx, user, vault_id).id if vault_id else ""
+    resolved_vault = (await resolve_vault(ctx, user, vault_id)).id if vault_id else ""
     if resolved_vault:
-        items, total = ctx.storage.list_session_logs(resolved_vault, skip=skip, limit=limit)
+        items, total = await ctx.storage.list_session_logs(resolved_vault, skip=skip, limit=limit)
         return {"items": items, "total": total, "skip": skip, "limit": limit}
     return {"items": [], "total": 0, "skip": skip, "limit": limit}
 
@@ -113,12 +113,12 @@ async def get_session(
 ):
     """Get a session. If campaign_id is supplied, look in play_sessions; otherwise try both tables."""
     if campaign_id:
-        return _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
+        return await _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
     # Try play_sessions first, fall back to legacy
-    session = ctx.storage.get_play_session(session_id)
+    session = await ctx.storage.get_play_session(session_id)
     if session:
         return session
-    return _get_legacy_session_or_404(ctx, user, session_id)
+    return await _get_legacy_session_or_404(ctx, user, session_id)
 
 
 @router.post("/", status_code=201)
@@ -131,15 +131,15 @@ async def create_session(
     if body.campaign_id:
         data = body.model_dump(exclude={"vault_id"})
         data["created_by_user_id"] = user.id
-        session_id = ctx.storage.save_play_session(body.campaign_id, data)
-        return ctx.storage.get_play_session(session_id)
+        session_id = await ctx.storage.save_play_session(body.campaign_id, data)
+        return await ctx.storage.get_play_session(session_id)
     # Legacy path
     data = body.model_dump(exclude={"campaign_id"})
-    resolved_vault = resolve_vault(ctx, user, body.vault_id).id if body.vault_id else "default"
+    resolved_vault = (await resolve_vault(ctx, user, body.vault_id)).id if body.vault_id else "default"
     data["vault_id"] = resolved_vault
     data["owner_id"] = user.id
-    session_id = ctx.storage.save_session_log(data)
-    return ctx.storage.get_session_log(session_id)
+    session_id = await ctx.storage.save_session_log(data)
+    return await ctx.storage.get_session_log(session_id)
 
 
 @router.put("/{session_id}")
@@ -154,13 +154,13 @@ async def update_session(
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     update["id"] = session_id
     if campaign_id:
-        _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
-        ctx.storage.save_play_session(campaign_id, update)
-        return ctx.storage.get_play_session(session_id)
+        await _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
+        await ctx.storage.save_play_session(campaign_id, update)
+        return await ctx.storage.get_play_session(session_id)
     # Legacy path
-    _get_legacy_session_or_404(ctx, user, session_id)
-    ctx.storage.save_session_log(update)
-    return ctx.storage.get_session_log(session_id)
+    await _get_legacy_session_or_404(ctx, user, session_id)
+    await ctx.storage.save_session_log(update)
+    return await ctx.storage.get_session_log(session_id)
 
 
 @router.delete("/{session_id}", status_code=204)
@@ -172,12 +172,12 @@ async def delete_session(
 ):
     """Soft-delete a session."""
     if campaign_id:
-        _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
-        ctx.storage.delete_play_session(session_id, campaign_id=campaign_id)
+        await _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
+        await ctx.storage.delete_play_session(session_id, campaign_id=campaign_id)
         return None
     # Legacy path
-    _get_legacy_session_or_404(ctx, user, session_id)
-    ctx.storage.soft_delete_session_log(session_id)
+    await _get_legacy_session_or_404(ctx, user, session_id)
+    await ctx.storage.soft_delete_session_log(session_id)
     return None
 
 
@@ -190,9 +190,11 @@ async def generate_recap(
 ):
     """Generate an AI recap for a session."""
     if campaign_id:
-        session = _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
+        session = await _get_play_session_or_404(ctx, session_id, campaign_id=campaign_id)
     else:
-        session = ctx.storage.get_play_session(session_id) or _get_legacy_session_or_404(ctx, user, session_id)
+        session = await ctx.storage.get_play_session(session_id)
+        if not session:
+            session = await _get_legacy_session_or_404(ctx, user, session_id)
 
     if not ctx.has_ai():
         raise HTTPException(
@@ -216,9 +218,9 @@ async def generate_recap(
         response, _, _ = ai.ask(prompt)
         update = {"id": session_id, "ai_recap": response}
         if campaign_id:
-            ctx.storage.save_play_session(campaign_id, update)
+            await ctx.storage.save_play_session(campaign_id, update)
         else:
-            ctx.storage.save_session_log(update)
+            await ctx.storage.save_session_log(update)
         return {"ai_recap": response}
     except HTTPException:
         raise

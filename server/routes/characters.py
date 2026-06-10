@@ -17,10 +17,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.analytics import track as analytics_track
+from server.context import AppContext
 from server.deps import get_ctx, get_current_user
 from server.embeddings import embed_entity, get_api_key_for_vault
 from server.vault_access import resolve_vault
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.character import Character
 from WorldStitch.models.user import User
 
@@ -102,8 +103,8 @@ def _to_response(char: Character) -> CharacterResponse:
     )
 
 
-def _get_character_or_404(ctx: AppContext, user: User, char_id: str) -> Character:
-    char = ctx.storage.get_character_by_id(char_id)
+async def _get_character_or_404(ctx: AppContext, user: User, char_id: str) -> Character:
+    char = await ctx.storage.get_character_by_id(char_id)
     if not char or getattr(char, "is_deleted", False):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
     resolve_vault(ctx, user, getattr(char, "vault_id", None))
@@ -130,7 +131,7 @@ async def list_characters(
     try:
         # If no campaign_id, fall back to vault resolution for backward compat
         effective_id = campaign_id or (resolve_vault(ctx, user, vault_id).id if vault_id else None)
-        all_chars = ctx.storage.list_characters(campaign_id=effective_id, char_type=type)
+        all_chars = await ctx.storage.list_characters(campaign_id=effective_id, char_type=type)
         total = len(all_chars)
         page = all_chars[skip : skip + limit]
         return {"items": [_to_response(c).model_dump() for c in page], "total": total}
@@ -146,7 +147,7 @@ async def get_character(
     user: User = Depends(get_current_user),
 ):
     """Get a single character by ID."""
-    return _to_response(_get_character_or_404(ctx, user, char_id))
+    return _to_response(await _get_character_or_404(ctx, user, char_id))
 
 
 @router.post("/", response_model=CharacterResponse)
@@ -175,11 +176,11 @@ async def create_character(
             meta={"race": req.race, "class": req.char_class, "level": req.level},
             ai_memory=req.ai_memory or None,
         )
-        ctx.storage.save_character(char)
-        ctx.analytics.track("character.created", user_id=user.id, data={"char_type": req.char_type})
+        await ctx.storage.save_character(char)
+        asyncio.create_task(analytics_track("character.created", user_id=user.id, char_type=req.char_type))
         # Fire-and-forget embedding
         _embed_key = get_api_key_for_vault(effective_id, user, ctx)
-        _embed_engine = getattr(ctx.storage, "engine", None)
+        _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(
                 embed_entity(
@@ -204,7 +205,7 @@ async def update_character(
     user: User = Depends(get_current_user),
 ):
     """Partially update a character."""
-    char = _get_character_or_404(ctx, user, char_id)
+    char = await _get_character_or_404(ctx, user, char_id)
 
     try:
         if req.name is not None:
@@ -230,11 +231,11 @@ async def update_character(
         char.meta = meta
         char.last_modified = datetime.utcnow()
 
-        ctx.storage.save_character(char)
+        await ctx.storage.save_character(char)
         # Fire-and-forget re-embedding
         _vault_id = getattr(char, "vault_id", None) or getattr(char, "campaign_id", None) or ""
         _embed_key = get_api_key_for_vault(_vault_id, user, ctx)
-        _embed_engine = getattr(ctx.storage, "engine", None)
+        _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(
                 embed_entity(
@@ -258,7 +259,7 @@ async def delete_character(
     user: User = Depends(get_current_user),
 ):
     """Soft-delete a character."""
-    _get_character_or_404(ctx, user, char_id)
-    ctx.storage.soft_delete_character(char_id)
-    ctx.analytics.track("character.deleted", user_id=user.id)
+    await _get_character_or_404(ctx, user, char_id)
+    await ctx.storage.soft_delete_character(char_id)
+    asyncio.create_task(analytics_track("character.deleted", user_id=user.id))
     return {"deleted": True, "id": char_id}

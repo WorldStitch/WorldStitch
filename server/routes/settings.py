@@ -13,8 +13,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.context import AppContext
 from server.deps import get_ctx, get_current_user
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ _MUTABLE_KEYS = {
 
 
 @router.get("")
-def get_settings(
+async def get_settings(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(get_current_user),
 ):
@@ -54,7 +54,7 @@ def get_settings(
 
 
 @router.put("")
-def update_settings(
+async def update_settings(
     body: Dict[str, Any],
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(get_current_user),
@@ -67,7 +67,7 @@ def update_settings(
                 setattr(ctx.config, upper_key, value)
             except AttributeError:
                 logger.debug("update_settings: config attribute %s is not settable", upper_key)
-    return get_settings(ctx=ctx, _user=_user)
+    return await get_settings(ctx=ctx, _user=_user)
 
 
 class ConsentRequest(BaseModel):
@@ -75,22 +75,21 @@ class ConsentRequest(BaseModel):
 
 
 @router.get("/analytics")
-def get_analytics_consent(
+async def get_analytics_consent(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
     """Return the current user's analytics consent preference."""
-    consent = getattr(ctx.storage, "user_has_analytics_consent", lambda _: False)(user.id)
+    consent = await ctx.storage.user_has_analytics_consent(user.id)
     return {"consent": consent}
 
 
 @router.post("/analytics/consent")
-def set_analytics_consent(
+async def set_analytics_consent(
     body: ConsentRequest,
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
     """Set the current user's analytics consent preference."""
-    if hasattr(ctx.storage, "set_analytics_consent"):
-        ctx.storage.set_analytics_consent(user.id, body.consent)
+    await ctx.storage.set_analytics_consent(user.id, body.consent)
     return {"consent": body.consent}

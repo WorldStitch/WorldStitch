@@ -7,9 +7,10 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, VAULT_ROLES, get_ctx, get_current_user
+from server.storage import Actor
 from server.vault_access import list_accessible_vaults, resolve_vault
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
 
@@ -73,13 +74,12 @@ class VaultSearchResponse(BaseModel):
     limit: int
 
 
-def _to_response(vault: Vault, ctx: AppContext) -> VaultResponse:
+async def _to_response(vault: Vault, ctx: AppContext) -> VaultResponse:
     has_key = False
-    if hasattr(ctx.storage, "get_vault_ai_key"):
-        try:
-            has_key = bool(ctx.storage.get_vault_ai_key(vault.id))
-        except Exception:
-            logger.debug("_to_response: could not check AI key for vault %s", vault.id)
+    try:
+        has_key = bool(await ctx.storage.get_vault_ai_key(vault.id))
+    except Exception:
+        logger.debug("_to_response: could not check AI key for vault %s", vault.id)
     return VaultResponse(
         **{k: v for k, v in vault.model_dump().items() if k in VaultResponse.model_fields},
         has_ai_key=has_key,
@@ -92,7 +92,8 @@ async def list_vaults(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    return [_to_response(vault, ctx) for vault in list_accessible_vaults(ctx, user, all_vaults=all)]
+    vaults = await list_accessible_vaults(ctx, user, all_vaults=all)
+    return [await _to_response(vault, ctx) for vault in vaults]
 
 
 @router.get("/{vault_id}", response_model=VaultResponse)
@@ -101,8 +102,8 @@ async def get_vault(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = resolve_vault(ctx, user, vault_id)
-    return _to_response(vault, ctx)
+    vault = await resolve_vault(ctx, user, vault_id)
+    return await _to_response(vault, ctx)
 
 
 @router.post("/", response_model=VaultResponse, status_code=status.HTTP_201_CREATED)
@@ -111,19 +112,18 @@ async def create_vault(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = ctx.vaults.create_vault(
+    vault = await ctx.storage.create_vault(
         name=body.name,
         owner_id=user.id,
         description=body.description,
         vault_type=body.vault_type,
     )
     # Insert the creator as vault owner in vault_members
-    if hasattr(ctx.storage, "add_vault_member"):
-        try:
-            ctx.storage.add_vault_member(vault.id, user.id, "owner")
-        except Exception:
-            logger.warning("create_vault: failed to insert vault_member for owner", exc_info=True)
-    return _to_response(vault, ctx)
+    try:
+        await ctx.storage.add_vault_member(vault.id, user.id, "owner")
+    except Exception:
+        logger.warning("create_vault: failed to insert vault_member for owner", exc_info=True)
+    return await _to_response(vault, ctx)
 
 
 @router.put("/{vault_id}", response_model=VaultResponse)
@@ -133,7 +133,7 @@ async def update_vault(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Only the owner or an admin can update this vault")
     if body.name is not None:
@@ -145,20 +145,19 @@ async def update_vault(
     if body.vault_type is not None:
         vault.vault_type = body.vault_type
     if body.shared_group_id:
-        group = ctx.groups.get_group(body.shared_group_id)
+        group = await ctx.storage.get_group_by_id(body.shared_group_id)
         if not group or not getattr(group, "is_active", True):
             raise HTTPException(status_code=404, detail="Group not found")
         vault.permissions = dict(getattr(vault, "permissions", {}) or {})
         vault.permissions[body.shared_group_id] = "write"
         if vault.id not in (group.vault_ids or []):
             group.vault_ids.append(vault.id)
-            ctx.groups.update_group(group)
+            await ctx.storage.update_group(group)
     if body.backup_cron:
-        if hasattr(ctx.storage, "schedule_vault_backup"):
-            ctx.storage.schedule_vault_backup(vault.id, body.backup_cron)
+        await ctx.storage.schedule_vault_backup(vault.id, body.backup_cron)
         vault.settings["backup_cron"] = body.backup_cron
-    ctx.vaults.update_vault(vault)
-    return _to_response(vault, ctx)
+    await ctx.storage.update_vault(vault)
+    return await _to_response(vault, ctx)
 
 
 @router.delete("/{vault_id}")
@@ -167,10 +166,10 @@ async def delete_vault(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Only the owner or an admin can delete this vault")
-    ctx.vaults.delete_vault(vault_id, actor_id=user.id)
+    await ctx.storage.delete_vault(vault_id, actor_id=user.id)
     return {"deleted": True, "id": vault_id}
 
 
@@ -180,10 +179,8 @@ async def export_vault(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    resolve_vault(ctx, user, vault_id)
-    if not hasattr(ctx.storage, "export_vault_zip"):
-        raise HTTPException(status_code=501, detail="Vault export is not supported by this backend")
-    content = ctx.storage.export_vault_zip(vault_id)
+    await resolve_vault(ctx, user, vault_id)
+    content = await ctx.storage.export_vault_zip(Actor.from_user(user), vault_id)
     return Response(
         content=content,
         media_type="application/zip",
@@ -198,11 +195,9 @@ async def import_vault(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    if not hasattr(ctx.storage, "import_vault_zip"):
-        raise HTTPException(status_code=501, detail="Vault import is not supported by this backend")
     payload = await file.read()
-    vault = ctx.storage.import_vault_zip(payload, owner_id=user.id, name=name)
-    return _to_response(vault, ctx)
+    vault = await ctx.storage.import_vault_zip(payload, owner_id=user.id, name=name)
+    return await _to_response(vault, ctx)
 
 
 @router.put("/{vault_id}/backup")
@@ -212,10 +207,8 @@ async def configure_backup(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    resolve_vault(ctx, user, vault_id)
-    if not hasattr(ctx.storage, "schedule_vault_backup"):
-        raise HTTPException(status_code=501, detail="Backup scheduling is not supported by this backend")
-    return ctx.storage.schedule_vault_backup(vault_id, cron)
+    await resolve_vault(ctx, user, vault_id)
+    return await ctx.storage.schedule_vault_backup(vault_id, cron)
 
 
 # ── Vault AI key management ───────────────────────────────────────────────────
@@ -228,13 +221,12 @@ async def get_vault_ai_key_status(
     user: User = Depends(get_current_user),
 ):
     """Return whether this vault has an AI key set, and whether sharing is enabled."""
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     has_key = False
-    if hasattr(ctx.storage, "get_vault_ai_key"):
-        try:
-            has_key = bool(ctx.storage.get_vault_ai_key(vault_id))
-        except Exception:
-            logger.debug("get_vault_ai_key_status: could not check AI key for vault %s", vault_id)
+    try:
+        has_key = bool(await ctx.storage.get_vault_ai_key(vault_id))
+    except Exception:
+        logger.debug("get_vault_ai_key_status: could not check AI key for vault %s", vault_id)
     return {
         "has_ai_key": has_key,
         "ai_key_shared": getattr(vault, "ai_key_shared", False),
@@ -250,7 +242,7 @@ async def save_vault_ai_key(
     user: User = Depends(get_current_user),
 ):
     """Save an encrypted AI key for this vault. Only the vault owner or platform admin may do this."""
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Only the vault owner can set an AI key.")
     if not body.api_key.startswith("sk-"):
@@ -258,12 +250,7 @@ async def save_vault_ai_key(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="API key must start with 'sk-'.",
         )
-    if not hasattr(ctx.storage, "save_vault_ai_key"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vault AI key storage not available.",
-        )
-    ctx.storage.save_vault_ai_key(vault_id, body.api_key)
+    await ctx.storage.save_vault_ai_key(vault_id, body.api_key)
 
 
 @router.delete("/{vault_id}/ai-key", status_code=204)
@@ -273,11 +260,10 @@ async def remove_vault_ai_key(
     user: User = Depends(get_current_user),
 ):
     """Remove this vault's AI key."""
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Only the vault owner can remove the AI key.")
-    if hasattr(ctx.storage, "remove_vault_ai_key"):
-        ctx.storage.remove_vault_ai_key(vault_id)
+    await ctx.storage.remove_vault_ai_key(vault_id)
 
 
 @router.put("/{vault_id}/ai-key/sharing", status_code=204)
@@ -288,13 +274,12 @@ async def set_vault_ai_sharing(
     user: User = Depends(get_current_user),
 ):
     """Toggle whether vault members may use this vault's AI key."""
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Only the vault owner can change key sharing.")
     vault.ai_key_shared = body.shared
-    ctx.vaults.update_vault(vault)
-    if hasattr(ctx.storage, "set_vault_ai_sharing"):
-        ctx.storage.set_vault_ai_sharing(vault_id, body.shared)
+    await ctx.storage.update_vault(vault)
+    await ctx.storage.set_vault_ai_sharing(vault_id, body.shared)
 
 
 @router.get("/{vault_id}/search", response_model=VaultSearchResponse)
@@ -307,9 +292,8 @@ async def search_vault_notes(
     user: User = Depends(get_current_user),
 ):
     """Full-text search across all notes in a vault by content and title."""
-    vault = resolve_vault(ctx, user, vault_id)
-    result = ctx.storage.search_notes_fts(q, vault_id=vault.id, skip=offset, limit=limit)
-    return result
+    vault = await resolve_vault(ctx, user, vault_id)
+    return await ctx.storage.search_notes_fts(q, vault_id=vault.id, skip=offset, limit=limit)
 
 
 # ── Vault member management ───────────────────────────────────────────────────
@@ -324,11 +308,11 @@ class UpdateMemberRoleRequest(BaseModel):
     vault_role: str = Field(..., description="owner/admin/editor/viewer/player")
 
 
-def _require_vault_admin(vault: Vault, user: User, ctx: AppContext) -> None:
+async def _require_vault_admin(vault: Vault, user: User, ctx: AppContext) -> None:
     """Raise 403 unless the user is vault owner/admin or platform admin."""
     from server.vault_access import is_vault_admin
 
-    if not is_vault_admin(vault, user, ctx) and user.system_role not in PLATFORM_ADMIN:
+    if not await is_vault_admin(vault, user, ctx) and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Vault admin required.")
 
 
@@ -339,10 +323,8 @@ async def list_vault_members(
     user: User = Depends(get_current_user),
 ):
     """List all members of a vault with their roles."""
-    resolve_vault(ctx, user, vault_id)
-    if not hasattr(ctx.storage, "list_vault_members"):
-        return []
-    return ctx.storage.list_vault_members(vault_id)
+    await resolve_vault(ctx, user, vault_id)
+    return await ctx.storage.list_vault_members(vault_id)
 
 
 @router.post("/{vault_id}/members", status_code=status.HTTP_201_CREATED)
@@ -353,7 +335,7 @@ async def add_vault_member(
     user: User = Depends(get_current_user),
 ):
     """Add or update a vault member. Requires vault admin or platform admin."""
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Vault admin required to manage members.")
     if body.vault_role not in VAULT_ROLES:
@@ -361,9 +343,7 @@ async def add_vault_member(
             status_code=422,
             detail=f"Invalid vault_role. Must be one of: {', '.join(VAULT_ROLES)}",
         )
-    if not hasattr(ctx.storage, "add_vault_member"):
-        raise HTTPException(status_code=501, detail="Vault member management not available.")
-    ctx.storage.add_vault_member(vault_id, body.user_id, body.vault_role, invited_by=user.id)
+    await ctx.storage.add_vault_member(vault_id, body.user_id, body.vault_role, invited_by=user.id)
     return {"added": True, "vault_id": vault_id, "user_id": body.user_id, "vault_role": body.vault_role}
 
 
@@ -376,7 +356,7 @@ async def update_vault_member_role(
     user: User = Depends(get_current_user),
 ):
     """Change a vault member's role. Requires vault admin or platform admin."""
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Vault admin required to manage members.")
     if body.vault_role not in VAULT_ROLES:
@@ -384,9 +364,7 @@ async def update_vault_member_role(
             status_code=422,
             detail=f"Invalid vault_role. Must be one of: {', '.join(VAULT_ROLES)}",
         )
-    if not hasattr(ctx.storage, "add_vault_member"):
-        raise HTTPException(status_code=501, detail="Vault member management not available.")
-    ctx.storage.add_vault_member(vault_id, member_user_id, body.vault_role)
+    await ctx.storage.add_vault_member(vault_id, member_user_id, body.vault_role)
     return {"updated": True, "vault_id": vault_id, "user_id": member_user_id, "vault_role": body.vault_role}
 
 
@@ -398,10 +376,8 @@ async def remove_vault_member(
     user: User = Depends(get_current_user),
 ):
     """Remove a user from a vault. Requires vault admin or platform admin."""
-    vault = resolve_vault(ctx, user, vault_id)
+    vault = await resolve_vault(ctx, user, vault_id)
     if vault.owner_id != user.id and user.system_role not in PLATFORM_ADMIN:
         raise HTTPException(status_code=403, detail="Vault admin required to manage members.")
-    if not hasattr(ctx.storage, "remove_vault_member"):
-        raise HTTPException(status_code=501, detail="Vault member management not available.")
-    ctx.storage.remove_vault_member(vault_id, member_user_id)
+    await ctx.storage.remove_vault_member(vault_id, member_user_id)
     return {"removed": True, "vault_id": vault_id, "user_id": member_user_id}

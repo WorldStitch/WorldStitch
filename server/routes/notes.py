@@ -17,10 +17,6 @@ GET /notes/folders — list folders
 POST /notes/folders — create folder
 PUT /notes/folders/{id} — rename/update folder
 DELETE /notes/folders/{id} — delete folder
-
-NOTE: storage.list_notes() returns List[str] (file paths), NOT Note objects.
-We use search_notes("") or get_note_by_id() for Note objects, and the
-NoteManager / FolderManager for all CRUD.
 """
 
 import asyncio
@@ -32,11 +28,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from server.analytics import track as analytics_track
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.embeddings import embed_entity, get_api_key_for_vault
 from server.realtime import hub
+from server.storage import Actor
 from server.vault_access import resolve_vault
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -241,69 +238,31 @@ def _resolve_vault_id(ctx: AppContext, user: User, requested_vault_id: Optional[
     return resolve_vault(ctx, user, requested_vault_id).id
 
 
-def _set_user_ctx(ctx: AppContext, user: User) -> None:
-    """Set the per-request user context on the storage backend.
-
-    This must be called at the start of every route handler that reads or
-    writes user-owned data so that the storage-level ACL checks use the
-    correct identity.
-    """
-    ctx.storage.set_user_context(
-        user.id,
-        is_admin=user.system_role in PLATFORM_ADMIN,
-    )
+async def _get_note_or_404(ctx: AppContext, actor: Actor, note_id: str):
+    """Get note by ID or raise 404."""
+    note = await ctx.storage.get_note_by_id(actor, note_id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found",
+        )
+    return note
 
 
-def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
+async def _promote_note_links(ctx: AppContext, note, actor_id: str) -> None:
     """Fire-and-forget: create 'references' edge for each link_id in note.links."""
-    if not hasattr(ctx.storage, "create_relationship") or not hasattr(ctx.storage, "relationship_exists"):
+    if not hasattr(ctx.storage, "upsert_relationship"):
         return
     link_ids = getattr(note, "links", None) or []
     vault_id = getattr(note, "vault_id", "") or ""
     for link_id in link_ids:
         try:
-            if ctx.storage.relationship_exists(note.id, link_id, vault_id, "references"):
-                continue
-            from WorldStitch.models.relationship import Relationship
-
-            rel = Relationship(
-                source_id=note.id,
-                target_id=link_id,
-                relationship_type="references",
-                direction="unidirectional",
-                owner_id=actor_id,
-                vault_id=vault_id,
-            )
-            ctx.storage.create_relationship(rel)
+            await ctx.storage.upsert_relationship(note.id, link_id, vault_id=vault_id)
         except Exception:
             logger.exception(
                 "Failed to promote note link to relationship",
                 extra={"note_id": note.id, "link_id": link_id, "vault_id": vault_id},
             )
-
-
-def _get_note_or_404(ctx, note_id):
-    """Get note by ID or raise 404."""
-    note = ctx.notes.get_note(note_id)
-    if not note:
-        # Try reading by path (for file-based notes)
-        try:
-            content = ctx.storage.read_note(note_id)
-            from WorldStitch.models.note import Note as NoteModel
-
-            note = NoteModel(
-                id=note_id,
-                owner_id="",
-                vault_id="default",
-                title=note_id.rsplit("/", 1)[-1].replace(".md", ""),
-                content=content,
-            )
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Note not found",
-            )
-    return note
 
 
 # ============================================================================
@@ -336,13 +295,13 @@ async def search_notes(
     - ``hybrid``   — Runs both; merges results weighted FTS×0.6 + semantic×0.4
     """
     try:
-        _set_user_ctx(ctx, user)
+        actor = Actor.from_user(user)
         vault_id = _resolve_vault_id(ctx, user, vault_id)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
         # ── FTS mode ─────────────────────────────────────────────────────────
         if mode == "fts" or not mode:
-            result = ctx.storage.search_notes_fts(
+            result = await ctx.storage.search_notes_fts(
                 q,
                 vault_id=vault_id,
                 skip=skip,
@@ -367,7 +326,7 @@ async def search_notes(
 
         # ── Semantic mode ─────────────────────────────────────────────────────
         if mode == "semantic":
-            all_results = ctx.storage.search_notes(q, vault_id=vault_id, top_k=10000, search_type="semantic")
+            all_results = await ctx.storage.search_notes(q, vault_id=vault_id, top_k=10000, search_type="semantic")
             all_results = [n for n in all_results if not getattr(n, "is_deleted", False)]
 
             if folder:
@@ -401,7 +360,7 @@ async def search_notes(
         # ── Hybrid mode ───────────────────────────────────────────────────────
         if mode == "hybrid":
             # FTS leg — fetch up to 200 candidates with snippets
-            fts_result = ctx.storage.search_notes_fts(
+            fts_result = await ctx.storage.search_notes_fts(
                 q,
                 vault_id=vault_id,
                 skip=0,
@@ -416,7 +375,7 @@ async def search_notes(
             # Semantic leg — fetch up to 200 candidates (no filters, applied post-merge)
             sem_ids: List[str] = []
             try:
-                sem_notes = ctx.storage.search_notes(q, vault_id=vault_id, top_k=200, search_type="semantic")
+                sem_notes = await ctx.storage.search_notes(q, vault_id=vault_id, top_k=200, search_type="semantic")
                 sem_ids = [n.id for n in sem_notes if not getattr(n, "is_deleted", False)]
             except Exception:
                 logger.debug("search_notes hybrid: semantic leg unavailable, proceeding with FTS results only")
@@ -432,7 +391,7 @@ async def search_notes(
                 if nid in scores:
                     scores[nid]["score"] += sem_score
                 else:
-                    note = ctx.storage.get_note_by_id(nid)
+                    note = await ctx.storage.get_note_by_id(actor, nid)
                     if note and not getattr(note, "is_deleted", False):
                         item_data = _note_to_list_item(note).model_dump()
                         item_data["snippet"] = ""
@@ -450,7 +409,7 @@ async def search_notes(
             return {"items": page, "total": total, "skip": skip, "limit": limit, "mode": "hybrid"}
 
         # ── Unknown mode → fall back to FTS ──────────────────────────────────
-        result = ctx.storage.search_notes_fts(
+        result = await ctx.storage.search_notes_fts(
             q,
             vault_id=vault_id,
             skip=skip,
@@ -488,55 +447,13 @@ async def list_folders(
 ):
     """List all folders."""
     try:
-        _set_user_ctx(ctx, user)
+        actor = Actor.from_user(user)
         vault_id = _resolve_vault_id(ctx, user, vault_id)
         results = []
 
-        # Primary: query folders stored in the database
-        if hasattr(ctx.storage, "list_all_folders"):
-            try:
-                db_folders = ctx.storage.list_all_folders(vault_id=vault_id)
-                for folder_obj in db_folders:
-                    results.append(_folder_to_response(folder_obj, ctx, user))
-            except Exception as exc:
-                logger.warning("list_folders: DB folder enumeration failed: %s", exc)
-
-        # Fallback: enumerate filesystem directories (legacy / Obsidian vaults)
-        if not results:
-            try:
-                folder_paths = ctx.storage.list_folders(vault_id=vault_id) or []
-                for fpath in folder_paths:
-                    folder_obj = None
-                    try:
-                        folder_obj = ctx.folders.get_folder(fpath)
-                    except Exception:
-                        pass
-
-                    if folder_obj:
-                        results.append(_folder_to_response(folder_obj, ctx, user))
-                    else:
-                        name = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath
-                        name = name.rsplit("\\", 1)[-1] if "\\" in name else name
-                        meta = {}
-                        try:
-                            meta = ctx.storage.get_folder_metadata(fpath)
-                        except Exception:
-                            logger.debug("list_folders: could not read metadata for folder path %s", fpath)
-
-                        results.append(
-                            FolderResponse(
-                                id=fpath,
-                                name=name,
-                                vault_id=vault_id,
-                                parent_id=None,
-                                description=None,
-                                note_ids=[],
-                                created_at=meta.get("created_at", datetime.utcnow()),
-                                last_modified=meta.get("last_modified", datetime.utcnow()),
-                            )
-                        )
-            except Exception as exc:
-                logger.warning("list_folders: filesystem enumeration failed: %s", exc)
+        db_folders = await ctx.storage.list_all_folders(actor, vault_id=vault_id)
+        for folder_obj in db_folders:
+            results.append(_folder_to_response(folder_obj, ctx, user))
 
         return results
     except Exception as e:
@@ -558,24 +475,11 @@ async def list_notes(
 ):
     """List notes, optionally filtered by folder and/or tag. Returns paginated response."""
     try:
-        _set_user_ctx(ctx, user)
+        actor = Actor.from_user(user)
         vault_id = _resolve_vault_id(ctx, user, vault_id)
 
-        # Primary: query notes directly from the database.
-        # This covers all notes created via the API (which have no .md file on disk).
-        if hasattr(ctx.storage, "list_all_notes"):
-            all_notes = ctx.storage.list_all_notes(folder=folder, tag=tag, vault_id=vault_id)
-            # list_all_notes already filters by folder and tag; skip redundant filters.
-            all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
-        else:
-            # Fallback for backends without list_all_notes: file-based search
-            all_notes = ctx.storage.search_notes("", vault_id=vault_id, top_k=10000)
-
-            if folder:
-                all_notes = [n for n in all_notes if getattr(n, "folder_id", None) == folder or n.id.startswith(folder)]
-            if tag:
-                all_notes = [n for n in all_notes if tag.lower() in [t.lower() for t in (getattr(n, "tags", []) or [])]]
-            all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
+        all_notes = await ctx.storage.list_all_notes(actor, folder=folder, tag=tag, vault_id=vault_id)
+        all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
 
         # Sort by last_modified descending
         all_notes.sort(key=lambda n: n.last_modified, reverse=True)
@@ -604,8 +508,8 @@ async def get_note(
 ):
     """Get a specific note by ID with full content and metadata."""
     try:
-        _set_user_ctx(ctx, user)
-        note = _get_note_or_404(ctx, note_id)
+        actor = Actor.from_user(user)
+        note = await _get_note_or_404(ctx, actor, note_id)
         asyncio.create_task(analytics_track("note.viewed", user_id=user.id, vault_id=getattr(note, "vault_id", None)))
         return _note_to_detail(note)
     except HTTPException:
@@ -625,26 +529,22 @@ async def create_note(
 ):
     """Create a new note."""
     try:
-        _set_user_ctx(ctx, user)
         vault_id = _resolve_vault_id(ctx, user, req.vault_id)
-        note = ctx.notes.create_note(
+        note = await ctx.storage.create_note(
             vault_id=vault_id,
             owner_id=user.id,
             title=req.title,
             content=req.content,
             folder_id=req.folder_id,
             tags=req.tags,
+            meta=req.meta if req.meta else None,
         )
-        # Set meta if provided
-        if req.meta:
-            note.meta = req.meta
-            ctx.notes.update_note(note, actor_id=user.id)
-        _promote_note_links(ctx, note, actor_id=user.id)
+        await _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.created", user_id=user.id, vault_id=vault_id))
         # Fire-and-forget embedding — does not block the response
         _embed_key = get_api_key_for_vault(vault_id, user, ctx)
-        _embed_engine = getattr(ctx.storage, "engine", None)
+        _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(
                 embed_entity(
@@ -672,8 +572,8 @@ async def update_note(
 ):
     """Update an existing note — any combination of fields."""
     try:
-        _set_user_ctx(ctx, user)
-        note = _get_note_or_404(ctx, note_id)
+        actor = Actor.from_user(user)
+        note = await _get_note_or_404(ctx, actor, note_id)
 
         if req.title is not None:
             note.title = req.title
@@ -694,7 +594,7 @@ async def update_note(
             next_group_id = req.group_id
             note.permissions = dict(getattr(note, "permissions", {}) or {})
             if next_group_id:
-                group = ctx.groups.get_group(next_group_id)
+                group = await ctx.storage.get_group_by_id(next_group_id)
                 if not group or not getattr(group, "is_active", True):
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
@@ -705,13 +605,13 @@ async def update_note(
             if previous_group_id and previous_group_id != next_group_id:
                 note.permissions.pop(previous_group_id, None)
 
-        ctx.notes.update_note(note, actor_id=user.id)
-        _promote_note_links(ctx, note, actor_id=user.id)
+        await ctx.storage.update_note(note, actor_id=user.id)
+        await _promote_note_links(ctx, note, actor_id=user.id)
         await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.updated", user_id=user.id, vault_id=note.vault_id))
         # Fire-and-forget re-embedding
         _embed_key = get_api_key_for_vault(note.vault_id, user, ctx)
-        _embed_engine = getattr(ctx.storage, "engine", None)
+        _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(
                 embed_entity(
@@ -740,8 +640,8 @@ async def delete_note(
 ):
     """Delete a note."""
     try:
-        _set_user_ctx(ctx, user)
-        note = _get_note_or_404(ctx, note_id)
+        actor = Actor.from_user(user)
+        note = await _get_note_or_404(ctx, actor, note_id)
 
         is_admin = user.system_role in PLATFORM_ADMIN
         if note.owner_id != user.id and not is_admin:
@@ -750,7 +650,7 @@ async def delete_note(
                 detail="Access denied",
             )
 
-        ctx.storage.soft_delete_note(note_id)
+        await ctx.storage.soft_delete_note(note_id)
         asyncio.create_task(analytics_track("note.deleted", user_id=user.id, vault_id=getattr(note, "vault_id", None)))
         return {"deleted": True, "path": note_id}
     except HTTPException:
@@ -770,8 +670,8 @@ async def move_note(
 ):
     """Move a note to a different folder."""
     try:
-        _set_user_ctx(ctx, user)
-        note = _get_note_or_404(ctx, req.note_id)
+        actor = Actor.from_user(user)
+        note = await _get_note_or_404(ctx, actor, req.note_id)
 
         is_admin = user.system_role in PLATFORM_ADMIN
         if note.owner_id != user.id and not is_admin:
@@ -781,7 +681,7 @@ async def move_note(
             )
 
         note.folder_id = req.dest_folder_id
-        ctx.notes.update_note(note, actor_id=user.id)
+        await ctx.storage.update_note(note, actor_id=user.id)
         return {"message": "Note moved successfully", "note_id": note.id}
     except HTTPException:
         raise
@@ -806,17 +706,9 @@ async def add_tag(
 ):
     """Add a tag to a note."""
     try:
-        _set_user_ctx(ctx, user)
-        try:
-            ctx.notes.add_tag(note_id, req.tag)
-            note = ctx.notes.get_note(note_id)
-        except Exception:
-            # Fallback if NoteManager.add_tag doesn't exist
-            note = _get_note_or_404(ctx, note_id)
-            tags = list(set((getattr(note, "tags", []) or []) + [req.tag]))
-            note.tags = tags
-            ctx.notes.update_note(note, actor_id=user.id)
-
+        actor = Actor.from_user(user)
+        await ctx.storage.add_tag(actor, note_id, req.tag)
+        note = await _get_note_or_404(ctx, actor, note_id)
         return _note_to_detail(note)
     except HTTPException:
         raise
@@ -836,16 +728,9 @@ async def remove_tag(
 ):
     """Remove a tag from a note."""
     try:
-        _set_user_ctx(ctx, user)
-        try:
-            ctx.notes.remove_tag(note_id, tag)
-            note = ctx.notes.get_note(note_id)
-        except Exception:
-            note = _get_note_or_404(ctx, note_id)
-            tags = [t for t in (getattr(note, "tags", []) or []) if t != tag]
-            note.tags = tags
-            ctx.notes.update_note(note, actor_id=user.id)
-
+        actor = Actor.from_user(user)
+        await ctx.storage.remove_tag(actor, note_id, tag)
+        note = await _get_note_or_404(ctx, actor, note_id)
         return _note_to_detail(note)
     except HTTPException:
         raise
@@ -870,8 +755,8 @@ async def update_meta(
 ):
     """Update note metadata (merge into existing meta dict)."""
     try:
-        _set_user_ctx(ctx, user)
-        note = _get_note_or_404(ctx, note_id)
+        actor = Actor.from_user(user)
+        note = await _get_note_or_404(ctx, actor, note_id)
         existing_meta = getattr(note, "meta", {}) or {}
         # Merge: new values override, null values remove keys
         for k, v in req.meta.items():
@@ -880,7 +765,7 @@ async def update_meta(
             else:
                 existing_meta[k] = v
         note.meta = existing_meta
-        ctx.notes.update_note(note, actor_id=user.id)
+        await ctx.storage.update_note(note, actor_id=user.id)
         return _note_to_detail(note)
     except HTTPException:
         raise
@@ -912,21 +797,20 @@ async def get_note_backlinks(
       other_entity_type — "note"
     """
     try:
-        _set_user_ctx(ctx, user)
-        _get_note_or_404(ctx, note_id)
+        actor = Actor.from_user(user)
+        await _get_note_or_404(ctx, actor, note_id)
 
         results = []
 
         # Forward links: this note → targets
         forward_ids = []
-        if hasattr(ctx.storage, "get_relationships"):
-            try:
-                forward_ids = ctx.storage.get_relationships(note_id) or []
-            except Exception:
-                logger.warning("get_note_backlinks: failed to fetch forward links for note %s", note_id)
+        try:
+            forward_ids = await ctx.storage.get_relationships(note_id) or []
+        except Exception:
+            logger.warning("get_note_backlinks: failed to fetch forward links for note %s", note_id)
 
         for tid in forward_ids:
-            other = ctx.notes.get_note(tid) if tid else None
+            other = await ctx.storage.get_note_by_id(actor, tid) if tid else None
             results.append(
                 {
                     "direction": "from",
@@ -939,14 +823,13 @@ async def get_note_backlinks(
 
         # Back links: sources → this note
         backward_ids = []
-        if hasattr(ctx.storage, "get_backlinks"):
-            try:
-                backward_ids = ctx.storage.get_backlinks(note_id) or []
-            except Exception:
-                logger.warning("get_note_backlinks: failed to fetch back links for note %s", note_id)
+        try:
+            backward_ids = await ctx.storage.get_backlinks(note_id) or []
+        except Exception:
+            logger.warning("get_note_backlinks: failed to fetch back links for note %s", note_id)
 
         for sid in backward_ids:
-            other = ctx.notes.get_note(sid) if sid else None
+            other = await ctx.storage.get_note_by_id(actor, sid) if sid else None
             results.append(
                 {
                     "direction": "to",
@@ -979,12 +862,10 @@ async def create_note_relationship(
     Idempotent — safe to call multiple times for the same pair.
     """
     try:
-        _set_user_ctx(ctx, user)
-        _get_note_or_404(ctx, note_id)
-        if hasattr(ctx.storage, "upsert_relationship"):
-            note = _get_note_or_404(ctx, note_id)
-            vault_id = getattr(note, "vault_id", "") or ""
-            ctx.storage.upsert_relationship(note_id, req.target_id, vault_id=vault_id)
+        actor = Actor.from_user(user)
+        note = await _get_note_or_404(ctx, actor, note_id)
+        vault_id = getattr(note, "vault_id", "") or ""
+        await ctx.storage.upsert_relationship(note_id, req.target_id, vault_id=vault_id)
         asyncio.create_task(
             analytics_track("relationship.created", user_id=user.id, source_id=note_id, target_id=req.target_id)
         )
@@ -1012,9 +893,8 @@ async def create_folder(
 ):
     """Create a new folder."""
     try:
-        _set_user_ctx(ctx, user)
         vault_id = _resolve_vault_id(ctx, user, req.vault_id)
-        folder = ctx.folders.create_folder(
+        folder = await ctx.storage.create_folder(
             vault_id=vault_id,
             name=req.name,
             owner_id=user.id,
@@ -1037,8 +917,8 @@ async def update_folder(
 ):
     """Rename or update a folder."""
     try:
-        _set_user_ctx(ctx, user)
-        folder = ctx.folders.get_folder(folder_id)
+        actor = Actor.from_user(user)
+        folder = await ctx.storage.get_folder_by_id(actor, folder_id)
         if not folder:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1050,7 +930,7 @@ async def update_folder(
         if req.description is not None:
             folder.description = req.description
 
-        ctx.folders.update_folder(folder)
+        await ctx.storage.update_folder(folder)
         return _folder_to_response(folder, ctx, user)
     except HTTPException:
         raise
@@ -1069,12 +949,9 @@ async def delete_folder(
 ):
     """Delete a folder."""
     try:
-        _set_user_ctx(ctx, user)
-        folder = ctx.folders.get_folder(folder_id)
+        actor = Actor.from_user(user)
+        folder = await ctx.storage.get_folder_by_id(actor, folder_id)
         if not folder:
-            if ctx.storage.folder_exists(folder_id):
-                ctx.storage.delete_folder(folder_id)
-                return {"message": "Folder deleted successfully"}
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Folder not found",
@@ -1087,7 +964,7 @@ async def delete_folder(
                 detail="Access denied",
             )
 
-        ctx.folders.delete_folder(folder_id)
+        await ctx.storage.delete_folder_by_id(folder_id)
         return {"message": "Folder deleted successfully"}
     except HTTPException:
         raise

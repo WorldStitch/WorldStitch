@@ -11,10 +11,6 @@ POST /auth/register — create new account with invite code
 GET /auth/verify-email?token=TOKEN — verify email address
 POST /auth/forgot-password — request a password reset email
 POST /auth/reset-password — set a new password via reset token
-
-NOTE: We bypass AuthManager here because it inherits QObject (PyQt6),
-which is unavailable in the headless FastAPI server context. Instead we
-use UserManager directly for credential verification.
 """
 
 import asyncio
@@ -27,13 +23,16 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
+from sqlalchemy import func, select
 
 from server.analytics import track as analytics_track
 from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
+from server.context import AppContext
 from server.deps import get_ctx, get_current_user
 from server.email import send_email
 from server.limiter import limiter
-from WorldStitch.context.app_context import AppContext
+from server.orm import EmailVerificationTokenRecord, PasswordResetTokenRecord, UserRecord
+from server.storage import hash_password, verify_password
 from WorldStitch.models.user import User
 from WorldStitch.utils.audit_logger import audit
 
@@ -43,7 +42,7 @@ _APP_BASE_URL = "https://app.worldstitch.app"
 
 
 # ============================================================================
-# Rate limiter — prevents brute-force login attempts (Item 60)
+# Rate limiter — prevents brute-force login attempts
 # ============================================================================
 
 
@@ -56,38 +55,32 @@ class RateLimiter:
         self._attempts: dict[str, list[float]] = defaultdict(list)
 
     def is_blocked(self, key: str) -> bool:
-        """Check if a key is currently rate-limited."""
         now = time.time()
         attempts = self._attempts[key]
-        # Prune old attempts outside the window
         self._attempts[key] = [t for t in attempts if now - t < self.window]
         return len(self._attempts[key]) >= self.max_attempts
 
     def record(self, key: str) -> None:
-        """Record a failed attempt."""
         self._attempts[key].append(time.time())
 
     def reset(self, key: str) -> None:
-        """Reset attempts after successful login."""
         self._attempts.pop(key, None)
 
 
 _login_limiter = RateLimiter(max_attempts=5, window_seconds=900)  # 5 per 15 min
 _reset_limiter = RateLimiter(max_attempts=5, window_seconds=3600)  # 5 per hour
 
-# Token TTL must match TokenStore default (30 days) so exp in response is accurate
 _TOKEN_TTL_SECONDS = 30 * 24 * 3600
 
 
 # ============================================================================
-# Password strength validation (Item 54)
+# Password strength validation
 # ============================================================================
 
 _SPECIAL_CHARS = set("!@#$%^&*-_")
 
 
 def validate_password_strength(password: str) -> str:
-    """Validate password meets minimum strength requirements."""
     msg = "Password must be at least 8 characters with 1 uppercase, 1 number, and 1 special character"
     if len(password) < 8:
         raise ValueError(msg)
@@ -101,7 +94,6 @@ def validate_password_strength(password: str) -> str:
 
 
 def _jwt_role(user: User) -> str:
-    """Return a stable JWT role claim even when a user has no explicit roles."""
     return user.roles[0] if user.roles else "member"
 
 
@@ -114,15 +106,11 @@ router = APIRouter()
 
 
 class LoginRequest(BaseModel):
-    """Request body for POST /auth/login"""
-
     email: EmailStr
     password: str
 
 
 class LoginResponse(BaseModel):
-    """Response body for successful login"""
-
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -131,8 +119,6 @@ class LoginResponse(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """User info response"""
-
     id: str
     username: str
     email: str
@@ -141,8 +127,6 @@ class UserResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    """Request body for POST /auth/change-password"""
-
     current_password: str
     new_password: str
 
@@ -153,8 +137,6 @@ class ChangePasswordRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    """Request body for POST /auth/register"""
-
     email: EmailStr
     username: str
     password: str
@@ -167,28 +149,20 @@ class RegisterRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    """Request body for POST /auth/refresh"""
-
     refresh_token: str
 
 
 class RefreshResponse(BaseModel):
-    """Response body for token refresh"""
-
     access_token: str
     token_type: str = "bearer"
 
 
 class RegisterResponse(BaseModel):
-    """Response body for successful registration"""
-
     message: str
     email: str
 
 
 class SetupRequest(BaseModel):
-    """Request body for POST /auth/setup (first-run admin creation)"""
-
     email: EmailStr
     username: str
     password: str
@@ -200,8 +174,6 @@ class SetupRequest(BaseModel):
 
 
 class SetupResponse(BaseModel):
-    """Response body for successful setup (auto-login as admin)"""
-
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -210,14 +182,10 @@ class SetupResponse(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    """Request body for POST /auth/forgot-password"""
-
     email: EmailStr
 
 
 class ResetPasswordRequest(BaseModel):
-    """Request body for POST /auth/reset-password"""
-
     token: str
     new_password: str
 
@@ -228,32 +196,18 @@ class ResetPasswordRequest(BaseModel):
 
 
 # ============================================================================
-# Helper: count users via SQLAlchemy
+# Helpers
 # ============================================================================
 
 
-def _count_users(ctx: AppContext) -> int:
-    """Return the total number of users in the database."""
+async def _count_users(ctx: AppContext) -> int:
     try:
-        storage = ctx.storage
-        if hasattr(storage, "engine"):
-            from sqlalchemy.orm import Session as SASession
-
-            from WorldStitch.storage.sqlite_backend import UserRecord
-
-            with SASession(storage.engine) as session:
-                return session.query(UserRecord).count()
+        async with ctx.storage._sf() as session:
+            result = await session.execute(select(func.count()).select_from(UserRecord))
+            return result.scalar() or 0
     except Exception as exc:
         logger.warning("_count_users: database query failed: %s", exc)
-    return -1  # unknown
-
-
-def _get_engine(ctx: AppContext):
-    """Return the SQLAlchemy engine from the storage backend, or None."""
-    storage = ctx.storage
-    if hasattr(storage, "engine"):
-        return storage.engine
-    return None
+    return -1
 
 
 # ============================================================================
@@ -359,7 +313,7 @@ async def auth_status(
     Returns {needs_setup: true} when no users exist in the database.
     This endpoint is public (no auth required).
     """
-    count = _count_users(ctx)
+    count = await _count_users(ctx)
     return {"needs_setup": count == 0}
 
 
@@ -372,7 +326,7 @@ async def setup_admin(
     Create the initial admin account. Only works when the database has zero users.
     After the first admin is created, this endpoint is permanently disabled.
     """
-    count = _count_users(ctx)
+    count = await _count_users(ctx)
     if count != 0:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -380,18 +334,12 @@ async def setup_admin(
         )
 
     try:
-        user = ctx.users.create_user(
+        user = await ctx.storage.create_user(
             email=req.email,
             username=req.username,
             password=req.password,
             roles=["admin"],
-        )
-        user.system_role = "owner"
-        ctx.users.update_user(user)
-
-        ctx.storage.set_user_context(
-            user.id,
-            is_admin=True,
+            system_role="owner",
         )
 
         role = _jwt_role(user)
@@ -441,7 +389,6 @@ async def login(
     email_key = req.email.lower()
     client_ip = request.client.host if request.client else "unknown"
 
-    # Rate limit check (Item 60)
     if _login_limiter.is_blocked(email_key):
         audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=account_locked")
         raise HTTPException(
@@ -450,8 +397,7 @@ async def login(
         )
 
     try:
-        # Look up user by email
-        user = ctx.users.get_user_by_email(req.email)
+        user = await ctx.storage.get_user_by_email(req.email)
         if not user or not user.is_active or user.system_role == "suspended":
             _login_limiter.record(email_key)
             audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=user_not_found")
@@ -460,8 +406,7 @@ async def login(
                 detail="Invalid email or password",
             )
 
-        # Verify password using UserManager (bcrypt, Item 58)
-        if not ctx.users.verify_password(req.password, user.password_hash):
+        if not await verify_password(req.password, user.password_hash):
             _login_limiter.record(email_key)
             audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=wrong_password")
             raise HTTPException(
@@ -469,20 +414,12 @@ async def login(
                 detail="Invalid email or password",
             )
 
-        # Login successful — reset rate limiter and log (Items 59, 60)
         _login_limiter.reset(email_key)
         audit("SUCCESS_LOGIN", "auth", user.id, user_id=user.id, detail=f"ip={client_ip}")
         asyncio.create_task(analytics_track("user.login", user_id=user.id))
 
-        # Set user context on storage for permission checks
-        ctx.storage.set_user_context(
-            user.id,
-            is_admin=user.system_role in {"owner", "admin"},
-        )
-
-        # Update last_login
         user.last_login = datetime.utcnow()
-        ctx.users.update_user(user)
+        await ctx.storage.update_user(user)
 
         role = _jwt_role(user)
         token = create_jwt(user.id, user.email, role)
@@ -553,11 +490,9 @@ async def change_password(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """
-    Change the current user's password.
-    """
+    """Change the current user's password."""
     try:
-        ctx.users.change_password(user.id, req.current_password, req.new_password)
+        await ctx.storage.change_password(user.id, req.current_password, req.new_password)
         return {"message": "Password changed successfully"}
     except ValueError as e:
         raise HTTPException(
@@ -583,7 +518,7 @@ async def refresh_token(
     payload = decode_refresh_jwt(req.refresh_token)
     user_id = payload.get("sub")
     try:
-        user = ctx.users.get_user(user_id)
+        user = await ctx.storage.get_user_by_id(user_id)
     except Exception:
         user = None
     if not user or not user.is_active:
@@ -609,45 +544,38 @@ async def register(
     Email verification is tracked but not enforced at login (yet).
     """
     try:
-        # Validate invite code
-        invite = ctx.invites.validate(req.invite_code)
+        invite = await ctx.storage.validate_invite(req.invite_code)
         if not invite:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired invite code",
             )
 
-        # Create the user (password hashed via bcrypt in UserManager, Item 58)
-        user = ctx.users.create_user(
+        user = await ctx.storage.create_user(
             email=req.email,
             username=req.username,
             password=req.password,
             roles=[],
         )
 
-        # Redeem the invite
-        ctx.invites.redeem(req.invite_code, user.id)
+        await ctx.storage.redeem_invite(req.invite_code, user.id)
         asyncio.create_task(analytics_track("user.registered", user_id=user.id))
 
-        # Issue and store a verification token
         ver_token = secrets.token_urlsafe(32)
-        engine = _get_engine(ctx)
-        if engine:
-            from sqlalchemy.orm import Session as SASession
-
-            from WorldStitch.storage.sqlite_backend import EmailVerificationTokenRecord
-
-            with SASession(engine) as db:
-                record = EmailVerificationTokenRecord(
-                    id=str(uuid.uuid4()),
-                    user_id=user.id,
-                    token=ver_token,
-                    expires_at=datetime.utcnow() + timedelta(hours=24),
-                    used=False,
-                    created_at=datetime.utcnow(),
-                )
-                db.add(record)
-                db.commit()
+        try:
+            async with ctx.storage._sf() as db:
+                async with db.begin():
+                    record = EmailVerificationTokenRecord(
+                        id=str(uuid.uuid4()),
+                        user_id=user.id,
+                        token=ver_token,
+                        expires_at=datetime.utcnow() + timedelta(hours=24),
+                        used=False,
+                        created_at=datetime.utcnow(),
+                    )
+                    db.add(record)
+        except Exception as exc:
+            logger.warning("register: could not store verification token: %s", exc)
 
         verify_url = f"{_APP_BASE_URL}/verify-email?token={ver_token}"
         asyncio.create_task(
@@ -682,34 +610,33 @@ async def verify_email(
     token: str = Query(...),
     ctx: AppContext = Depends(get_ctx),
 ):
-    """
-    Validate an email verification token, mark the user verified, and mark the token used.
-    """
-    engine = _get_engine(ctx)
-    if not engine:
-        raise HTTPException(status_code=500, detail="Database unavailable")
+    """Validate an email verification token, mark the user verified, and mark the token used."""
+    try:
+        async with ctx.storage._sf() as db:
+            async with db.begin():
+                result = await db.execute(
+                    select(EmailVerificationTokenRecord).where(EmailVerificationTokenRecord.token == token)
+                )
+                record = result.scalars().first()
 
-    from sqlalchemy.orm import Session as SASession
+                if not record:
+                    raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+                if record.used:
+                    raise HTTPException(status_code=400, detail="This verification link has already been used")
+                if record.expires_at < datetime.utcnow():
+                    raise HTTPException(status_code=400, detail="This verification link has expired")
 
-    from WorldStitch.storage.sqlite_backend import EmailVerificationTokenRecord, UserRecord
+                record.used = True
 
-    with SASession(engine) as db:
-        record = db.query(EmailVerificationTokenRecord).filter_by(token=token).first()
-
-        if not record:
-            raise HTTPException(status_code=400, detail="Invalid or expired verification link")
-        if record.used:
-            raise HTTPException(status_code=400, detail="This verification link has already been used")
-        if record.expires_at < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="This verification link has expired")
-
-        record.used = True
-
-        user_row = db.query(UserRecord).filter_by(id=record.user_id).first()
-        if user_row:
-            user_row.email_verified = True
-
-        db.commit()
+                user_result = await db.execute(select(UserRecord).where(UserRecord.id == record.user_id))
+                user_row = user_result.scalars().first()
+                if user_row:
+                    user_row.email_verified = True
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("verify_email failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Email verification failed")
 
     return {"message": "Email verified successfully. You can now sign in."}
 
@@ -725,37 +652,28 @@ async def forgot_password(
     """
     email_key = req.email.lower()
     if _reset_limiter.is_blocked(email_key):
-        # Return the same message — don't leak that this address is throttled
         return {"message": "If that email is registered, you'll receive a reset link shortly."}
 
     _reset_limiter.record(email_key)
 
     async def _send_reset():
         try:
-            user = ctx.users.get_user_by_email(req.email)
+            user = await ctx.storage.get_user_by_email(req.email)
             if not user or not user.is_active:
                 return
 
             rst_token = secrets.token_urlsafe(32)
-            engine = _get_engine(ctx)
-            if not engine:
-                return
-
-            from sqlalchemy.orm import Session as SASession
-
-            from WorldStitch.storage.sqlite_backend import PasswordResetTokenRecord
-
-            with SASession(engine) as db:
-                record = PasswordResetTokenRecord(
-                    id=str(uuid.uuid4()),
-                    user_id=user.id,
-                    token=rst_token,
-                    expires_at=datetime.utcnow() + timedelta(hours=1),
-                    used=False,
-                    created_at=datetime.utcnow(),
-                )
-                db.add(record)
-                db.commit()
+            async with ctx.storage._sf() as db:
+                async with db.begin():
+                    record = PasswordResetTokenRecord(
+                        id=str(uuid.uuid4()),
+                        user_id=user.id,
+                        token=rst_token,
+                        expires_at=datetime.utcnow() + timedelta(hours=1),
+                        used=False,
+                        created_at=datetime.utcnow(),
+                    )
+                    db.add(record)
 
             reset_url = f"{_APP_BASE_URL}/reset-password?token={rst_token}"
             await asyncio.to_thread(
@@ -776,39 +694,35 @@ async def reset_password(
     req: ResetPasswordRequest,
     ctx: AppContext = Depends(get_ctx),
 ):
-    """
-    Reset a user's password using a valid single-use reset token.
-    Marks the token used and updates the password hash.
-    """
-    engine = _get_engine(ctx)
-    if not engine:
-        raise HTTPException(status_code=500, detail="Database unavailable")
+    """Reset a user's password using a valid single-use reset token."""
+    try:
+        async with ctx.storage._sf() as db:
+            async with db.begin():
+                result = await db.execute(
+                    select(PasswordResetTokenRecord).where(PasswordResetTokenRecord.token == req.token)
+                )
+                record = result.scalars().first()
 
-    from sqlalchemy.orm import Session as SASession
+                if not record:
+                    raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+                if record.used:
+                    raise HTTPException(status_code=400, detail="This reset link has already been used")
+                if record.expires_at < datetime.utcnow():
+                    raise HTTPException(status_code=400, detail="This reset link has expired")
 
-    from WorldStitch.storage.sqlite_backend import PasswordResetTokenRecord
+                user = await ctx.storage.get_user_by_id(record.user_id)
+                if not user or not user.is_active:
+                    raise HTTPException(status_code=400, detail="Invalid or expired reset link")
 
-    with SASession(engine) as db:
-        record = db.query(PasswordResetTokenRecord).filter_by(token=req.token).first()
+                user.password_hash = await hash_password(req.new_password)
+                await ctx.storage.update_user(user)
+                audit("PASSWORD_RESET", "auth", user.id, user_id=user.id)
 
-        if not record:
-            raise HTTPException(status_code=400, detail="Invalid or expired reset link")
-        if record.used:
-            raise HTTPException(status_code=400, detail="This reset link has already been used")
-        if record.expires_at < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="This reset link has expired")
-
-        user = ctx.users.get_user(record.user_id)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=400, detail="Invalid or expired reset link")
-
-        # Hash and persist the new password
-        user.password_hash = ctx.users._hash_password(req.new_password)
-        ctx.users.update_user(user)
-        audit("PASSWORD_RESET", "auth", user.id, user_id=user.id)
-
-        # Consume the token
-        record.used = True
-        db.commit()
+                record.used = True
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("reset_password failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Password reset failed")
 
     return {"message": "Password reset successfully. You can now sign in with your new password."}

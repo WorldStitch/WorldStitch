@@ -15,9 +15,10 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -70,8 +71,8 @@ def _row_to_response(row: dict) -> CampaignResponse:
     )
 
 
-def _get_campaign_or_404(ctx: AppContext, campaign_id: str) -> dict:
-    campaign = ctx.storage.get_campaign(campaign_id)
+async def _get_campaign_or_404(ctx: AppContext, campaign_id: str) -> dict:
+    campaign = await ctx.storage.get_campaign(campaign_id)
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
     return campaign
@@ -88,7 +89,7 @@ async def list_campaigns(
 ):
     """List all active campaigns for a group."""
     try:
-        rows = ctx.storage.list_campaigns_for_group(group_id)
+        rows = await ctx.storage.list_campaigns_for_group(group_id)
         return [_row_to_response(r) for r in rows]
     except Exception as exc:
         logger.exception("list_campaigns failed")
@@ -102,7 +103,7 @@ async def get_campaign(
     user: User = Depends(get_current_user),
 ):
     """Get a single campaign by ID."""
-    return _row_to_response(_get_campaign_or_404(ctx, campaign_id))
+    return _row_to_response(await _get_campaign_or_404(ctx, campaign_id))
 
 
 @router.post("/", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
@@ -113,7 +114,7 @@ async def create_campaign(
 ):
     """Create a new campaign inside a group."""
     try:
-        row = ctx.storage.create_campaign(
+        row = await ctx.storage.create_campaign(
             group_id=req.group_id,
             owner_user_id=user.id,
             name=req.name,
@@ -121,7 +122,7 @@ async def create_campaign(
             system=req.system,
         )
         # Auto-add creator as GM
-        ctx.storage.add_campaign_member(row["id"], user.id, role="gm")
+        await ctx.storage.add_campaign_member(row["id"], user.id, role="gm")
         return _row_to_response(row)
     except Exception as exc:
         logger.exception("create_campaign failed")
@@ -135,19 +136,16 @@ async def delete_campaign(
     user: User = Depends(get_current_user),
 ):
     """Soft-delete a campaign (sets deleted_at)."""
-    campaign = _get_campaign_or_404(ctx, campaign_id)
+    campaign = await _get_campaign_or_404(ctx, campaign_id)
     is_admin = user.system_role in PLATFORM_ADMIN
     if campaign.get("created_by_user_id") != user.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
-        from sqlalchemy import text as _text
-
-        with ctx.storage.engine.connect() as conn:
-            conn.execute(
-                _text("UPDATE campaigns SET deleted_at = CURRENT_TIMESTAMP WHERE id = :id"),
+        async with ctx.storage._engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE campaigns SET deleted_at = CURRENT_TIMESTAMP WHERE id = :id"),
                 {"id": campaign_id},
             )
-            conn.commit()
     except Exception as exc:
         logger.exception("delete_campaign failed")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -163,9 +161,9 @@ async def list_campaign_members(
     user: User = Depends(get_current_user),
 ):
     """List all members of a campaign."""
-    _get_campaign_or_404(ctx, campaign_id)
+    await _get_campaign_or_404(ctx, campaign_id)
     try:
-        return ctx.storage.list_campaign_members(campaign_id)
+        return await ctx.storage.list_campaign_members(campaign_id)
     except Exception as exc:
         logger.exception("list_campaign_members failed")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -179,14 +177,14 @@ async def add_campaign_member(
     user: User = Depends(get_current_user),
 ):
     """Add a user to a campaign with the given role."""
-    _get_campaign_or_404(ctx, campaign_id)
+    await _get_campaign_or_404(ctx, campaign_id)
     is_admin = user.system_role in PLATFORM_ADMIN
     if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Only platform admins can add campaign members"
         )
     try:
-        return ctx.storage.add_campaign_member(campaign_id, req.user_id, req.role)
+        return await ctx.storage.add_campaign_member(campaign_id, req.user_id, req.role)
     except Exception as exc:
         logger.exception("add_campaign_member failed")
         raise HTTPException(status_code=500, detail=str(exc))

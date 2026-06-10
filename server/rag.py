@@ -3,131 +3,120 @@ RAGGraph retrieval for WorldStitch vault context.
 
 Builds a structured context packet for each AI request by combining:
   - Vector similarity search (pgvector) on notes and characters
-  - Graph walk along note_relationships from high-scoring nodes
+  - Graph walk along relationships from high-scoring nodes
   - The entity the user is currently viewing (always included)
 
 Falls back to FTS (PostgreSQL full-text search) when embeddings are absent.
+All queries run on the shared async engine.
 """
 
-import asyncio
 import json
 import logging
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from server.embeddings import embed_text
 
 logger = logging.getLogger(__name__)
 
 
-# ── DB helpers (sync, run via asyncio.to_thread) ──────────────────────────────
+# ── DB helpers ────────────────────────────────────────────────────────────────
 
 
-def _vector_search_notes(engine, vault_id: str, query_vec: list[float], top_k: int) -> list[dict]:
+async def _vector_search_notes(engine: AsyncEngine, vault_id: str, query_vec: list[float], top_k: int) -> list[dict]:
     """Return top-K notes by cosine similarity. Skips deleted rows."""
     vec_literal = "[" + ",".join(str(x) for x in query_vec) + "]"
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT id, title, content, embedding <=> :vec AS distance "
-                "FROM notes "
-                "WHERE vault_id = :vid AND is_deleted = FALSE AND embedding IS NOT NULL "
-                "ORDER BY distance ASC "
-                "LIMIT :k"
-            ),
-            {"vec": vec_literal, "vid": vault_id, "k": top_k},
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT id, title, content, embedding <=> :vec AS distance "
+                    "FROM notes "
+                    "WHERE vault_id = :vid AND is_deleted = FALSE AND embedding IS NOT NULL "
+                    "ORDER BY distance ASC "
+                    "LIMIT :k"
+                ),
+                {"vec": vec_literal, "vid": vault_id, "k": top_k},
+            )
         ).fetchall()
     return [{"id": str(r[0]), "title": r[1] or "", "content": r[2] or "", "distance": float(r[3])} for r in rows]
 
 
-def _fts_search_notes(engine, vault_id: str, query: str, top_k: int) -> list[dict]:
+async def _fts_search_notes(engine: AsyncEngine, vault_id: str, query: str, top_k: int) -> list[dict]:
     """Full-text search fallback when embeddings are unavailable."""
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT id, title, content "
-                "FROM notes "
-                "WHERE vault_id = :vid AND is_deleted = FALSE "
-                "AND (title ILIKE :q OR content ILIKE :q) "
-                "LIMIT :k"
-            ),
-            {"vid": vault_id, "q": f"%{query[:100]}%", "k": top_k},
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT id, title, content "
+                    "FROM notes "
+                    "WHERE vault_id = :vid AND is_deleted = FALSE "
+                    "AND (title ILIKE :q OR content ILIKE :q) "
+                    "LIMIT :k"
+                ),
+                {"vid": vault_id, "q": f"%{query[:100]}%", "k": top_k},
+            )
         ).fetchall()
     return [{"id": str(r[0]), "title": r[1] or "", "content": r[2] or "", "distance": 0.5} for r in rows]
 
 
-def _vector_search_characters(engine, vault_id: str, query_vec: list[float], top_k: int) -> list[dict]:
-    """Return top-K characters by cosine similarity."""
+async def _vector_search_characters(
+    engine: AsyncEngine, vault_id: str, query_vec: list[float], top_k: int
+) -> list[dict]:
+    """Return top-K characters by cosine similarity.
+
+    Reads the explicit name/description columns — the legacy ``data`` blob
+    was dropped by migration 0017.
+    """
     vec_literal = "[" + ",".join(str(x) for x in query_vec) + "]"
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT id, data, embedding <=> :vec AS distance "
-                "FROM characters "
-                "WHERE vault_id = :vid AND embedding IS NOT NULL "
-                "ORDER BY distance ASC "
-                "LIMIT :k"
-            ),
-            {"vec": vec_literal, "vid": vault_id, "k": top_k},
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT id, name, description, embedding <=> :vec AS distance "
+                    "FROM characters "
+                    "WHERE vault_id = :vid AND embedding IS NOT NULL "
+                    "ORDER BY distance ASC "
+                    "LIMIT :k"
+                ),
+                {"vec": vec_literal, "vid": vault_id, "k": top_k},
+            )
         ).fetchall()
-    results = []
-    for r in rows:
-        try:
-            data = json.loads(r[1]) if r[1] else {}
-        except Exception:
-            data = {}
-        results.append(
-            {
-                "id": str(r[0]),
-                "name": data.get("name", ""),
-                "description": data.get("description", "") or "",
-                "distance": float(r[2]),
-            }
-        )
-    return results
+    return [{"id": str(r[0]), "name": r[1] or "", "description": r[2] or "", "distance": float(r[3])} for r in rows]
 
 
-def _list_characters_fallback(engine, vault_id: str, top_k: int) -> list[dict]:
-    """Fallback: return most recently saved characters when embeddings aren't available."""
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT id, data FROM characters WHERE vault_id = :vid LIMIT :k"),
-            {"vid": vault_id, "k": top_k},
+async def _list_characters_fallback(engine: AsyncEngine, vault_id: str, top_k: int) -> list[dict]:
+    """Fallback: return characters by name/description when embeddings aren't available."""
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text("SELECT id, name, description FROM characters WHERE vault_id = :vid LIMIT :k"),
+                {"vid": vault_id, "k": top_k},
+            )
         ).fetchall()
-    results = []
-    for r in rows:
-        try:
-            data = json.loads(r[1]) if r[1] else {}
-        except Exception:
-            data = {}
-        results.append(
-            {
-                "id": str(r[0]),
-                "name": data.get("name", ""),
-                "description": data.get("description", "") or "",
-                "distance": 0.5,
-            }
-        )
-    return results
+    return [{"id": str(r[0]), "name": r[1] or "", "description": r[2] or "", "distance": 0.5} for r in rows]
 
 
-def _fetch_relationships(engine, vault_id: str, entity_ids: list[str]) -> list[dict]:
+async def _fetch_relationships(engine: AsyncEngine, vault_id: str, entity_ids: list[str]) -> list[dict]:
     """Fetch typed edges where source or target is one of the given entity IDs."""
     if not entity_ids:
         return []
     placeholders = ", ".join(f":id{i}" for i in range(len(entity_ids)))
     params = {f"id{i}": eid for i, eid in enumerate(entity_ids)}
     params["vid"] = vault_id
-    with engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                f"SELECT source_id, target_id, relationship_type, label "
-                f"FROM relationships "
-                f"WHERE vault_id = :vid AND is_active = TRUE "
-                f"AND (source_id IN ({placeholders}) OR target_id IN ({placeholders}))"
-            ).bindparams(**params),
-            params,
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    f"SELECT source_id, target_id, relationship_type, label "
+                    f"FROM relationships "
+                    f"WHERE vault_id = :vid AND is_active = TRUE "
+                    f"AND (source_id IN ({placeholders}) OR target_id IN ({placeholders}))"
+                ),
+                params,
+            )
         ).fetchall()
     return [
         {
@@ -140,10 +129,10 @@ def _fetch_relationships(engine, vault_id: str, entity_ids: list[str]) -> list[d
     ]
 
 
-def _fetch_vault_summary(engine, vault_id: str) -> dict:
+async def _fetch_vault_summary(engine: AsyncEngine, vault_id: str) -> dict:
     """Return minimal vault metadata."""
-    with engine.connect() as conn:
-        row = conn.execute(text("SELECT data FROM vaults WHERE id = :vid"), {"vid": vault_id}).fetchone()
+    async with engine.connect() as conn:
+        row = (await conn.execute(text("SELECT data FROM vaults WHERE id = :vid"), {"vid": vault_id})).fetchone()
     if not row:
         return {"id": vault_id, "name": "", "description": ""}
     try:
@@ -158,26 +147,26 @@ def _fetch_vault_summary(engine, vault_id: str) -> dict:
     }
 
 
-def _note_by_id(engine, note_id: str) -> Optional[dict]:
+async def _note_by_id(engine: AsyncEngine, note_id: str) -> Optional[dict]:
     """Fetch a single note row by id."""
-    with engine.connect() as conn:
-        row = conn.execute(text("SELECT id, title, content FROM notes WHERE id = :nid"), {"nid": note_id}).fetchone()
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(text("SELECT id, title, content FROM notes WHERE id = :nid"), {"nid": note_id})
+        ).fetchone()
     if not row:
         return None
     return {"id": str(row[0]), "title": row[1] or "", "content": row[2] or ""}
 
 
-def _character_by_id(engine, char_id: str) -> Optional[dict]:
-    """Fetch a single character row by id."""
-    with engine.connect() as conn:
-        row = conn.execute(text("SELECT id, data FROM characters WHERE id = :cid"), {"cid": char_id}).fetchone()
+async def _character_by_id(engine: AsyncEngine, char_id: str) -> Optional[dict]:
+    """Fetch a single character row by id (explicit columns — data blob is gone)."""
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(text("SELECT id, name, description FROM characters WHERE id = :cid"), {"cid": char_id})
+        ).fetchone()
     if not row:
         return None
-    try:
-        data = json.loads(row[1]) if row[1] else {}
-    except Exception:
-        data = {}
-    return {"id": str(row[0]), "name": data.get("name", ""), "description": data.get("description", "") or ""}
+    return {"id": str(row[0]), "name": row[1] or "", "description": row[2] or ""}
 
 
 # ── Main build_context ────────────────────────────────────────────────────────
@@ -188,7 +177,7 @@ async def build_context(
     vault_id: str,
     current_entity: Optional[dict],
     mode: str,
-    engine,
+    engine: AsyncEngine,
     api_key: Optional[str],
     top_k: int = 8,
 ) -> dict:
@@ -217,14 +206,14 @@ async def build_context(
         except Exception:
             logger.debug("build_context: embed_text failed, falling back to FTS")
 
-    # 2. Vector or FTS search — run in thread since SA is sync
+    # 2. Vector or FTS search
     if query_vec is not None:
-        notes_raw = await asyncio.to_thread(_vector_search_notes, engine, vault_id, query_vec, top_k)
-        chars_raw = await asyncio.to_thread(_vector_search_characters, engine, vault_id, query_vec, top_k)
+        notes_raw = await _vector_search_notes(engine, vault_id, query_vec, top_k)
+        chars_raw = await _vector_search_characters(engine, vault_id, query_vec, top_k)
         retrieval_method = "semantic match"
     else:
-        notes_raw = await asyncio.to_thread(_fts_search_notes, engine, vault_id, query, top_k)
-        chars_raw = await asyncio.to_thread(_list_characters_fallback, engine, vault_id, top_k)
+        notes_raw = await _fts_search_notes(engine, vault_id, query, top_k)
+        chars_raw = await _list_characters_fallback(engine, vault_id, top_k)
         retrieval_method = "keyword match (embeddings not yet generated)"
 
     for n in notes_raw:
@@ -245,7 +234,7 @@ async def build_context(
         econtent = current_entity.get("content", "")
 
         if etype == "note" and eid:
-            fetched = await asyncio.to_thread(_note_by_id, engine, eid)
+            fetched = await _note_by_id(engine, eid)
             if fetched:
                 resolved_current = {
                     "type": "note",
@@ -258,7 +247,7 @@ async def build_context(
                 resolved_current = {"type": "note", "id": eid, "name": "", "content": econtent}
 
         elif etype == "character" and eid:
-            fetched = await asyncio.to_thread(_character_by_id, engine, eid)
+            fetched = await _character_by_id(engine, eid)
             if fetched:
                 resolved_current = {
                     "type": "character",
@@ -306,7 +295,7 @@ async def build_context(
     relationships: list[dict] = []
     if all_entity_ids:
         try:
-            relationships = await asyncio.to_thread(_fetch_relationships, engine, vault_id, all_entity_ids)
+            relationships = await _fetch_relationships(engine, vault_id, all_entity_ids)
             for rel in relationships:
                 trace.append(
                     {
@@ -322,7 +311,7 @@ async def build_context(
     # 5. Vault summary
     vault_summary: dict = {}
     try:
-        vault_summary = await asyncio.to_thread(_fetch_vault_summary, engine, vault_id)
+        vault_summary = await _fetch_vault_summary(engine, vault_id)
     except Exception:
         logger.debug("build_context: vault summary fetch failed", exc_info=True)
         vault_summary = {"id": vault_id, "name": "", "description": "", "media_type": ""}

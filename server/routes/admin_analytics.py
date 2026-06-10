@@ -1,4 +1,4 @@
-﻿"""
+"""
 Admin analytics endpoints.
 
 All endpoints require the 'admin' role and query the analytics_events table.
@@ -17,10 +17,9 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
+from server.context import AppContext
 from server.deps import get_ctx, require_admin
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin-analytics"])
@@ -29,8 +28,8 @@ _DAYS = 30
 
 
 def _engine(ctx: AppContext):
-    """Return the SQLAlchemy engine from the storage backend."""
-    return getattr(ctx.storage, "engine", None)
+    """Return the async SQLAlchemy engine from the storage backend."""
+    return getattr(ctx.storage, "_engine", None)
 
 
 def _cutoff() -> datetime:
@@ -41,7 +40,7 @@ def _cutoff() -> datetime:
 
 
 @router.get("/summary")
-def analytics_summary(
+async def analytics_summary(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
 ):
@@ -51,31 +50,39 @@ def analytics_summary(
         return {"total_events": 0, "active_users": 0, "ai_requests": 0, "total_ai_cost_usd": 0.0}
 
     cutoff = _cutoff()
-    with Session(engine) as session:
-        total_events = session.execute(
-            text("SELECT COUNT(*) FROM analytics_events WHERE created_at >= :cutoff"),
-            {"cutoff": cutoff},
+    async with engine.connect() as conn:
+        total_events = (
+            await conn.execute(
+                text("SELECT COUNT(*) FROM analytics_events WHERE created_at >= :cutoff"),
+                {"cutoff": cutoff},
+            )
         ).scalar() or 0
 
-        active_users = session.execute(
-            text("SELECT COUNT(DISTINCT user_id) FROM analytics_events WHERE created_at >= :cutoff"),
-            {"cutoff": cutoff},
+        active_users = (
+            await conn.execute(
+                text("SELECT COUNT(DISTINCT user_id) FROM analytics_events WHERE created_at >= :cutoff"),
+                {"cutoff": cutoff},
+            )
         ).scalar() or 0
 
-        ai_requests = session.execute(
-            text(
-                "SELECT COUNT(*) FROM analytics_events "
-                "WHERE event_type = 'ai.request_sent' AND created_at >= :cutoff"
-            ),
-            {"cutoff": cutoff},
+        ai_requests = (
+            await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM analytics_events "
+                    "WHERE event_type = 'ai.request_sent' AND created_at >= :cutoff"
+                ),
+                {"cutoff": cutoff},
+            )
         ).scalar() or 0
 
-        cost_rows = session.execute(
-            text(
-                "SELECT event_data FROM analytics_events "
-                "WHERE event_type = 'ai.request_completed' AND created_at >= :cutoff"
-            ),
-            {"cutoff": cutoff},
+        cost_rows = (
+            await conn.execute(
+                text(
+                    "SELECT event_data FROM analytics_events "
+                    "WHERE event_type = 'ai.request_completed' AND created_at >= :cutoff"
+                ),
+                {"cutoff": cutoff},
+            )
         ).fetchall()
 
     total_cost = 0.0
@@ -97,7 +104,7 @@ def analytics_summary(
 
 
 @router.get("/events-by-day")
-def analytics_events_by_day(
+async def analytics_events_by_day(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
 ):
@@ -107,15 +114,17 @@ def analytics_events_by_day(
         return []
 
     cutoff = _cutoff()
-    with Session(engine) as session:
-        rows = session.execute(
-            text(
-                "SELECT date(created_at) AS day, COUNT(*) AS cnt "
-                "FROM analytics_events "
-                "WHERE created_at >= :cutoff "
-                "GROUP BY day ORDER BY day ASC"
-            ),
-            {"cutoff": cutoff},
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT date(created_at) AS day, COUNT(*) AS cnt "
+                    "FROM analytics_events "
+                    "WHERE created_at >= :cutoff "
+                    "GROUP BY day ORDER BY day ASC"
+                ),
+                {"cutoff": cutoff},
+            )
         ).fetchall()
 
     return [{"date": row[0], "count": row[1]} for row in rows]
@@ -125,7 +134,7 @@ def analytics_events_by_day(
 
 
 @router.get("/breakdown")
-def analytics_breakdown(
+async def analytics_breakdown(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
 ):
@@ -135,15 +144,17 @@ def analytics_breakdown(
         return []
 
     cutoff = _cutoff()
-    with Session(engine) as session:
-        rows = session.execute(
-            text(
-                "SELECT event_type, COUNT(*) AS cnt "
-                "FROM analytics_events "
-                "WHERE created_at >= :cutoff "
-                "GROUP BY event_type ORDER BY cnt DESC"
-            ),
-            {"cutoff": cutoff},
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT event_type, COUNT(*) AS cnt "
+                    "FROM analytics_events "
+                    "WHERE created_at >= :cutoff "
+                    "GROUP BY event_type ORDER BY cnt DESC"
+                ),
+                {"cutoff": cutoff},
+            )
         ).fetchall()
 
     total = sum(r[1] for r in rows)
@@ -161,7 +172,7 @@ def analytics_breakdown(
 
 
 @router.get("/errors")
-def analytics_errors(
+async def analytics_errors(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
 ):
@@ -170,13 +181,15 @@ def analytics_errors(
     if not engine:
         return []
 
-    with Session(engine) as session:
-        rows = session.execute(
-            text(
-                "SELECT id, created_at, event_data "
-                "FROM analytics_events "
-                "WHERE event_type = 'error.route_exception' "
-                "ORDER BY created_at DESC LIMIT 20"
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT id, created_at, event_data "
+                    "FROM analytics_events "
+                    "WHERE event_type = 'error.route_exception' "
+                    "ORDER BY created_at DESC LIMIT 20"
+                )
             )
         ).fetchall()
 
@@ -201,7 +214,7 @@ def analytics_errors(
 
 
 @router.get("/users")
-def analytics_users(
+async def analytics_users(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
 ):
@@ -211,43 +224,44 @@ def analytics_users(
         return []
 
     cutoff = _cutoff()
-    with Session(engine) as session:
+    async with engine.connect() as conn:
         # All users with their consent flag
-        user_rows = session.execute(
-            text("SELECT id, data, COALESCE(analytics_consent, 0) FROM users")
-        ).fetchall()
+        user_rows = (await conn.execute(text("SELECT id, data, COALESCE(analytics_consent, 0) FROM users"))).fetchall()
 
         # Per-user event counts
         event_counts = {
             row[0]: row[1]
-            for row in session.execute(
-                text(
-                    "SELECT user_id, COUNT(*) FROM analytics_events "
-                    "WHERE created_at >= :cutoff GROUP BY user_id"
-                ),
-                {"cutoff": cutoff},
+            for row in (
+                await conn.execute(
+                    text("SELECT user_id, COUNT(*) FROM analytics_events WHERE created_at >= :cutoff GROUP BY user_id"),
+                    {"cutoff": cutoff},
+                )
             ).fetchall()
         }
 
         # Per-user AI request counts
         ai_counts = {
             row[0]: row[1]
-            for row in session.execute(
-                text(
-                    "SELECT user_id, COUNT(*) FROM analytics_events "
-                    "WHERE event_type = 'ai.request_sent' AND created_at >= :cutoff GROUP BY user_id"
-                ),
-                {"cutoff": cutoff},
+            for row in (
+                await conn.execute(
+                    text(
+                        "SELECT user_id, COUNT(*) FROM analytics_events "
+                        "WHERE event_type = 'ai.request_sent' AND created_at >= :cutoff GROUP BY user_id"
+                    ),
+                    {"cutoff": cutoff},
+                )
             ).fetchall()
         }
 
         # Per-user AI cost (sum cost_usd from ai.request_completed)
-        cost_rows = session.execute(
-            text(
-                "SELECT user_id, event_data FROM analytics_events "
-                "WHERE event_type = 'ai.request_completed' AND created_at >= :cutoff"
-            ),
-            {"cutoff": cutoff},
+        cost_rows = (
+            await conn.execute(
+                text(
+                    "SELECT user_id, event_data FROM analytics_events "
+                    "WHERE event_type = 'ai.request_completed' AND created_at >= :cutoff"
+                ),
+                {"cutoff": cutoff},
+            )
         ).fetchall()
 
     user_costs: dict[str, float] = {}
