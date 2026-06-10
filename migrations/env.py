@@ -31,7 +31,7 @@ from sqlalchemy import engine_from_config, pool
 # Pull in ORM metadata so autogenerate can diff against the live schema
 # ---------------------------------------------------------------------------
 # sys.path already includes the project root (prepend_sys_path = . in alembic.ini)
-from WorldStitch.storage.schema import Base  # noqa: E402
+from server.orm import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
