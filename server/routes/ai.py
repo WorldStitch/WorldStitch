@@ -26,16 +26,16 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from server.analytics import track as analytics_track
-from server.deps import PLATFORM_ADMIN, PLATFORM_KEY_ROLES, get_ctx, get_current_user
+from server.context import AppContext
+from server.deps import PLATFORM_KEY_ROLES, get_ctx, get_current_user
 from server.embeddings import get_api_key_for_vault
 from server.limiter import limiter
+from server.orm import AIUsageRecord
 from server.rag import build_context, format_context_for_prompt
 from server.realtime import hub
-from WorldStitch.ai.cost_tracker import _DEFAULT_PRICING, _PRICING, AIUsageRecord
-from WorldStitch.context.app_context import AppContext
+from server.storage import _DEFAULT_PRICING, _PRICING, SYSTEM_ACTOR, Actor
 from WorldStitch.models.user import User
 
 
@@ -656,7 +656,7 @@ class ConversationResponse(BaseModel):
 # ============================================================================
 
 
-def _build_system_prompt(
+async def _build_system_prompt(
     ctx: AppContext,
     user: User,
     vault_id: Optional[str],
@@ -675,7 +675,8 @@ def _build_system_prompt(
 
     if vault_id:
         try:
-            vault = ctx.storage.get_vault_by_id(vault_id)
+            actor = Actor.from_user(user)
+            vault = await ctx.storage.get_vault_by_id(actor, vault_id)
             if vault:
                 vault_name = vault.name
         except Exception:
@@ -771,31 +772,32 @@ def _inject_entity_context(prompt: str, current_entity: Optional[dict]) -> str:
     return "\n".join(parts) + prompt
 
 
-def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) -> str:
+async def _build_vault_context(ctx: AppContext, user: User, vault_id: Optional[str], prompt: str) -> str:
     """Fetch relevant notes from vault and prepend as context block."""
     if not vault_id:
         return prompt
     try:
+        actor = Actor.from_user(user)
         # Try semantic search first if index is ready
         if ctx.has_ai() and getattr(ctx.ai, "_index_ready", False):
             note_refs = ctx.ai.search_context(prompt, top_k=8)
             if note_refs:
                 vault_notes_by_id = {}
                 vault_notes_by_path = {}
-                if hasattr(ctx.storage, "list_all_notes"):
-                    for note in ctx.storage.list_all_notes(vault_id=vault_id):
-                        note_id = getattr(note, "id", "") or ""
-                        note_path = getattr(note, "path", "") or ""
-                        if note_id:
-                            vault_notes_by_id[note_id] = note
-                        if note_path:
-                            vault_notes_by_path[note_path] = note
+                all_notes = await ctx.storage.list_all_notes(actor, vault_id=vault_id)
+                for note in all_notes:
+                    note_id = getattr(note, "id", "") or ""
+                    note_path = getattr(note, "path", "") or ""
+                    if note_id:
+                        vault_notes_by_id[note_id] = note
+                    if note_path:
+                        vault_notes_by_path[note_path] = note
 
                 snippets = []
                 for ref in note_refs:
                     note = vault_notes_by_id.get(ref) or vault_notes_by_path.get(ref)
-                    if note is None and hasattr(ctx.storage, "get_note_by_id"):
-                        candidate = ctx.storage.get_note_by_id(ref)
+                    if note is None:
+                        candidate = await ctx.storage.get_note_by_id(actor, ref)
                         if candidate is not None and getattr(candidate, "vault_id", "") == vault_id:
                             note = candidate
                     if note is None:
@@ -809,20 +811,8 @@ def _build_vault_context(ctx: AppContext, vault_id: Optional[str], prompt: str) 
                     context_block = "Relevant vault content:\n\n" + "\n\n---\n\n".join(snippets)
                     return context_block + "\n\n---\n\nUser question: " + prompt
         # Fallback: inject most recent notes
-        notes = []
-        if hasattr(ctx.storage, "list_all_notes"):
-            notes = ctx.storage.list_all_notes(vault_id=vault_id)[:15]
-        elif hasattr(ctx.storage, "list_notes"):
-            note_paths = ctx.storage.list_notes(limit=15)
-            if note_paths and hasattr(ctx.storage, "read_note"):
-                for note_path in note_paths[:15]:
-                    try:
-                        note = ctx.storage.read_note(note_path)
-                    except Exception:
-                        logger.debug("_build_vault_context: could not read note at path %s", note_path)
-                        continue
-                    if note is not None:
-                        notes.append(note)
+        notes = await ctx.storage.list_all_notes(actor, vault_id=vault_id)
+        notes = notes[:15]
         if notes:
             lines = ["Vault context (recent notes):"]
             for n in notes[:12]:
@@ -875,7 +865,7 @@ def _make_engine_with_key(ctx: AppContext, api_key: str):
     return engine
 
 
-def _get_ai_for_user(
+async def _get_ai_for_user(
     user_id: str,
     ctx: AppContext,
     vault_id: Optional[str] = None,
@@ -900,11 +890,11 @@ def _get_ai_for_user(
             return _make_engine_with_key(ctx, personal_key)
 
     # 2. Vault owner shared key
-    if vault_id and hasattr(ctx.storage, "get_vault_ai_key"):
+    if vault_id:
         try:
-            vault = ctx.vaults.get_vault(vault_id)
+            vault = await ctx.storage.get_vault_by_id(SYSTEM_ACTOR, vault_id)
             if vault and getattr(vault, "ai_key_shared", False):
-                vault_key = ctx.storage.get_vault_ai_key(vault_id)
+                vault_key = await ctx.storage.get_vault_ai_key(vault_id)
                 if vault_key:
                     return _make_engine_with_key(ctx, vault_key)
         except Exception:
@@ -956,34 +946,26 @@ def _get_tools_for_mode(mode: Optional[str], vault_id: Optional[str]) -> list:
     return tools
 
 
-def _resolve_folder_id(ctx: AppContext, vault_id: str, user: User, folder_path: str) -> Optional[str]:
+async def _resolve_folder_id(ctx: AppContext, vault_id: str, user: User, folder_path: str) -> Optional[str]:
     """Find or create a folder by name. Returns None for root ('/')."""
     if not folder_path or folder_path == "/":
         return None
     try:
-        if hasattr(ctx.storage, "list_all_folders"):
-            for folder in ctx.storage.list_all_folders(vault_id=vault_id):
-                if folder.name == folder_path or getattr(folder, "path", "") == folder_path:
-                    return folder.id
+        actor = Actor.from_user(user)
+        for folder in await ctx.storage.list_all_folders(actor, vault_id=vault_id):
+            if folder.name == folder_path or getattr(folder, "path", "") == folder_path:
+                return folder.id
         # Not found — create it
-        folder = ctx.folders.create_folder(
+        folder = await ctx.storage.create_folder(
             vault_id=vault_id,
             name=folder_path,
-            owner_id=user.id,
+            owner_id=str(user.id),
             parent_id=None,
         )
         return folder.id
     except Exception:
         logger.exception("Failed to resolve folder for path %s", folder_path)
         return None
-
-
-def _set_user_ctx_for_tools(ctx: AppContext, user: User) -> None:
-    """Set per-request user context so storage ACL checks use the right identity."""
-    ctx.storage.set_user_context(
-        user.id,
-        is_admin=user.system_role in PLATFORM_ADMIN,
-    )
 
 
 async def _execute_tool_call(
@@ -997,7 +979,7 @@ async def _execute_tool_call(
     Broadcasts an ai_tool_executed WebSocket event after mutating operations.
     Must remain async def — see CLAUDE.md architecture notes."""
     logger.info("[tool] executing %s  args=%s", tool_name, tool_args)
-    _set_user_ctx_for_tools(ctx, user)
+    actor = Actor.from_user(user)
 
     try:
         if tool_name == "create_note":
@@ -1008,10 +990,10 @@ async def _execute_tool_call(
             folder_id = tool_args.get("folder_id") or None
             if folder_id is None:
                 folder_path = tool_args.get("folder_path", "/")
-                folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
-            note = ctx.notes.create_note(
+                folder_id = await _resolve_folder_id(ctx, vault_id, user, folder_path)
+            note = await ctx.storage.create_note(
                 vault_id=vault_id,
-                owner_id=user.id,
+                owner_id=str(user.id),
                 title=title,
                 content=content,
                 folder_id=folder_id,
@@ -1037,12 +1019,14 @@ async def _execute_tool_call(
             if parent_id is None:
                 parent_path = tool_args.get("parent_path", "/")
                 parent_id = (
-                    _resolve_folder_id(ctx, vault_id, user, parent_path) if parent_path and parent_path != "/" else None
+                    await _resolve_folder_id(ctx, vault_id, user, parent_path)
+                    if parent_path and parent_path != "/"
+                    else None
                 )
-            folder = ctx.folders.create_folder(
+            folder = await ctx.storage.create_folder(
                 vault_id=vault_id,
                 name=name,
-                owner_id=user.id,
+                owner_id=str(user.id),
                 parent_id=parent_id,
                 description=description,
             )
@@ -1062,7 +1046,7 @@ async def _execute_tool_call(
             note_id = tool_args.get("note_id")
             if not note_id:
                 return {"success": False, "error": "note_id is required"}
-            note = ctx.notes.get_note(note_id)
+            note = await ctx.storage.get_note_by_id(actor, note_id)
             if not note:
                 return {"success": False, "error": f"Note {note_id} not found"}
             if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
@@ -1073,7 +1057,7 @@ async def _execute_tool_call(
                 note.content = tool_args["content"]
             if tool_args.get("tags") is not None:
                 note.tags = tool_args["tags"]
-            ctx.notes.update_note(note, actor_id=str(user.id))
+            await ctx.storage.update_note(note, actor_id=str(user.id))
             await hub.broadcast(
                 vault_id,
                 {
@@ -1093,7 +1077,7 @@ async def _execute_tool_call(
                 id=str(uuid.uuid4()),
                 vault_id=vault_id,
                 campaign_id=vault_id,
-                owner_id=user.id,
+                owner_id=str(user.id),
                 name=tool_args.get("name", "Unknown"),
                 description=tool_args.get("description") or None,
                 is_npc=(tool_args.get("char_type", "npc") == "npc"),
@@ -1102,7 +1086,7 @@ async def _execute_tool_call(
                 meta={},
                 ai_memory=None,
             )
-            ctx.storage.save_character(char)
+            await ctx.storage.save_character(char)
             await hub.broadcast(
                 vault_id,
                 {
@@ -1120,10 +1104,10 @@ async def _execute_tool_call(
             created = []
             for n in notes_data:
                 folder_path = n.get("folder_path", "/")
-                folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
-                note = ctx.notes.create_note(
+                folder_id = await _resolve_folder_id(ctx, vault_id, user, folder_path)
+                note = await ctx.storage.create_note(
                     vault_id=vault_id,
-                    owner_id=user.id,
+                    owner_id=str(user.id),
                     title=n.get("title", "Untitled"),
                     content=n.get("content", ""),
                     folder_id=folder_id,
@@ -1148,7 +1132,7 @@ async def _execute_tool_call(
             if not query:
                 return {"error": "query is required"}
             try:
-                raw_results = ctx.storage.search_notes(query, vault_id=vault_id, top_k=limit)
+                raw_results = await ctx.storage.search_notes(query, vault_id=vault_id, top_k=limit)
                 results = []
                 for note in raw_results or []:
                     if isinstance(note, dict):
@@ -1164,9 +1148,9 @@ async def _execute_tool_call(
                         folder_id = getattr(note, "folder_id", None)
                         tags = getattr(note, "tags", []) or []
                     folder_name = None
-                    if folder_id and hasattr(ctx.storage, "get_folder_by_id"):
+                    if folder_id:
                         try:
-                            f = ctx.storage.get_folder_by_id(folder_id)
+                            f = await ctx.storage.get_folder_by_id(actor, folder_id)
                             if f:
                                 folder_name = f.name
                         except Exception:
@@ -1188,11 +1172,11 @@ async def _execute_tool_call(
             note_id = tool_args.get("note_id")
             title_query = tool_args.get("title")
             note = None
-            if note_id and hasattr(ctx.storage, "get_note_by_id"):
-                note = ctx.storage.get_note_by_id(note_id)
+            if note_id:
+                note = await ctx.storage.get_note_by_id(actor, note_id)
             if note is None and title_query:
                 try:
-                    candidates = ctx.storage.search_notes(title_query, vault_id=vault_id, top_k=5)
+                    candidates = await ctx.storage.search_notes(title_query, vault_id=vault_id, top_k=5)
                     for candidate in candidates or []:
                         if isinstance(candidate, dict):
                             if (candidate.get("title", "") or "").lower() == title_query.lower():
@@ -1223,9 +1207,9 @@ async def _execute_tool_call(
                 tags = getattr(note, "tags", []) or []
                 folder_id = getattr(note, "folder_id", None)
             folder_name = None
-            if folder_id and hasattr(ctx.storage, "get_folder_by_id"):
+            if folder_id:
                 try:
-                    f = ctx.storage.get_folder_by_id(folder_id)
+                    f = await ctx.storage.get_folder_by_id(actor, folder_id)
                     if f:
                         folder_name = f.name
                 except Exception:
@@ -1242,12 +1226,10 @@ async def _execute_tool_call(
         elif tool_name == "list_notes":
             folder_path = tool_args.get("folder_path")
             limit = int(tool_args.get("limit", 20))
-            all_notes = []
-            if hasattr(ctx.storage, "list_all_notes"):
-                all_notes = ctx.storage.list_all_notes(vault_id=vault_id)
+            all_notes = await ctx.storage.list_all_notes(actor, vault_id=vault_id)
             # Filter by folder if specified
             if folder_path and folder_path != "/":
-                folder_id_filter = _resolve_folder_id(ctx, vault_id, user, folder_path)
+                folder_id_filter = await _resolve_folder_id(ctx, vault_id, user, folder_path)
                 if folder_id_filter:
                     all_notes = [
                         n for n in all_notes if str(getattr(n, "folder_id", "") or "") == str(folder_id_filter)
@@ -1256,9 +1238,9 @@ async def _execute_tool_call(
             for note in all_notes[:limit]:
                 fid = getattr(note, "folder_id", None)
                 folder_name = None
-                if fid and hasattr(ctx.storage, "get_folder_by_id"):
+                if fid:
                     try:
-                        f = ctx.storage.get_folder_by_id(fid)
+                        f = await ctx.storage.get_folder_by_id(actor, fid)
                         if f:
                             folder_name = f.name
                     except Exception:
@@ -1275,7 +1257,7 @@ async def _execute_tool_call(
 
         elif tool_name == "list_characters":
             limit = int(tool_args.get("limit", 20))
-            chars = ctx.storage.list_characters(vault_id=vault_id)
+            chars = await ctx.storage.list_characters(vault_id=vault_id)
             result = []
             for char in chars[:limit]:
                 result.append(
@@ -1294,14 +1276,14 @@ async def _execute_tool_call(
                 return {"success": False, "error": "note_id is required"}
             if not new_tags:
                 return {"success": False, "error": "tags list is required"}
-            note = ctx.notes.get_note(note_id)
+            note = await ctx.storage.get_note_by_id(actor, note_id)
             if not note:
                 return {"success": False, "error": f"Note {note_id} not found"}
             if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
                 return {"success": False, "error": "Note does not belong to this vault"}
             for tag in new_tags:
-                ctx.notes.add_tag(note_id, tag)
-            note = ctx.notes.get_note(note_id)
+                await ctx.storage.add_tag(actor, note_id, tag)
+            note = await ctx.storage.get_note_by_id(actor, note_id)
             return {"success": True, "note_id": note_id, "tags": getattr(note, "tags", []) or []}
 
         elif tool_name == "move_note":
@@ -1309,21 +1291,21 @@ async def _execute_tool_call(
             folder_path = tool_args.get("folder_path", "/")
             if not note_id:
                 return {"success": False, "error": "note_id is required"}
-            note = ctx.notes.get_note(note_id)
+            note = await ctx.storage.get_note_by_id(actor, note_id)
             if not note:
                 return {"success": False, "error": f"Note {note_id} not found"}
             if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
                 return {"success": False, "error": "Note does not belong to this vault"}
             old_folder_id = getattr(note, "folder_id", None)
-            new_folder_id = _resolve_folder_id(ctx, vault_id, user, folder_path)
+            new_folder_id = await _resolve_folder_id(ctx, vault_id, user, folder_path)
             note.folder_id = new_folder_id
-            ctx.notes.update_note(note, actor_id=str(user.id))
+            await ctx.storage.update_note(note, actor_id=str(user.id))
             # Update folder note_id lists
             try:
-                if old_folder_id and hasattr(ctx.folders, "remove_note_from_folder"):
-                    ctx.folders.remove_note_from_folder(old_folder_id, note_id)
-                if new_folder_id and hasattr(ctx.folders, "add_note_to_folder"):
-                    ctx.folders.add_note_to_folder(new_folder_id, note_id)
+                if old_folder_id:
+                    await ctx.storage.remove_note_from_folder(actor, old_folder_id, note_id)
+                if new_folder_id:
+                    await ctx.storage.add_note_to_folder(actor, new_folder_id, note_id)
             except Exception:
                 logger.exception("Failed to update folder note lists during move_note")
             return {"success": True, "note_id": note_id, "title": note.title, "new_folder_id": new_folder_id}
@@ -1332,7 +1314,7 @@ async def _execute_tool_call(
             character_id = tool_args.get("character_id")
             if not character_id:
                 return {"success": False, "error": "character_id is required"}
-            char = ctx.characters.get_character(character_id)
+            char = await ctx.storage.get_character_by_id(character_id)
             if not char:
                 return {"success": False, "error": f"Character {character_id} not found"}
             if getattr(char, "vault_id", None) and str(char.vault_id) != str(vault_id):
@@ -1341,7 +1323,7 @@ async def _execute_tool_call(
                 char.name = tool_args["name"]
             if tool_args.get("description") is not None:
                 char.description = tool_args["description"]
-            ctx.characters.update_character(char)
+            await ctx.storage.update_character(char)
             await hub.broadcast(
                 vault_id,
                 {
@@ -1359,7 +1341,7 @@ async def _execute_tool_call(
             confirmed = bool(tool_args.get("confirmed", False))
             if not note_id:
                 return {"success": False, "error": "note_id is required"}
-            note = ctx.notes.get_note(note_id)
+            note = await ctx.storage.get_note_by_id(actor, note_id)
             if not note:
                 return {"success": False, "error": f"Note {note_id} not found"}
             if getattr(note, "vault_id", None) and str(note.vault_id) != str(vault_id):
@@ -1370,7 +1352,7 @@ async def _execute_tool_call(
                     "message": f"Delete note '{note.title}'? This cannot be undone. Call delete_note again with confirmed=true to proceed.",
                     "note_id": note_id,
                 }
-            ctx.storage.soft_delete_note(note_id)
+            await ctx.storage.soft_delete_note(note_id)
             await hub.broadcast(
                 vault_id,
                 {
@@ -1388,7 +1370,7 @@ async def _execute_tool_call(
             confirmed = bool(tool_args.get("confirmed", False))
             if not character_id:
                 return {"success": False, "error": "character_id is required"}
-            char = ctx.characters.get_character(character_id)
+            char = await ctx.storage.get_character_by_id(character_id)
             if not char:
                 return {"success": False, "error": f"Character {character_id} not found"}
             if getattr(char, "vault_id", None) and str(char.vault_id) != str(vault_id):
@@ -1399,7 +1381,7 @@ async def _execute_tool_call(
                     "message": f"Delete character '{char.name}'? This cannot be undone. Call delete_character again with confirmed=true to proceed.",
                     "character_id": character_id,
                 }
-            ctx.storage.soft_delete_character(character_id)
+            await ctx.storage.soft_delete_character(character_id)
             await hub.broadcast(
                 vault_id,
                 {
@@ -1419,9 +1401,9 @@ async def _execute_tool_call(
             # Resolve folder
             folder = None
             if folder_id:
-                folder = ctx.folders.get_folder(folder_id)
+                folder = await ctx.storage.get_folder_by_id(actor, folder_id)
             if folder is None and folder_path:
-                all_folders = ctx.storage.list_all_folders(vault_id=vault_id)
+                all_folders = await ctx.storage.list_all_folders(actor, vault_id=vault_id)
                 for f in all_folders:
                     if f.name == folder_path or getattr(f, "path", "") == folder_path:
                         folder = f
@@ -1435,7 +1417,7 @@ async def _execute_tool_call(
                 # Check for sub-folders
                 child_count = 0
                 try:
-                    all_folders = ctx.storage.list_all_folders(vault_id=vault_id)
+                    all_folders = await ctx.storage.list_all_folders(actor, vault_id=vault_id)
                     child_count = sum(
                         1 for f in all_folders if str(getattr(f, "parent_id", "") or "") == str(resolved_id)
                     )
@@ -1449,7 +1431,7 @@ async def _execute_tool_call(
                     "message": msg + " Call delete_folder again with confirmed=true to proceed.",
                     "folder_id": resolved_id,
                 }
-            ctx.folders.delete_folder(resolved_id)
+            await ctx.storage.delete_folder_by_id(resolved_id)
             return {"success": True, "deleted_folder_id": resolved_id, "name": folder.name}
 
         elif tool_name == "create_relationship":
@@ -1469,7 +1451,7 @@ async def _execute_tool_call(
                 relationship_type=relationship_type,
                 label=description,
             )
-            ctx.storage.create_relationship(rel)
+            await ctx.storage.create_relationship(rel)
             return {"success": True, "relationship_id": rel.id, "relationship_type": relationship_type}
 
         elif tool_name == "search_notes":
@@ -1478,7 +1460,7 @@ async def _execute_tool_call(
             if not query:
                 return {"error": "query is required"}
             try:
-                raw_results = ctx.storage.search_notes(query, vault_id=vault_id, top_k=limit)
+                raw_results = await ctx.storage.search_notes(query, vault_id=vault_id, top_k=limit)
                 notes_out = []
                 for note in raw_results or []:
                     if isinstance(note, dict):
@@ -1537,7 +1519,6 @@ def _make_tool_executor(ctx: AppContext, vault_id: str, user: User, loop=None):
     async _execute_tool_call coroutine can be dispatched via
     run_coroutine_threadsafe from worker threads.
     """
-    _set_user_ctx_for_tools(ctx, user)
     _loop = loop or asyncio.get_event_loop()
 
     def executor(tool_name: str, tool_args: dict) -> dict:
@@ -1679,7 +1660,7 @@ async def ai_status(
                     user_can_use_ai = True
                 elif platform_ready:
                     # Platform key present — only privileged roles may use it
-                    user_obj = ctx.users.get_user(user_id)
+                    user_obj = await ctx.storage.get_user_by_id(user_id)
                     role = getattr(user_obj, "system_role", "user") if user_obj else "user"
                     user_can_use_ai = role in PLATFORM_KEY_ROLES
                 else:
@@ -1700,19 +1681,17 @@ async def ai_usage(
     user: User = Depends(get_current_user),
 ):
     """Return the current-month AI usage summary for the logged-in user."""
-    ct = ctx.cost_tracker
-    if ct is None:
-        return {"total_requests": 0, "total_tokens": 0, "estimated_cost": 0.0}
-
     now = datetime.utcnow()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     try:
-        with Session(ct.engine) as session:
-            rows = session.scalars(
-                select(AIUsageRecord).where(
-                    AIUsageRecord.user_id == str(user.id),
-                    AIUsageRecord.timestamp >= start_of_month,
+        async with ctx.storage._sf() as session:
+            rows = (
+                await session.scalars(
+                    select(AIUsageRecord).where(
+                        AIUsageRecord.user_id == str(user.id),
+                        AIUsageRecord.timestamp >= start_of_month,
+                    )
                 )
             ).all()
     except Exception:
@@ -1738,7 +1717,7 @@ async def ask(
     """Ask the AI with optional conversation history and tool-calling support."""
     try:
         _apply_preferred_model(ctx)
-        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = await _get_ai_for_user(str(user.id), ctx)
         effective_mode = _resolve_effective_mode(req.mode, user.system_role)
 
         # Build RAG context (best-effort — never blocks the request if it fails)
@@ -1746,7 +1725,7 @@ async def ask(
         if req.vault_id:
             try:
                 embedding_key = get_api_key_for_vault(req.vault_id, user, ctx)
-                engine = getattr(ctx.storage, "engine", None)
+                engine = getattr(ctx.storage, "_engine", None)
                 if engine is not None:
                     rag_context = await build_context(
                         query=req.prompt,
@@ -1759,7 +1738,7 @@ async def ask(
             except Exception:
                 logger.debug("RAG context build failed — proceeding without vault context", exc_info=True)
 
-        system_prompt = _build_system_prompt(
+        system_prompt = await _build_system_prompt(
             ctx,
             user,
             req.vault_id,
@@ -1768,11 +1747,10 @@ async def ask(
             rag_context=rag_context,
         )
         user_prompt = _inject_entity_context(req.prompt, req.current_entity)
-        vault_prompt = _build_vault_context(ctx, req.vault_id, user_prompt)
+        vault_prompt = await _build_vault_context(ctx, user, req.vault_id, user_prompt)
         tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
         asyncio.create_task(analytics_track("ai.context_request", user_id=user.id, operation="ask"))
-        ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
 
         # Capture the running event loop here (in async context) so the
         # sync tool executor inside the worker thread can dispatch async
@@ -1794,15 +1772,15 @@ async def ask(
         )
 
         cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
-        ctx.analytics.track(
-            "ai.request_completed",
-            user_id=user.id,
-            data={
-                "operation": "ask",
-                "cost_usd": cost_usd,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-            },
+        asyncio.create_task(
+            analytics_track(
+                "ai.request_completed",
+                user_id=user.id,
+                operation="ask",
+                cost_usd=cost_usd,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
         )
 
         # Auto-save conversation to database
@@ -1848,7 +1826,7 @@ async def ask(
     except HTTPException:
         raise
     except Exception as e:
-        ctx.analytics.track("ai.request_failed", user_id=user.id, data={"operation": "ask", "error": str(e)})
+        asyncio.create_task(analytics_track("ai.request_failed", user_id=user.id, operation="ask", error=str(e)))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"AI request failed: {str(e)}",
@@ -1865,7 +1843,7 @@ async def stream_ask(
 ):
     """Streaming SSE version of /ai/ask. Yields tool status events then response tokens."""
     try:
-        ai_engine = _get_ai_for_user(str(user.id), ctx)
+        ai_engine = await _get_ai_for_user(str(user.id), ctx)
     except HTTPException:
         raise
 
@@ -1876,7 +1854,7 @@ async def stream_ask(
     if req.vault_id:
         try:
             embedding_key = get_api_key_for_vault(req.vault_id, user, ctx)
-            engine = getattr(ctx.storage, "engine", None)
+            engine = getattr(ctx.storage, "_engine", None)
             if engine is not None:
                 rag_context = await build_context(
                     query=req.prompt,
@@ -1889,7 +1867,7 @@ async def stream_ask(
         except Exception:
             logger.debug("RAG context build failed for stream — proceeding without vault context", exc_info=True)
 
-    system_prompt = _build_system_prompt(
+    system_prompt = await _build_system_prompt(
         ctx,
         user,
         req.vault_id,
@@ -1901,7 +1879,7 @@ async def stream_ask(
     async def generate():
         try:
             user_prompt = _inject_entity_context(req.prompt, req.current_entity)
-            vault_prompt = _build_vault_context(ctx, req.vault_id, user_prompt)
+            vault_prompt = await _build_vault_context(ctx, user, req.vault_id, user_prompt)
             tools = _get_tools_for_mode(effective_mode, req.vault_id)
 
             # ── Tool-calling path ──────────────────────────────────────────────
@@ -1929,8 +1907,6 @@ async def stream_ask(
                     result = future.result(timeout=60)
                     status_q.put(("tool_status", ""))
                     return result
-
-                _set_user_ctx_for_tools(ctx, user)
 
                 # Run the full conversation loop in a background thread.
                 thread_result: dict = {}
@@ -1982,7 +1958,7 @@ async def stream_ask(
                 # ── Fallback: regular ask (no tools) ──────────────────────────
                 logger.info("[stream] no tools — plain ask()")
                 full_prompt = _build_prompt_with_history(req.prompt, req.history)
-                full_prompt = _build_vault_context(ctx, req.vault_id, full_prompt)
+                full_prompt = await _build_vault_context(ctx, user, req.vault_id, full_prompt)
                 response, total_pt, total_ct = await asyncio.wait_for(
                     asyncio.to_thread(ai_engine.ask, full_prompt, system_prompt=system_prompt),
                     timeout=60.0,

@@ -19,12 +19,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
+from server.context import AppContext
 from server.deps import get_ctx, require_admin
 from server.email import send_email
 from server.limiter import limiter
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.user import User
 
 router = APIRouter(tags=["waitlist"])
@@ -44,7 +43,7 @@ class ApplyRequest(BaseModel):
 
 
 def _engine(ctx: AppContext):
-    return getattr(ctx.storage, "engine", None)
+    return getattr(ctx.storage, "_engine", None)
 
 
 def _row_to_dict(r) -> dict:
@@ -64,7 +63,7 @@ def _row_to_dict(r) -> dict:
 
 @router.post("/apply", status_code=201)
 @limiter.limit("3/minute")
-def submit_application(request: Request, body: ApplyRequest, ctx: AppContext = Depends(get_ctx)):
+async def submit_application(request: Request, body: ApplyRequest, ctx: AppContext = Depends(get_ctx)):
     """Accept an early access application. Returns 409 if email already submitted."""
     engine = _engine(ctx)
     if not engine:
@@ -72,17 +71,19 @@ def submit_application(request: Request, body: ApplyRequest, ctx: AppContext = D
 
     email_lower = body.email.lower()
 
-    with Session(engine) as session:
-        existing = session.execute(
-            text("SELECT id FROM waitlist_applications WHERE email = :email"),
-            {"email": email_lower},
+    async with engine.begin() as conn:
+        existing = (
+            await conn.execute(
+                text("SELECT id FROM waitlist_applications WHERE email = :email"),
+                {"email": email_lower},
+            )
         ).fetchone()
         if existing:
             raise HTTPException(status_code=409, detail="already_on_list")
 
         app_id = str(uuid.uuid4())
         now = datetime.utcnow()
-        session.execute(
+        await conn.execute(
             text(
                 "INSERT INTO waitlist_applications "
                 "(id, name, email, world_description, referral_source, status, created_at) "
@@ -97,7 +98,6 @@ def submit_application(request: Request, body: ApplyRequest, ctx: AppContext = D
                 "created_at": now,
             },
         )
-        session.commit()
 
     send_email(
         to=body.email,
@@ -120,7 +120,7 @@ def submit_application(request: Request, body: ApplyRequest, ctx: AppContext = D
 
 
 @router.get("/admin/waitlist")
-def list_waitlist(
+async def list_waitlist(
     status: Optional[str] = None,
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
@@ -130,20 +130,24 @@ def list_waitlist(
     if not engine:
         return []
 
-    with Session(engine) as session:
+    async with engine.connect() as conn:
         if status and status in ("pending", "approved", "rejected"):
-            rows = session.execute(
-                text(
-                    "SELECT id, name, email, world_description, referral_source, status, created_at "
-                    "FROM waitlist_applications WHERE status = :status ORDER BY created_at DESC"
-                ),
-                {"status": status},
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT id, name, email, world_description, referral_source, status, created_at "
+                        "FROM waitlist_applications WHERE status = :status ORDER BY created_at DESC"
+                    ),
+                    {"status": status},
+                )
             ).fetchall()
         else:
-            rows = session.execute(
-                text(
-                    "SELECT id, name, email, world_description, referral_source, status, created_at "
-                    "FROM waitlist_applications ORDER BY created_at DESC"
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT id, name, email, world_description, referral_source, status, created_at "
+                        "FROM waitlist_applications ORDER BY created_at DESC"
+                    )
                 )
             ).fetchall()
 
@@ -154,7 +158,7 @@ def list_waitlist(
 
 
 @router.post("/admin/waitlist/{app_id}/approve")
-def approve_application(
+async def approve_application(
     app_id: str,
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
@@ -164,19 +168,20 @@ def approve_application(
     if not engine:
         raise HTTPException(status_code=503, detail="Database unavailable.")
 
-    with Session(engine) as session:
-        row = session.execute(
-            text("SELECT id, name, email FROM waitlist_applications WHERE id = :id"),
-            {"id": app_id},
+    async with engine.begin() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT id, name, email FROM waitlist_applications WHERE id = :id"),
+                {"id": app_id},
+            )
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Application not found.")
 
-        session.execute(
+        await conn.execute(
             text("UPDATE waitlist_applications SET status = 'approved' WHERE id = :id"),
             {"id": app_id},
         )
-        session.commit()
 
     _, name, email = row
     send_email(
@@ -204,7 +209,7 @@ def approve_application(
 
 
 @router.post("/admin/waitlist/{app_id}/reject")
-def reject_application(
+async def reject_application(
     app_id: str,
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(require_admin),
@@ -214,18 +219,19 @@ def reject_application(
     if not engine:
         raise HTTPException(status_code=503, detail="Database unavailable.")
 
-    with Session(engine) as session:
-        row = session.execute(
-            text("SELECT id FROM waitlist_applications WHERE id = :id"),
-            {"id": app_id},
+    async with engine.begin() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT id FROM waitlist_applications WHERE id = :id"),
+                {"id": app_id},
+            )
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Application not found.")
 
-        session.execute(
+        await conn.execute(
             text("UPDATE waitlist_applications SET status = 'rejected' WHERE id = :id"),
             {"id": app_id},
         )
-        session.commit()
 
     return {"status": "rejected"}

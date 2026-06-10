@@ -11,8 +11,9 @@ import logging
 
 from fastapi import APIRouter, Depends, Query
 
+from server.context import AppContext
 from server.deps import get_ctx, get_current_user
-from WorldStitch.context.app_context import AppContext
+from server.storage import Actor
 from WorldStitch.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("/stats")
-def stats(
+async def stats(
     campaign_id: str = "",
     vault_id: str = Query(default=""),
     ctx: AppContext = Depends(get_ctx),
@@ -29,128 +30,66 @@ def stats(
 ):
     """Return content counts scoped to the active vault."""
     effective_id = campaign_id or vault_id or ""
+    actor = Actor.from_user(user)
 
-    notes_count = ctx.storage.count_notes(vault_id=effective_id)
+    notes_count = await ctx.storage.count_notes(actor, vault_id=effective_id)
 
     try:
-        folders = ctx.storage.list_folders(vault_id=effective_id)
+        folders = await ctx.storage.list_all_folders(actor, vault_id=effective_id)
         folder_count = len(folders) if isinstance(folders, list) else 0
     except Exception:
         logger.warning("dashboard/stats: could not count folders for vault_id=%s", effective_id)
         folder_count = 0
 
     try:
-        chars = ctx.storage.list_characters(campaign_id=effective_id or None, vault_id=effective_id)
+        chars = await ctx.storage.list_characters(campaign_id=effective_id or None, vault_id=effective_id)
         char_count = len(chars) if isinstance(chars, list) else 0
     except Exception:
         logger.warning("dashboard/stats: could not count characters for vault_id=%s", effective_id)
         char_count = 0
 
     sessions_total = 0
-    if effective_id and hasattr(ctx.storage, "list_play_sessions"):
+    if effective_id:
         try:
-            _, sessions_total = ctx.storage.list_play_sessions(effective_id, limit=0)
+            _, sessions_total = await ctx.storage.list_play_sessions(effective_id, limit=0)
         except Exception:
             logger.warning("dashboard/stats: could not count play sessions for vault_id=%s", effective_id)
             sessions_total = 0
-    if not sessions_total:
+    if not sessions_total and effective_id:
         try:
-            _, sessions_total = ctx.storage.list_session_logs(vault_id=effective_id)
+            _, sessions_total = await ctx.storage.list_session_logs(vault_id=effective_id)
         except Exception:
-            sessions_total = _count_meta(ctx, "sessions")
-
-    timeline_events = _count_timeline(ctx)
+            sessions_total = 0
 
     return {
         "notes": notes_count,
         "folders": folder_count,
         "characters": char_count,
         "quests": 0,
-        "timeline_events": timeline_events,
+        "timeline_events": 0,
         "sessions": sessions_total,
     }
 
 
 @router.get("/recent")
-def recent(
+async def recent(
     vault_id: str = Query(default=""),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
     """Return the 10 most recently modified notes for the given vault."""
+    actor = Actor.from_user(user)
     try:
-        if hasattr(ctx.storage, "_session"):
-            import json as _json
-
-            from WorldStitch.storage.sqlite_backend import NoteRecord
-
-            with ctx.storage._session() as session:
-                q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
-                if vault_id:
-                    q = q.filter(NoteRecord.vault_id == vault_id)
-                if not getattr(ctx.storage, "_is_admin", False):
-                    q = q.filter(NoteRecord.owner_id == user.id)
-                records = q.order_by(NoteRecord.created_at.desc()).limit(10).all()
-                items = []
-                for rec in records:
-                    data = {}
-                    try:
-                        data = _json.loads(rec.data or "{}")
-                    except Exception:
-                        logger.debug("dashboard/recent: could not parse data JSON for note %s", rec.id)
-                    items.append(
-                        {
-                            "id": rec.id,
-                            "title": rec.title or data.get("title", "Untitled"),
-                            "last_modified": rec.created_at.isoformat() if rec.created_at else None,
-                            "vault_id": rec.vault_id,
-                        }
-                    )
-                return items
+        notes = await ctx.storage.list_all_notes(actor, vault_id=vault_id, limit=10)
+        return [
+            {
+                "id": note.id,
+                "title": note.title or "Untitled",
+                "last_modified": note.last_modified.isoformat() if note.last_modified else None,
+                "vault_id": note.vault_id,
+            }
+            for note in notes
+        ]
     except Exception:
-        logger.warning("dashboard/recent: DB query failed; falling back to filesystem listing", exc_info=True)
-
-    # Fallback: filesystem-based (HybridStorage)
-    paths = ctx.storage.list_notes()
-    items = []
-    for p in paths:
-        try:
-            meta = ctx.storage.get_note_metadata(p)
-            items.append(
-                {
-                    "id": p,
-                    "title": p.split("/")[-1].removesuffix(".md"),
-                    "last_modified": meta.get("modified"),
-                }
-            )
-        except Exception:
-            items.append({"id": p, "title": p.split("/")[-1].removesuffix(".md"), "last_modified": None})
-    items.sort(key=lambda x: x.get("last_modified") or "", reverse=True)
-    return items[:10]
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _count_meta(ctx: AppContext, subfolder: str) -> int:
-    """Count JSON files in a .ws_meta subfolder (HybridStorage / SQLiteBackend)."""
-    try:
-        from pathlib import Path
-
-        vault_path = getattr(ctx.storage, "vault_path", None)
-        if vault_path:
-            d = Path(vault_path) / ".ws_meta" / subfolder
-            if d.is_dir():
-                return len(list(d.glob("*.json")))
-    except Exception:
-        logger.debug("_count_meta: could not count .ws_meta/%s files", subfolder)
-    return 0
-
-
-def _count_timeline(ctx: AppContext) -> int:
-    """Count timeline events if the storage supports it."""
-    try:
-        events = ctx.storage.read_timeline()
-        return len(events)
-    except Exception:
-        return 0
+        logger.warning("dashboard/recent: DB query failed", exc_info=True)
+        return []

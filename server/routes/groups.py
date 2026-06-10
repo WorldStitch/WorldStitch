@@ -1,12 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user, require_admin
-from WorldStitch.context.app_context import AppContext
+from server.storage import Actor
 from WorldStitch.models.group import Group
 from WorldStitch.models.user import User
 
@@ -51,7 +52,8 @@ async def list_groups(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    all_groups = ctx.storage.list_groups() if hasattr(ctx.storage, "list_groups") else []
+    actor = Actor.from_user(user)
+    all_groups = await ctx.storage.list_groups(actor)
     if vault_id:
         all_groups = [g for g in all_groups if vault_id in (g.vault_ids or [])]
     return [_to_response(g) for g in all_groups]
@@ -63,7 +65,7 @@ async def get_group(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    group = ctx.groups.get_group(group_id)
+    group = await ctx.storage.get_group_by_id(group_id)
     if not group or not getattr(group, "is_active", True):
         raise HTTPException(status_code=404, detail="Group not found")
     is_admin = user.system_role in PLATFORM_ADMIN
@@ -79,7 +81,7 @@ async def create_group(
     ctx: AppContext = Depends(get_ctx),
     admin: User = Depends(require_admin),
 ):
-    group = ctx.groups.create_group(body.name, created_by=admin.id, description=body.description)
+    group = await ctx.storage.create_group(body.name, created_by=admin.id, description=body.description)
     return _to_response(group)
 
 
@@ -90,7 +92,7 @@ async def update_group(
     ctx: AppContext = Depends(get_ctx),
     admin: User = Depends(require_admin),
 ):
-    group = ctx.groups.get_group(group_id)
+    group = await ctx.storage.get_group_by_id(group_id)
     if not group or not getattr(group, "is_active", True):
         raise HTTPException(status_code=404, detail="Group not found")
     if body.name is not None:
@@ -99,7 +101,7 @@ async def update_group(
         group.description = body.description
     if body.permissions is not None:
         group.permissions = {**group.permissions, **body.permissions}
-    ctx.groups.update_group(group)
+    await ctx.storage.update_group(group)
     return _to_response(group)
 
 
@@ -109,10 +111,10 @@ async def delete_group(
     ctx: AppContext = Depends(get_ctx),
     admin: User = Depends(require_admin),
 ):
-    group = ctx.groups.get_group(group_id)
+    group = await ctx.storage.get_group_by_id(group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    ctx.groups.delete_group(group_id)
+    await ctx.storage.delete_group(group_id)
     return {"deleted": True, "id": group_id}
 
 
@@ -123,11 +125,11 @@ async def add_member(
     ctx: AppContext = Depends(get_ctx),
     admin: User = Depends(require_admin),
 ):
-    group = ctx.groups.get_group(group_id)
+    group = await ctx.storage.get_group_by_id(group_id)
     if not group or not getattr(group, "is_active", True):
         raise HTTPException(status_code=404, detail="Group not found")
-    user = ctx.users.get_user(body.user_id)
-    if not user:
+    member_user = await ctx.storage.get_user_by_id(body.user_id)
+    if not member_user:
         raise HTTPException(status_code=404, detail="User not found")
     role = (body.role or "").strip().lower()
     if not role:
@@ -143,10 +145,10 @@ async def add_member(
     if body.user_id not in group.members:
         group.members.append(body.user_id)
     group.member_roles[body.user_id] = role
-    if group_id not in (user.groups or []):
-        user.groups.append(group_id)
-        ctx.users.update_user(user)
-    ctx.groups.update_group(group)
+    if group_id not in (member_user.groups or []):
+        member_user.groups.append(group_id)
+        await ctx.storage.update_user(member_user)
+    await ctx.storage.update_group(group)
     return _to_response(group)
 
 
@@ -157,14 +159,14 @@ async def remove_member(
     ctx: AppContext = Depends(get_ctx),
     admin: User = Depends(require_admin),
 ):
-    group = ctx.groups.get_group(group_id)
+    group = await ctx.storage.get_group_by_id(group_id)
     if not group or not getattr(group, "is_active", True):
         raise HTTPException(status_code=404, detail="Group not found")
     group.members = [member for member in (group.members or []) if member != user_id]
     group.member_roles.pop(user_id, None)
-    user = ctx.users.get_user(user_id)
-    if user and group_id in (user.groups or []):
-        user.groups = [item for item in user.groups if item != group_id]
-        ctx.users.update_user(user)
-    ctx.groups.update_group(group)
+    member_user = await ctx.storage.get_user_by_id(user_id)
+    if member_user and group_id in (member_user.groups or []):
+        member_user.groups = [item for item in member_user.groups if item != group_id]
+        await ctx.storage.update_user(member_user)
+    await ctx.storage.update_group(group)
     return _to_response(group)

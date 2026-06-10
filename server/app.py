@@ -10,6 +10,7 @@ Start from the project root (the directory containing both
     uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
 """
 
+import asyncio
 import logging
 import sys
 import threading
@@ -32,6 +33,8 @@ sys.path.insert(0, str(_parent))
 
 from fastapi.responses import JSONResponse
 
+from server.context import AppContext
+from server.db import get_engine, get_session_factory, run_startup_migrations
 from server.deps import set_app_context
 from server.limiter import _rate_limit_enabled, limiter
 from server.middleware.analytics import AnalyticsMiddleware
@@ -59,8 +62,8 @@ from server.routes import (
     waitlist,
     ws,
 )
+from server.storage import AsyncStorage
 from WorldStitch.config.config import Config
-from WorldStitch.context.app_context import AppContext
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +98,16 @@ async def lifespan(application: FastAPI):
     if not cfg.API_KEY_ENCRYPTION_SECRET:
         logger.warning("WARNING: API_KEY_ENCRYPTION_SECRET not set — user API keys stored in plaintext")
 
-    ctx = AppContext(cfg)
+    # Apply schema migrations before serving traffic. Alembic is sync-only,
+    # so this runs a short-lived sync engine in a worker thread.
+    await asyncio.to_thread(run_startup_migrations)
+
+    storage = AsyncStorage(
+        get_session_factory(),
+        get_engine(),
+        vault_path=getattr(cfg, "VAULT_PATH", None),
+    )
+    ctx = AppContext(cfg, storage)
 
     # Wire up AI engine if an API key is present
     api_key = getattr(cfg, "OPENAI_API_KEY", "")
@@ -220,7 +232,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
             payload = decode_jwt(auth_header.removeprefix("Bearer ").strip())
             user_id = payload.get("sub", "") if isinstance(payload, dict) else ""
-        ctx.analytics.track(
+        await ctx.storage.track(
             "error.route_exception",
             user_id=user_id,
             data={"route": request.url.path, "status_code": 500},

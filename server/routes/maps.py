@@ -16,10 +16,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.embeddings import embed_entity, get_api_key_for_vault
 from server.vault_access import resolve_vault
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.map import Map
 from WorldStitch.models.user import User
 
@@ -42,8 +42,8 @@ class MarkerItem(BaseModel):
 
 class MapListItem(BaseModel):
     id: str
-    campaign_id: str = ""  # preferred
-    vault_id: str  # deprecated alias for campaign_id
+    campaign_id: str = ""
+    vault_id: str
     name: str
     map_type: str
     description: str
@@ -56,8 +56,8 @@ class MapListItem(BaseModel):
 
 class MapDetail(BaseModel):
     id: str
-    campaign_id: str = ""  # preferred
-    vault_id: str  # deprecated alias for campaign_id
+    campaign_id: str = ""
+    vault_id: str
     owner_id: str
     name: str
     map_type: str
@@ -73,7 +73,7 @@ class MapDetail(BaseModel):
 class CreateMapRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     campaign_id: Optional[str] = Field(default=None, max_length=100)
-    vault_id: Optional[str] = Field(default=None, max_length=100)  # deprecated alias for campaign_id
+    vault_id: Optional[str] = Field(default=None, max_length=100)
     map_type: str = Field("region", max_length=50)
     description: str = Field("", max_length=10_000)
     image_path: str = Field("", max_length=1000)
@@ -100,7 +100,7 @@ def _map_to_list_item(m: Map) -> MapListItem:
     return MapListItem(
         id=m.id,
         campaign_id=effective_id,
-        vault_id=effective_id,  # deprecated: mirrors campaign_id
+        vault_id=effective_id,
         name=m.name,
         map_type=m.map_type,
         description=m.description or "",
@@ -117,7 +117,7 @@ def _map_to_detail(m: Map) -> MapDetail:
     return MapDetail(
         id=m.id,
         campaign_id=effective_id,
-        vault_id=effective_id,  # deprecated: mirrors campaign_id
+        vault_id=effective_id,
         owner_id=m.owner_id,
         name=m.name,
         map_type=m.map_type,
@@ -131,11 +131,11 @@ def _map_to_detail(m: Map) -> MapDetail:
     )
 
 
-def _get_map_or_404(ctx, user: User, map_id: str) -> Map:
-    m = ctx.maps.get_map(map_id)
+async def _get_map_or_404(ctx: AppContext, user: User, map_id: str) -> Map:
+    m = await ctx.storage.get_map_by_id(map_id)
     if not m or m.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Map not found")
-    resolve_vault(ctx, user, getattr(m, "vault_id", None))
+    await resolve_vault(ctx, user, getattr(m, "vault_id", None))
     return m
 
 
@@ -155,16 +155,12 @@ async def list_maps(
     type: Optional[str] = Query(None, description="Filter by map_type"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    ctx=Depends(get_ctx),
+    ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """List maps for a campaign, optionally filtered by type.
-
-    campaign_id is preferred; vault_id is a deprecated alias.
-    """
     try:
-        effective_id = campaign_id or (resolve_vault(ctx, user, vault_id).id if vault_id else None)
-        all_maps = ctx.storage.list_maps(campaign_id=effective_id, map_type=type)
+        effective_id = campaign_id or ((await resolve_vault(ctx, user, vault_id)).id if vault_id else None)
+        all_maps = await ctx.storage.list_maps(campaign_id=effective_id, map_type=type)
         all_maps.sort(key=lambda m: m.last_modified, reverse=True)
         total = len(all_maps)
         page = all_maps[skip : skip + limit]
@@ -181,12 +177,11 @@ async def list_maps(
 @router.get("/{map_id}", response_model=MapDetail)
 async def get_map(
     map_id: str,
-    ctx=Depends(get_ctx),
+    ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Get a map by ID."""
     try:
-        return _map_to_detail(_get_map_or_404(ctx, user, map_id))
+        return _map_to_detail(await _get_map_or_404(ctx, user, map_id))
     except HTTPException:
         raise
     except Exception as e:
@@ -199,13 +194,11 @@ async def create_map(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Create a new map.
-
-    campaign_id is preferred; vault_id is a deprecated alias.
-    """
     try:
-        effective_id = req.campaign_id or (resolve_vault(ctx, user, req.vault_id).id if req.vault_id else "default")
-        m = ctx.maps.create_map(
+        effective_id = req.campaign_id or (
+            (await resolve_vault(ctx, user, req.vault_id)).id if req.vault_id else "default"
+        )
+        m = await ctx.storage.create_map(
             vault_id=effective_id,
             owner_id=user.id,
             name=req.name,
@@ -213,22 +206,19 @@ async def create_map(
             description=req.description or None,
             tags=_tags_str_to_list(req.tags),
         )
-        # Set extra fields not in create_map signature
         m.map_type = req.map_type
         m.markers = [marker.model_dump() for marker in req.markers]
-        ctx.storage.save_map(m)
-        ctx.analytics.track("map.created", user_id=user.id, data={"map_type": req.map_type})
-        # Fire-and-forget embedding
-        _embed_key = get_api_key_for_vault(effective_id, user, ctx)
-        _embed_engine = getattr(ctx.storage, "engine", None)
-        if _embed_key and _embed_engine:
+        await ctx.storage.save_map(m)
+        asyncio.create_task(ctx.storage.track("map.created", user_id=user.id, data={"map_type": req.map_type}))
+        _embed_key = await get_api_key_for_vault(effective_id, user, ctx)
+        if _embed_key:
             asyncio.create_task(
                 embed_entity(
                     "maps",
                     m.id,
                     f"{m.name}\n\n{m.description or ''}",
                     _embed_key,
-                    _embed_engine,
+                    ctx.storage._engine,
                 )
             )
         return _map_to_detail(m)
@@ -240,12 +230,11 @@ async def create_map(
 async def update_map(
     map_id: str,
     req: UpdateMapRequest,
-    ctx=Depends(get_ctx),
+    ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Update an existing map."""
     try:
-        m = _get_map_or_404(ctx, user, map_id)
+        m = await _get_map_or_404(ctx, user, map_id)
 
         is_admin = user.system_role in PLATFORM_ADMIN
         if m.owner_id != user.id and not is_admin:
@@ -264,19 +253,17 @@ async def update_map(
         if req.tags is not None:
             m.tags = _tags_str_to_list(req.tags)
 
-        ctx.maps.update_map(m)
-        # Fire-and-forget re-embedding
+        await ctx.storage.update_map(m)
         _vault_id = getattr(m, "vault_id", None) or getattr(m, "campaign_id", None) or ""
-        _embed_key = get_api_key_for_vault(_vault_id, user, ctx)
-        _embed_engine = getattr(ctx.storage, "engine", None)
-        if _embed_key and _embed_engine:
+        _embed_key = await get_api_key_for_vault(_vault_id, user, ctx)
+        if _embed_key:
             asyncio.create_task(
                 embed_entity(
                     "maps",
                     m.id,
                     f"{m.name}\n\n{getattr(m, 'description', '') or ''}",
                     _embed_key,
-                    _embed_engine,
+                    ctx.storage._engine,
                 )
             )
         return _map_to_detail(m)
@@ -289,18 +276,17 @@ async def update_map(
 @router.delete("/{map_id}")
 async def delete_map(
     map_id: str,
-    ctx=Depends(get_ctx),
+    ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Soft-delete a map."""
     try:
-        m = _get_map_or_404(ctx, user, map_id)
+        m = await _get_map_or_404(ctx, user, map_id)
 
         is_admin = user.system_role in PLATFORM_ADMIN
         if m.owner_id != user.id and not is_admin:
             raise HTTPException(status_code=403, detail="Access denied")
 
-        ctx.storage.soft_delete_map(map_id)
+        await ctx.storage.soft_delete_map(map_id)
         return {"deleted": True, "id": map_id}
     except HTTPException:
         raise

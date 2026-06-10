@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import Depends, Header, HTTPException, status
 
 from server.auth_utils import decode_jwt
-from WorldStitch.context.app_context import AppContext
+from server.context import AppContext
 from WorldStitch.models.user import User
 
 _ctx: Optional[AppContext] = None
@@ -72,7 +72,7 @@ def get_ctx() -> AppContext:
     return _ctx
 
 
-def get_current_user(
+async def get_current_user(
     authorization: Optional[str] = Header(default=None),
     ctx: AppContext = Depends(get_ctx),
 ) -> User:
@@ -96,18 +96,13 @@ def get_current_user(
             detail="Invalid token payload",
         )
 
-    user = ctx.users.get_user(user_id)
+    user = await ctx.storage.get_user_by_id(user_id)
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or disabled.",
         )
 
-    ctx.storage.set_user_context(
-        user.id,
-        is_admin=user.system_role in PLATFORM_ADMIN,
-    )
-    ctx.current_user_id = user.id
     return user
 
 

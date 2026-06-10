@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.context import AppContext
 from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.vault_access import resolve_vault
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.relationship import Relationship
 from WorldStitch.models.relationship_types import RELATIONSHIP_TYPES
 from WorldStitch.models.user import User
@@ -89,18 +89,6 @@ def _rel_to_detail(rel: Relationship) -> RelationshipDetail:
     )
 
 
-def _set_user_ctx(ctx: AppContext, user: User) -> None:
-    ctx.storage.set_user_context(
-        user.id,
-        is_admin=user.system_role in PLATFORM_ADMIN,
-    )
-
-
-def _check_vault_access(ctx: AppContext, user: User, vault_id: str) -> None:
-    """Raise 403/404 if the user cannot access the vault."""
-    resolve_vault(ctx, user, vault_id)
-
-
 # ============================================================================
 # Routes
 # ============================================================================
@@ -120,16 +108,12 @@ async def list_relationships(
     user: User = Depends(get_current_user),
 ):
     """List relationships for a vault, optionally filtered to a specific entity."""
-    _set_user_ctx(ctx, user)
-    vault = resolve_vault(ctx, user, vault_id)
-
-    if not hasattr(ctx.storage, "list_relationships"):
-        return []
+    vault = await resolve_vault(ctx, user, vault_id)
 
     if entity_id:
-        rels = ctx.storage.list_relationships_for_entity(entity_id, vault.id)
+        rels = await ctx.storage.list_relationships_for_entity(entity_id, vault.id)
     else:
-        rels = ctx.storage.list_relationships(vault.id)
+        rels = await ctx.storage.list_relationships(vault.id)
 
     return [_rel_to_detail(r).model_dump() for r in rels]
 
@@ -141,14 +125,7 @@ async def create_relationship(
     user: User = Depends(get_current_user),
 ):
     """Create a new typed relationship edge."""
-    _set_user_ctx(ctx, user)
-    vault = resolve_vault(ctx, user, req.vault_id)
-
-    if not hasattr(ctx.storage, "create_relationship"):
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Relationship storage not available",
-        )
+    vault = await resolve_vault(ctx, user, req.vault_id)
 
     rel = Relationship(
         source_id=req.source_id,
@@ -161,7 +138,7 @@ async def create_relationship(
         vault_id=vault.id,
         meta=req.meta or {},
     )
-    created = ctx.storage.create_relationship(rel)
+    created = await ctx.storage.create_relationship(rel)
     return _rel_to_detail(created)
 
 
@@ -172,16 +149,11 @@ async def get_relationship(
     user: User = Depends(get_current_user),
 ):
     """Get a single relationship by ID."""
-    _set_user_ctx(ctx, user)
-
-    if not hasattr(ctx.storage, "get_relationship"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
-
-    rel = ctx.storage.get_relationship(rel_id)
+    rel = await ctx.storage.get_relationship(rel_id)
     if not rel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
 
-    _check_vault_access(ctx, user, rel.vault_id)
+    await resolve_vault(ctx, user, rel.vault_id)
     return _rel_to_detail(rel)
 
 
@@ -193,16 +165,11 @@ async def update_relationship(
     user: User = Depends(get_current_user),
 ):
     """Update label, weight, type, or direction on a relationship."""
-    _set_user_ctx(ctx, user)
-
-    if not hasattr(ctx.storage, "get_relationship"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
-
-    rel = ctx.storage.get_relationship(rel_id)
+    rel = await ctx.storage.get_relationship(rel_id)
     if not rel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
 
-    _check_vault_access(ctx, user, rel.vault_id)
+    await resolve_vault(ctx, user, rel.vault_id)
 
     is_admin = user.system_role in PLATFORM_ADMIN
     if rel.owner_id != user.id and not is_admin:
@@ -220,7 +187,7 @@ async def update_relationship(
     if req.meta is not None:
         updates["meta"] = req.meta
 
-    updated = ctx.storage.update_relationship(rel_id, updates)
+    updated = await ctx.storage.update_relationship(rel_id, updates)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
     return _rel_to_detail(updated)
@@ -233,20 +200,15 @@ async def delete_relationship(
     user: User = Depends(get_current_user),
 ):
     """Soft-delete a relationship."""
-    _set_user_ctx(ctx, user)
-
-    if not hasattr(ctx.storage, "get_relationship"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
-
-    rel = ctx.storage.get_relationship(rel_id)
+    rel = await ctx.storage.get_relationship(rel_id)
     if not rel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
 
-    _check_vault_access(ctx, user, rel.vault_id)
+    await resolve_vault(ctx, user, rel.vault_id)
 
     is_admin = user.system_role in PLATFORM_ADMIN
     if rel.owner_id != user.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    ctx.storage.delete_relationship(rel_id)
+    await ctx.storage.delete_relationship(rel_id)
     return {"deleted": True, "id": rel_id}
