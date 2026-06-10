@@ -1,0 +1,819 @@
+diff --git a/WorldStitch/storage/sqlite_backend.py b/WorldStitch/storage/sqlite_backend.py
+index db7d50d..8f20be5 100644
+--- a/WorldStitch/storage/sqlite_backend.py
++++ b/WorldStitch/storage/sqlite_backend.py
+@@ -102,13 +102,19 @@ class PasswordResetTokenRecord(Base):
+ 
+ 
+ class GroupRecord(Base):
+-    """ORM model for Group data — stored as JSON blob."""
++    """ORM model for Group — explicit columns + metadata JSON for rich fields."""
+ 
+     __tablename__ = "groups"
+ 
+     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+-    data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
++    name: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
++    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
++    color: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
++    # metadata stores members, member_roles, vault_ids, permissions, is_active, etc.
++    metadata: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
++    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
++    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+ 
+ 
+ class VaultRecord(Base):
+@@ -118,13 +124,31 @@ class VaultRecord(Base):
+ 
+     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+-    members_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
+     # AI key columns — managed separately from the JSON blob to keep keys encrypted at rest
+     ai_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+     ai_key_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
+ 
+ 
++class VaultMemberRecord(Base):
++    """Normalised vault membership — one row per (vault, user) pair."""
++
++    __tablename__ = "vault_members"
++    __table_args__ = (
++        Index("ix_vault_members_vault_id", "vault_id"),
++        Index("ix_vault_members_user_id", "user_id"),
++    )
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True)
++    vault_id: Mapped[str] = mapped_column(String(36), nullable=False)
++    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
++    vault_role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
++    joined_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime, nullable=True, server_default=sa.text("CURRENT_TIMESTAMP")
++    )
++    invited_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
++
++
+ class FolderRecord(Base):
+     """ORM model for Folder data — stored as JSON blob."""
+ 
+@@ -163,7 +187,7 @@ class NoteRecord(Base):
+ 
+ 
+ class CharacterRecord(Base):
+-    """ORM model for Character data — stored as JSON blob."""
++    """ORM model for Character — explicit columns + metadata JSON for rich fields."""
+ 
+     __tablename__ = "characters"
+     __table_args__ = (Index("ix_characters_vault_id", "vault_id"),)
+@@ -171,11 +195,18 @@ class CharacterRecord(Base):
+     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+     vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
+     campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+-    data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
++    name: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
++    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
++    image_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
++    # metadata stores is_npc, stats, note_ids, ai_memory, meta, is_deleted, owner_id, etc.
++    metadata: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
++    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
++    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
++    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+ 
+ 
+ class MapRecord(Base):
+-    """ORM model for Map data — stored as JSON blob."""
++    """ORM model for Map — explicit columns + metadata JSON for rich fields."""
+ 
+     __tablename__ = "maps"
+     __table_args__ = (Index("ix_maps_vault_id", "vault_id"),)
+@@ -183,7 +214,15 @@ class MapRecord(Base):
+     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+     vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
+     campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+-    data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
++    name: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
++    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
++    image_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
++    map_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
++    # metadata stores map_type, markers, tags, is_deleted, owner_id, etc.
++    metadata: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
++    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
++    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
++    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+ 
+ 
+ class ImageRecord(Base):
+@@ -266,13 +305,27 @@ class VaultInviteRecord(Base):
+     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
+ 
+ 
+-class RelationshipRecord(Base):
+-    """Tracks [[wikilink]] relationships between notes (source → target)."""
++class NoteRelationshipRecord(Base):
++    """Explicit typed relationship between two notes within a vault."""
+ 
+     __tablename__ = "note_relationships"
++    __table_args__ = (
++        Index("ix_note_rels_vault_id", "vault_id"),
++        Index("ix_note_rels_source_note_id", "source_note_id"),
++        Index("ix_note_rels_target_note_id", "target_note_id"),
++    )
+ 
+-    source_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
+-    target_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
++    id: Mapped[str] = mapped_column(String(36), primary_key=True)
++    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
++    source_note_id: Mapped[str] = mapped_column(String(36), nullable=False)
++    target_note_id: Mapped[str] = mapped_column(String(36), nullable=False)
++    relationship_type: Mapped[str] = mapped_column(String(200), nullable=False, default="references")
++    label: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
++    metadata: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
++    created_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime, nullable=True, server_default=sa.text("CURRENT_TIMESTAMP")
++    )
++    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+ 
+ 
+ class EdgeRecord(Base):
+@@ -713,13 +766,18 @@ class SQLiteBackend(StorageBackend):
+             if not record:
+                 return vault_id == "default"
+             vault = Vault.model_validate_json(record.data)
+-            members = json.loads(record.members_json or "[]")
+-            subjects = self._permission_subject_ids()
+-            return bool(subjects.intersection(set(vault.permissions or {}))) or self._can_access(
+-                vault.owner_id,
+-                vault.permissions,
+-                members,
++            if vault.owner_id == self._current_user_id:
++                return True
++            # Check vault_members table
++            member = (
++                session.query(VaultMemberRecord)
++                .filter(
++                    VaultMemberRecord.vault_id == vault_id,
++                    VaultMemberRecord.user_id == self._current_user_id,
++                )
++                .first()
+             )
++            return member is not None
+ 
+     def _abs(self, rel: str) -> Path:
+         """Resolve a relative vault path to an absolute Path."""
+@@ -748,7 +806,7 @@ class SQLiteBackend(StorageBackend):
+         with self._session() as session:
+             for rec in session.query(GroupRecord).all():
+                 try:
+-                    group = Group.model_validate_json(rec.data)
++                    group = self._group_to_model(rec)
+                     if not getattr(group, "is_active", True):
+                         continue
+                     if (
+@@ -764,21 +822,117 @@ class SQLiteBackend(StorageBackend):
+     def list_vaults(self) -> List[Vault]:
+         vaults: List[Vault] = []
+         with self._session() as session:
+-            for rec in session.query(VaultRecord).all():
++            # Admins see all vaults; regular users see only vaults they're members of
++            if self._is_admin:
++                records = session.query(VaultRecord).all()
++            else:
++                member_vault_ids = {
++                    m.vault_id
++                    for m in session.query(VaultMemberRecord)
++                    .filter(VaultMemberRecord.user_id == self._current_user_id)
++                    .all()
++                }
++                records = session.query(VaultRecord).filter(VaultRecord.id.in_(member_vault_ids)).all()
++            for rec in records:
+                 try:
+                     vault = Vault.model_validate_json(rec.data)
+-                    # Sync ai_key_shared from the dedicated column (authoritative source)
+                     vault.ai_key_shared = bool(rec.ai_key_shared)
+-                    members = json.loads(rec.members_json or "[]")
+                     if not getattr(vault, "is_active", True):
+                         continue
+-                    if self._can_access(vault.owner_id, vault.permissions, members):
+-                        vaults.append(vault)
++                    vaults.append(vault)
+                 except Exception:
+                     continue
+         vaults.sort(key=lambda item: (item.owner_id != (self._current_user_id or ""), item.name.lower()))
+         return vaults
+ 
++    def list_vaults_for_user(self, user_id: str) -> List[Vault]:
++        """Return all active vaults a user is a member of."""
++        vaults: List[Vault] = []
++        with self._session() as session:
++            member_vault_ids = {
++                m.vault_id for m in session.query(VaultMemberRecord).filter(VaultMemberRecord.user_id == user_id).all()
++            }
++            for rec in session.query(VaultRecord).filter(VaultRecord.id.in_(member_vault_ids)).all():
++                try:
++                    vault = Vault.model_validate_json(rec.data)
++                    vault.ai_key_shared = bool(rec.ai_key_shared)
++                    if getattr(vault, "is_active", True):
++                        vaults.append(vault)
++                except Exception:
++                    continue
++        return vaults
++
++    # ── Vault member management ───────────────────────────────────────────────
++
++    def add_vault_member(
++        self,
++        vault_id: str,
++        user_id: str,
++        vault_role: str,
++        invited_by: Optional[str] = None,
++    ) -> None:
++        """Add or update a vault member entry."""
++        now = datetime.utcnow()
++        with self._session() as session:
++            existing = (
++                session.query(VaultMemberRecord)
++                .filter(
++                    VaultMemberRecord.vault_id == vault_id,
++                    VaultMemberRecord.user_id == user_id,
++                )
++                .first()
++            )
++            if existing:
++                existing.vault_role = vault_role
++            else:
++                session.add(
++                    VaultMemberRecord(
++                        id=str(uuid.uuid4()),
++                        vault_id=vault_id,
++                        user_id=user_id,
++                        vault_role=vault_role,
++                        joined_at=now,
++                        invited_by=invited_by,
++                    )
++                )
++            session.commit()
++
++    def remove_vault_member(self, vault_id: str, user_id: str) -> None:
++        """Remove a user from vault_members."""
++        with self._session() as session:
++            session.query(VaultMemberRecord).filter(
++                VaultMemberRecord.vault_id == vault_id,
++                VaultMemberRecord.user_id == user_id,
++            ).delete()
++            session.commit()
++
++    def get_vault_member_role(self, vault_id: str, user_id: str) -> Optional[str]:
++        """Return the user's vault_role, or None if not a member."""
++        with self._session() as session:
++            member = (
++                session.query(VaultMemberRecord)
++                .filter(
++                    VaultMemberRecord.vault_id == vault_id,
++                    VaultMemberRecord.user_id == user_id,
++                )
++                .first()
++            )
++            return member.vault_role if member else None
++
++    def list_vault_members(self, vault_id: str) -> List[dict]:
++        """Return all members of a vault as dicts with user_id and vault_role."""
++        with self._session() as session:
++            members = session.query(VaultMemberRecord).filter(VaultMemberRecord.vault_id == vault_id).all()
++            return [
++                {
++                    "user_id": m.user_id,
++                    "vault_role": m.vault_role,
++                    "joined_at": m.joined_at.isoformat() if m.joined_at else None,
++                    "invited_by": m.invited_by,
++                }
++                for m in members
++            ]
++
+     # ========================================================================
+     # Users
+     # ========================================================================
+@@ -829,15 +983,57 @@ class SQLiteBackend(StorageBackend):
+     # Groups
+     # ========================================================================
+ 
++    def _group_to_model(self, record: GroupRecord) -> Group:
++        """Reconstruct a Group Pydantic model from the ORM record."""
++        meta = json.loads(record.metadata or "{}")
++        return Group(
++            id=record.id,
++            owner_id=record.owner_id,
++            name=record.name or "",
++            description=record.description or meta.get("description", ""),
++            color=record.color or meta.get("color"),
++            members=meta.get("members", []),
++            member_roles=meta.get("member_roles", {}),
++            vault_ids=meta.get("vault_ids", []),
++            permissions=meta.get("permissions", {}),
++            is_active=meta.get("is_active", True),
++        )
++
++    def _group_to_metadata(self, group: Group) -> str:
++        """Serialise the non-explicit Group fields into metadata JSON."""
++        return json.dumps(
++            {
++                "members": getattr(group, "members", []) or [],
++                "member_roles": getattr(group, "member_roles", {}) or {},
++                "vault_ids": getattr(group, "vault_ids", []) or [],
++                "permissions": getattr(group, "permissions", {}) or {},
++                "is_active": getattr(group, "is_active", True),
++            }
++        )
++
+     def save_group(self, group: Group) -> None:
+         """Save or update a Group record."""
++        now = datetime.utcnow()
+         with self._session() as session:
+             record = session.query(GroupRecord).filter(GroupRecord.id == group.id).first()
+             if record:
+                 record.owner_id = group.owner_id
+-                record.data = group.model_dump_json()
++                record.name = group.name or ""
++                record.description = getattr(group, "description", None)
++                record.color = getattr(group, "color", None)
++                record.metadata = self._group_to_metadata(group)
++                record.updated_at = now
+             else:
+-                record = GroupRecord(id=group.id, owner_id=group.owner_id, data=group.model_dump_json())
++                record = GroupRecord(
++                    id=group.id,
++                    owner_id=group.owner_id,
++                    name=group.name or "",
++                    description=getattr(group, "description", None),
++                    color=getattr(group, "color", None),
++                    metadata=self._group_to_metadata(group),
++                    created_at=now,
++                    updated_at=now,
++                )
+                 session.add(record)
+             session.commit()
+ 
+@@ -846,7 +1042,7 @@ class SQLiteBackend(StorageBackend):
+         with self._session() as session:
+             record = session.query(GroupRecord).filter(GroupRecord.id == group_id).first()
+             if record:
+-                return Group.model_validate_json(record.data)
++                return self._group_to_model(record)
+         return None
+ 
+     def delete_group_by_id(self, group_id: str) -> None:
+@@ -866,14 +1062,12 @@ class SQLiteBackend(StorageBackend):
+             record = session.query(VaultRecord).filter(VaultRecord.id == vault.id).first()
+             if record:
+                 record.owner_id = vault.owner_id
+-                record.members_json = json.dumps(vault.members)
+                 record.data = vault.model_dump_json()
+                 record.ai_key_shared = ai_key_shared
+             else:
+                 record = VaultRecord(
+                     id=vault.id,
+                     owner_id=vault.owner_id,
+-                    members_json=json.dumps(vault.members),
+                     data=vault.model_dump_json(),
+                     ai_key_shared=ai_key_shared,
+                 )
+@@ -884,19 +1078,47 @@ class SQLiteBackend(StorageBackend):
+         """Retrieve a Vault by ID — returns None if user lacks access."""
+         with self._session() as session:
+             record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+-            if record:
+-                vault = Vault.model_validate_json(record.data)
+-                # Sync ai_key_shared from the dedicated column (authoritative source)
+-                vault.ai_key_shared = bool(record.ai_key_shared)
+-                members = json.loads(record.members_json or "[]")
+-                if not self._can_access(vault.owner_id, vault.permissions, members):
+-                    return None
+-                return vault
+-        return None
++            if not record:
++                return None
++            vault = Vault.model_validate_json(record.data)
++            vault.ai_key_shared = bool(record.ai_key_shared)
++            # Access check via vault_members
++            member = (
++                session.query(VaultMemberRecord)
++                .filter(
++                    VaultMemberRecord.vault_id == vault_id,
++                    VaultMemberRecord.user_id == self._current_user_id,
++                )
++                .first()
++            )
++            if not member and not self._is_admin and vault.owner_id != self._current_user_id:
++                return None
++            return vault
++
++    def get_vault_by_id_for_user(self, vault_id: str, user_id: str) -> Optional[Vault]:
++        """Retrieve a Vault by ID, checking vault_members for access."""
++        with self._session() as session:
++            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
++            if not record:
++                return None
++            member = (
++                session.query(VaultMemberRecord)
++                .filter(
++                    VaultMemberRecord.vault_id == vault_id,
++                    VaultMemberRecord.user_id == user_id,
++                )
++                .first()
++            )
++            if not member:
++                return None
++            vault = Vault.model_validate_json(record.data)
++            vault.ai_key_shared = bool(record.ai_key_shared)
++            return vault
+ 
+     def delete_vault_by_id(self, vault_id: str) -> None:
+         """Delete a Vault by ID."""
+         with self._session() as session:
++            session.query(VaultMemberRecord).filter(VaultMemberRecord.vault_id == vault_id).delete()
+             session.query(VaultRecord).filter(VaultRecord.id == vault_id).delete()
+             session.commit()
+ 
+@@ -1258,22 +1480,16 @@ class SQLiteBackend(StorageBackend):
+ 
+         abs_path.write_text(content, encoding="utf-8")
+         self.vector_index.build_index(self._get_all_notes_for_index())
+-        with self._session() as session:
+-            self._sync_mentions(session, path, content)
+-            session.commit()
+         try:
+             get_event_bus().note_saved.emit(path)
+         except Exception:
+             pass
+ 
+     def delete_note(self, path: str) -> None:
+-        """Delete a note markdown file and remove its relationship records."""
++        """Delete a note markdown file."""
+         abs_path = self._abs(path)
+         if abs_path.is_file():
+             abs_path.unlink()
+-        with self._session() as session:
+-            session.query(RelationshipRecord).filter(RelationshipRecord.source_path == path).delete()
+-            session.commit()
+         self.vector_index.clear()
+         self.vector_index.build_index(self._get_all_notes_for_index())
+         try:
+@@ -1286,15 +1502,11 @@ class SQLiteBackend(StorageBackend):
+         return self._abs(path).is_file()
+ 
+     def move_note(self, src_path: str, dest_path: str) -> None:
+-        """Move a note from src to dest, updating relationship source paths."""
++        """Move a note from src to dest."""
+         src = self._abs(src_path)
+         dst = self._abs(dest_path)
+         dst.parent.mkdir(parents=True, exist_ok=True)
+         shutil.move(str(src), str(dst))
+-        with self._session() as session:
+-            for rec in session.query(RelationshipRecord).filter(RelationshipRecord.source_path == src_path).all():
+-                rec.source_path = dest_path
+-            session.commit()
+         try:
+             get_event_bus().note_moved.emit(src_path, dest_path)
+         except Exception:
+@@ -1321,19 +1533,71 @@ class SQLiteBackend(StorageBackend):
+     # Characters, Maps, Images, Sounds, Sessions
+     # ========================================================================
+ 
++    def _char_to_model(self, record: CharacterRecord) -> Character:
++        """Reconstruct a Character Pydantic model from the ORM record."""
++        meta = json.loads(record.metadata or "{}")
++        return Character(
++            id=record.id,
++            vault_id=record.vault_id or "",
++            campaign_id=record.campaign_id,
++            name=record.name or meta.get("name", ""),
++            description=record.description or meta.get("description"),
++            owner_id=meta.get("owner_id", record.created_by or ""),
++            is_npc=meta.get("is_npc", False),
++            stats=meta.get("stats", {}),
++            note_ids=meta.get("note_ids", []),
++            ai_memory=meta.get("ai_memory"),
++            meta=meta.get("meta", {}),
++            is_deleted=meta.get("is_deleted", False),
++            created_at=record.created_at or datetime.utcnow(),
++            last_modified=record.updated_at or record.created_at or datetime.utcnow(),
++        )
++
++    def _char_to_metadata(self, character: Character) -> str:
++        """Serialise non-explicit Character fields into metadata JSON."""
++        return json.dumps(
++            {
++                "name": character.name or "",
++                "description": getattr(character, "description", None),
++                "owner_id": getattr(character, "owner_id", ""),
++                "is_npc": getattr(character, "is_npc", False),
++                "stats": getattr(character, "stats", {}) or {},
++                "note_ids": getattr(character, "note_ids", []) or [],
++                "ai_memory": getattr(character, "ai_memory", None),
++                "meta": getattr(character, "meta", {}) or {},
++                "is_deleted": getattr(character, "is_deleted", False),
++            }
++        )
++
+     def save_character(self, character: Character) -> None:
+         """Save or update a Character record."""
+         vault_id = getattr(character, "vault_id", "") or ""
+         campaign_id = getattr(character, "campaign_id", None) or vault_id or ""
++        now = datetime.utcnow()
+         with self._session() as session:
+             record = session.query(CharacterRecord).filter(CharacterRecord.id == character.id).first()
+             if record:
+                 record.vault_id = vault_id or record.vault_id
+                 record.campaign_id = campaign_id or record.campaign_id
+-                record.data = character.model_dump_json()
++                record.name = character.name or ""
++                record.description = getattr(character, "description", None)
++                record.image_url = getattr(character, "image_url", None)
++                record.metadata = self._char_to_metadata(character)
++                record.updated_at = now
++                if not record.created_by:
++                    record.created_by = getattr(character, "owner_id", None)
+             else:
+                 record = CharacterRecord(
+-                    id=character.id, vault_id=vault_id, campaign_id=campaign_id, data=character.model_dump_json()
++                    id=character.id,
++                    vault_id=vault_id,
++                    campaign_id=campaign_id,
++                    name=character.name or "",
++                    description=getattr(character, "description", None),
++                    image_url=getattr(character, "image_url", None),
++                    metadata=self._char_to_metadata(character),
++                    created_at=now,
++                    updated_at=now,
++                    created_by=getattr(character, "owner_id", None),
+                 )
+                 session.add(record)
+             session.commit()
+@@ -1343,7 +1607,7 @@ class SQLiteBackend(StorageBackend):
+         with self._session() as session:
+             record = session.query(CharacterRecord).filter(CharacterRecord.id == character_id).first()
+             if record:
+-                return Character.model_validate_json(record.data)
++                return self._char_to_model(record)
+         return None
+ 
+     def delete_character_by_id(self, character_id: str) -> None:
+@@ -1370,7 +1634,7 @@ class SQLiteBackend(StorageBackend):
+                 q = q.filter(or_(CharacterRecord.campaign_id == filter_id, CharacterRecord.vault_id == filter_id))
+             for rec in q.all():
+                 try:
+-                    char = Character.model_validate_json(rec.data)
++                    char = self._char_to_model(rec)
+                     if getattr(char, "is_deleted", False):
+                         continue
+                     if char_type == "npc" and not getattr(char, "is_npc", False):
+@@ -1383,32 +1647,82 @@ class SQLiteBackend(StorageBackend):
+         return results
+ 
+     def soft_delete_character(self, character_id: str) -> None:
+-        """Soft-delete a character by setting is_deleted=True in the JSON blob."""
++        """Soft-delete a character by setting is_deleted=True in metadata."""
+         with self._session() as session:
+             record = session.query(CharacterRecord).filter(CharacterRecord.id == character_id).first()
+             if record:
+                 try:
+-                    char = Character.model_validate_json(record.data)
+-                    char.is_deleted = True
+-                    char.last_modified = datetime.utcnow()
+-                    record.data = char.model_dump_json()
++                    meta = json.loads(record.metadata or "{}")
++                    meta["is_deleted"] = True
++                    record.metadata = json.dumps(meta)
++                    record.updated_at = datetime.utcnow()
+                     session.commit()
+                 except Exception:
+                     pass
+ 
++    def _map_to_model(self, record: MapRecord) -> Map:
++        """Reconstruct a Map Pydantic model from the ORM record."""
++        meta = json.loads(record.metadata or "{}")
++        return Map(
++            id=record.id,
++            vault_id=record.vault_id or "",
++            campaign_id=record.campaign_id,
++            name=record.name or meta.get("name", ""),
++            description=record.description or meta.get("description", ""),
++            owner_id=meta.get("owner_id", record.created_by or ""),
++            file_path=record.image_url or record.map_url or meta.get("file_path", ""),
++            map_type=meta.get("map_type", "region"),
++            markers=meta.get("markers", []),
++            tags=meta.get("tags", []),
++            is_deleted=meta.get("is_deleted", False),
++            created_at=record.created_at or datetime.utcnow(),
++            last_modified=record.updated_at or record.created_at or datetime.utcnow(),
++        )
++
++    def _map_to_metadata(self, map_obj: Map) -> str:
++        """Serialise non-explicit Map fields into metadata JSON."""
++        return json.dumps(
++            {
++                "name": map_obj.name or "",
++                "description": getattr(map_obj, "description", "") or "",
++                "owner_id": getattr(map_obj, "owner_id", ""),
++                "file_path": getattr(map_obj, "file_path", "") or "",
++                "map_type": getattr(map_obj, "map_type", "region") or "region",
++                "markers": getattr(map_obj, "markers", []) or [],
++                "tags": getattr(map_obj, "tags", []) or [],
++                "is_deleted": getattr(map_obj, "is_deleted", False),
++            }
++        )
++
+     def save_map(self, map_obj: Map) -> None:
+         """Save or update a Map record."""
+         vault_id = getattr(map_obj, "vault_id", "") or ""
+         campaign_id = getattr(map_obj, "campaign_id", None) or vault_id or ""
++        now = datetime.utcnow()
+         with self._session() as session:
+             record = session.query(MapRecord).filter(MapRecord.id == map_obj.id).first()
+             if record:
+                 record.vault_id = vault_id or record.vault_id
+                 record.campaign_id = campaign_id or record.campaign_id
+-                record.data = map_obj.model_dump_json()
++                record.name = map_obj.name or ""
++                record.description = getattr(map_obj, "description", None)
++                record.image_url = getattr(map_obj, "file_path", None) or None
++                record.metadata = self._map_to_metadata(map_obj)
++                record.updated_at = now
++                if not record.created_by:
++                    record.created_by = getattr(map_obj, "owner_id", None)
+             else:
+                 record = MapRecord(
+-                    id=map_obj.id, vault_id=vault_id, campaign_id=campaign_id, data=map_obj.model_dump_json()
++                    id=map_obj.id,
++                    vault_id=vault_id,
++                    campaign_id=campaign_id,
++                    name=map_obj.name or "",
++                    description=getattr(map_obj, "description", None),
++                    image_url=getattr(map_obj, "file_path", None) or None,
++                    metadata=self._map_to_metadata(map_obj),
++                    created_at=now,
++                    updated_at=now,
++                    created_by=getattr(map_obj, "owner_id", None),
+                 )
+                 session.add(record)
+             session.commit()
+@@ -1418,7 +1732,7 @@ class SQLiteBackend(StorageBackend):
+         with self._session() as session:
+             record = session.query(MapRecord).filter(MapRecord.id == map_id).first()
+             if record:
+-                return Map.model_validate_json(record.data)
++                return self._map_to_model(record)
+         return None
+ 
+     def delete_map_by_id(self, map_id: str) -> None:
+@@ -1445,7 +1759,7 @@ class SQLiteBackend(StorageBackend):
+                 q = q.filter(or_(MapRecord.campaign_id == filter_id, MapRecord.vault_id == filter_id))
+             for record in q.all():
+                 try:
+-                    map_obj = Map.model_validate_json(record.data)
++                    map_obj = self._map_to_model(record)
+                     if map_obj.is_deleted:
+                         continue
+                     if map_type and map_obj.map_type != map_type:
+@@ -1456,14 +1770,14 @@ class SQLiteBackend(StorageBackend):
+         return results
+ 
+     def soft_delete_map(self, map_id: str) -> None:
+-        """Soft-delete a map by setting is_deleted=True in its JSON blob."""
++        """Soft-delete a map by setting is_deleted=True in metadata."""
+         with self._session() as session:
+             record = session.query(MapRecord).filter(MapRecord.id == map_id).first()
+             if record:
+-                map_obj = Map.model_validate_json(record.data)
+-                map_obj.is_deleted = True
+-                map_obj.last_modified = datetime.utcnow()
+-                record.data = map_obj.model_dump_json()
++                meta = json.loads(record.metadata or "{}")
++                meta["is_deleted"] = True
++                record.metadata = json.dumps(meta)
++                record.updated_at = datetime.utcnow()
+                 session.commit()
+ 
+     def save_image(self, image: Image) -> None:
+@@ -2065,32 +2379,101 @@ class SQLiteBackend(StorageBackend):
+     # Relationships / Wikilinks
+     # ========================================================================
+ 
+-    def _sync_mentions(self, session: Session, source_path: str, content: str) -> None:
+-        """Replace all relationship rows for source_path with current [[wikilinks]]."""
+-        targets = set(re.findall(r"\[\[([^\[\]]+)\]\]", content))
+-        session.query(RelationshipRecord).filter(RelationshipRecord.source_path == source_path).delete()
+-        for target in targets:
+-            session.add(RelationshipRecord(source_path=source_path, target_path=target))
++    # ── Note relationships (UUID-based typed edges) ───────────────────────────
+ 
+-    def get_relationships(self, note_path: str) -> List[str]:
+-        """Return targets that note_path links to (forward links)."""
++    def create_note_relationship(
++        self,
++        source_note_id: str,
++        target_note_id: str,
++        vault_id: str,
++        relationship_type: str = "references",
++        label: Optional[str] = None,
++        created_by: Optional[str] = None,
++    ) -> dict:
++        """Create a typed note→note relationship. Returns the new record as a dict."""
++        now = datetime.utcnow()
+         with self._session() as session:
+-            rows = session.query(RelationshipRecord).filter(RelationshipRecord.source_path == note_path).all()
+-            return [r.target_path for r in rows]
++            existing = (
++                session.query(NoteRelationshipRecord)
++                .filter(
++                    NoteRelationshipRecord.source_note_id == source_note_id,
++                    NoteRelationshipRecord.target_note_id == target_note_id,
++                    NoteRelationshipRecord.relationship_type == relationship_type,
++                )
++                .first()
++            )
++            if existing:
++                if label is not None:
++                    existing.label = label
++                    session.commit()
++                return self._note_rel_to_dict(existing)
++
++            rec = NoteRelationshipRecord(
++                id=str(uuid.uuid4()),
++                vault_id=vault_id,
++                source_note_id=source_note_id,
++                target_note_id=target_note_id,
++                relationship_type=relationship_type,
++                label=label,
++                metadata="{}",
++                created_at=now,
++                created_by=created_by,
++            )
++            session.add(rec)
++            session.commit()
++            return self._note_rel_to_dict(rec)
+ 
+-    def get_backlinks(self, note_path: str) -> List[str]:
+-        """Return source paths of notes that link to note_path (back-links)."""
++    def _note_rel_to_dict(self, rec: NoteRelationshipRecord) -> dict:
++        return {
++            "id": rec.id,
++            "vault_id": rec.vault_id,
++            "source_note_id": rec.source_note_id,
++            "target_note_id": rec.target_note_id,
++            "relationship_type": rec.relationship_type,
++            "label": rec.label,
++            "created_at": rec.created_at.isoformat() if rec.created_at else None,
++            "created_by": rec.created_by,
++        }
++
++    def get_relationships(self, note_id: str) -> List[str]:
++        """Return target note IDs that note_id links to (forward links)."""
+         with self._session() as session:
+-            rows = session.query(RelationshipRecord).filter(RelationshipRecord.target_path == note_path).all()
+-            return [r.source_path for r in rows]
++            rows = session.query(NoteRelationshipRecord).filter(NoteRelationshipRecord.source_note_id == note_id).all()
++            return [r.target_note_id for r in rows]
+ 
+-    def upsert_relationship(self, source_path: str, target_path: str) -> None:
+-        """Insert a single source→target relationship if it doesn't exist."""
++    def get_backlinks(self, note_id: str) -> List[str]:
++        """Return source note IDs of notes that link to note_id (back-links)."""
+         with self._session() as session:
+-            existing = session.get(RelationshipRecord, (source_path, target_path))
+-            if not existing:
+-                session.add(RelationshipRecord(source_path=source_path, target_path=target_path))
+-                session.commit()
++            rows = session.query(NoteRelationshipRecord).filter(NoteRelationshipRecord.target_note_id == note_id).all()
++            return [r.source_note_id for r in rows]
++
++    def upsert_relationship(self, source_note_id: str, target_note_id: str, vault_id: str = "") -> None:
++        """Insert a note→note 'references' relationship if it doesn't exist."""
++        self.create_note_relationship(
++            source_note_id=source_note_id,
++            target_note_id=target_note_id,
++            vault_id=vault_id,
++            relationship_type="references",
++        )
++
++    def delete_note_relationship(self, rel_id: str) -> None:
++        """Delete a note relationship by ID."""
++        with self._session() as session:
++            session.query(NoteRelationshipRecord).filter(NoteRelationshipRecord.id == rel_id).delete()
++            session.commit()
++
++    def list_note_relationships(self, vault_id: str, note_id: Optional[str] = None) -> List[dict]:
++        """List note relationships for a vault, optionally filtered to a specific note."""
++        with self._session() as session:
++            q = session.query(NoteRelationshipRecord).filter(NoteRelationshipRecord.vault_id == vault_id)
++            if note_id:
++                q = q.filter(
++                    or_(
++                        NoteRelationshipRecord.source_note_id == note_id,
++                        NoteRelationshipRecord.target_note_id == note_id,
++                    )
++                )
++            return [self._note_rel_to_dict(r) for r in q.all()]
+ 
+     # ========================================================================
+     # Active Sessions (for admin panel)
