@@ -867,6 +867,33 @@ class AsyncStorage:
                     pass
                 await session.commit()
 
+    # ── Vault Brain ───────────────────────────────────────────────────────────
+
+    async def get_vault_brain(self, vault_id: str) -> dict:
+        """Return brain_content and brain_edit_role for a vault."""
+        async with self._sf() as session:
+            record = await session.get(VaultRecord, vault_id)
+            if not record:
+                return {"brain_content": None, "brain_edit_role": "admin"}
+            return {
+                "brain_content": record.brain_content,
+                "brain_edit_role": record.brain_edit_role or "admin",
+            }
+
+    async def update_vault_brain_content(self, vault_id: str, content: Optional[str]) -> None:
+        async with self._sf() as session:
+            record = await session.get(VaultRecord, vault_id)
+            if record:
+                record.brain_content = content
+                await session.commit()
+
+    async def update_vault_brain_edit_role(self, vault_id: str, edit_role: str) -> None:
+        async with self._sf() as session:
+            record = await session.get(VaultRecord, vault_id)
+            if record:
+                record.brain_edit_role = edit_role
+                await session.commit()
+
     # ========================================================================
     # Folders
     # ========================================================================

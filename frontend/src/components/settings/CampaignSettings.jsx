@@ -5,8 +5,9 @@ import Button from '@/components/Button';
 import Input from '@/components/Input';
 import { groups, vaults } from '@/api';
 import { useVault } from '@/context/VaultContext';
+import VaultBrainSettings from './VaultBrainSettings';
 
-export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiKey, setCampaignApiKey, onSave }) {
+export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiKey, setCampaignApiKey, onSave, user }) {
   const qc = useQueryClient();
   const { vaults: vaultList = [], activeVaultId, setActiveVaultId } = useVault();
   const activeVault = useMemo(() => vaultList.find((vault) => vault.id === activeVaultId) || null, [vaultList, activeVaultId]);
@@ -196,6 +197,11 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
             </div>
           </div>
         )}
+      </div>
+
+      <div className="border-t border-border-subtle pt-6 space-y-4">
+        <h4 className="text-lg font-bold text-txt">Vault Brain</h4>
+        <VaultBrainSettings activeVaultId={activeVaultId} user={user} />
       </div>
     </div>
   );

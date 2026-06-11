@@ -93,6 +93,18 @@ export default function CreateChatPanel({ vaultId, currentNote, onApplyEdit, onC
   const textareaRef = useRef(null);
   const abortRef = useRef(null);
 
+  const brainKey = vaultId ? `vault_brain_enabled_${vaultId}` : null;
+  const [useBrain, setUseBrain] = useState(() => {
+    if (!vaultId) return true;
+    const stored = localStorage.getItem(`vault_brain_enabled_${vaultId}`);
+    return stored === null ? true : stored === 'true';
+  });
+
+  const toggleBrain = (val) => {
+    setUseBrain(val);
+    if (brainKey) localStorage.setItem(brainKey, String(val));
+  };
+
   const nextId = () => `cm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Scroll to bottom whenever messages change
@@ -142,6 +154,7 @@ export default function CreateChatPanel({ vaultId, currentNote, onApplyEdit, onC
           vault_id: vaultId,
           mode: 'create',
           sub_mode: 'chat',
+          use_brain: useBrain,
           current_entity: currentNote
             ? { type: 'note', id: currentNote.id, title: currentNote.title, content: currentNote.content }
             : null,
@@ -240,14 +253,29 @@ export default function CreateChatPanel({ vaultId, currentNote, onApplyEdit, onC
             </p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1.5 rounded-lg text-txt-muted hover:text-txt hover:bg-hover transition"
-          title="Close chat"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-2">
+          {vaultId && (
+            <button
+              onClick={() => toggleBrain(!useBrain)}
+              title={useBrain ? 'Vault Brain active — click to disable' : 'Vault Brain disabled — click to enable'}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border transition-all ${
+                useBrain
+                  ? 'bg-accent/10 border-accent/30 text-accent'
+                  : 'bg-elevated border-border/50 text-txt-muted hover:text-txt'
+              }`}
+            >
+              🧠 Brain
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-txt-muted hover:text-txt hover:bg-hover transition"
+            title="Close chat"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Messages */}

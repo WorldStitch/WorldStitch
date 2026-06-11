@@ -253,6 +253,7 @@ export const ai = {
       conversation_id: conversationId,
       ...(opts.sub_mode ? { sub_mode: opts.sub_mode } : {}),
       ...(opts.current_entity ? { current_entity: opts.current_entity } : {}),
+      use_brain: opts.use_brain !== undefined ? opts.use_brain : true,
     }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text, existingTags = []) =>
@@ -364,6 +365,11 @@ export const vaults = {
     const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) });
     return request("GET", `/vaults/${encodeURIComponent(id)}/search?${params.toString()}`);
   },
+  getBrain: (id) => request("GET", `/vaults/${encodeURIComponent(id)}/brain`),
+  updateBrain: (id, brain_content) =>
+    request("PUT", `/vaults/${encodeURIComponent(id)}/brain`, { brain_content }),
+  updateBrainSettings: (id, brain_edit_role) =>
+    request("PATCH", `/vaults/${encodeURIComponent(id)}/brain/settings`, { brain_edit_role }),
 };
 
 export const groups = {

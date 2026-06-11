@@ -584,6 +584,7 @@ class AskRequest(BaseModel):
     conversation_id: Optional[str] = None
     attachments: Optional[list[AttachmentItem]] = None
     current_entity: Optional[dict] = None  # {type: "note"|"character"|"map", id: str, content: str}
+    use_brain: bool = True
 
 
 class AskResponse(BaseModel):
@@ -656,6 +657,20 @@ class ConversationResponse(BaseModel):
 # ============================================================================
 
 
+async def _load_brain_block(ctx: AppContext, vault_id: Optional[str], use_brain: bool) -> str:
+    """Return the <vault_brain> block to prepend to the system prompt, or '' if not applicable."""
+    if not vault_id or not use_brain:
+        return ""
+    try:
+        brain = await ctx.storage.get_vault_brain(vault_id)
+        content = (brain.get("brain_content") or "").strip()
+        if content:
+            return f"<vault_brain>\n{content}\n</vault_brain>\n\n"
+    except Exception:
+        logger.debug("Could not load vault brain for vault_id=%s", vault_id, exc_info=True)
+    return ""
+
+
 async def _build_system_prompt(
     ctx: AppContext,
     user: User,
@@ -663,6 +678,7 @@ async def _build_system_prompt(
     mode: Optional[str],
     sub_mode: Optional[str] = None,
     rag_context: Optional[dict] = None,
+    use_brain: bool = True,
 ) -> str:
     """
     Build the WorldStitch identity system prompt.
@@ -709,6 +725,9 @@ async def _build_system_prompt(
         "If asked to create multiple items, use bulk_create_notes or call create_note multiple times."
     )
 
+    # ── Vault Brain block (highest priority — before RAG context) ─────────────
+    brain_block = await _load_brain_block(ctx, vault_id, use_brain)
+
     # ── Inject RAG context block ──────────────────────────────────────────────
     context_block = ""
     if rag_context:
@@ -741,7 +760,7 @@ async def _build_system_prompt(
         # writing/gm/developer/lore (legacy key) and anything else
         addendum = _MODE_ADDENDA.get(mode_key, _MODE_ADDENDA["lore"])
 
-    return base + tool_note + context_block + "\n\n" + addendum
+    return brain_block + base + tool_note + context_block + "\n\n" + addendum
 
 
 def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
@@ -1745,6 +1764,7 @@ async def ask(
             effective_mode,
             sub_mode=req.sub_mode,
             rag_context=rag_context,
+            use_brain=req.use_brain,
         )
         user_prompt = _inject_entity_context(req.prompt, req.current_entity)
         vault_prompt = await _build_vault_context(ctx, user, req.vault_id, user_prompt)
@@ -1874,6 +1894,7 @@ async def stream_ask(
         effective_mode,
         sub_mode=req.sub_mode,
         rag_context=rag_context,
+        use_brain=req.use_brain,
     )
 
     async def generate():

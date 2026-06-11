@@ -150,6 +150,18 @@ export default function Explore({ user }) {
     return id && name ? { id, name, type: type || 'note' } : null;
   })();
 
+  const brainStorageKey = activeVaultId ? `vault_brain_enabled_${activeVaultId}` : null;
+  const [useBrain, setUseBrain] = useState(() => {
+    if (!activeVaultId) return true;
+    const stored = localStorage.getItem(`vault_brain_enabled_${activeVaultId}`);
+    return stored === null ? true : stored === 'true';
+  });
+
+  const toggleBrain = (val) => {
+    setUseBrain(val);
+    if (brainStorageKey) localStorage.setItem(brainStorageKey, String(val));
+  };
+
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
@@ -300,6 +312,7 @@ export default function Explore({ user }) {
     mode: 'explore',
     sub_mode: scholar ? 'scholar' : 'immersive',
     conversation_id: conversationId,
+    use_brain: useBrain,
     ...(currentEntity ? { current_entity: currentEntity } : {}),
   });
 
@@ -308,6 +321,7 @@ export default function Explore({ user }) {
       const response = await ai.ask(userPrompt, history, activeVaultId, 'explore', conversationId, {
         sub_mode: scholar ? 'scholar' : 'immersive',
         current_entity: currentEntity,
+        use_brain: useBrain,
       });
       const msgTokens = (response.prompt_tokens || 0) + (response.completion_tokens || 0);
       if (response.conversation_id) {
@@ -562,6 +576,19 @@ export default function Explore({ user }) {
           </div>
           <div className="flex items-center gap-2">
             <SubModeToggle scholar={scholar} onChange={setScholar} />
+            {activeVaultId && (
+              <button
+                onClick={() => toggleBrain(!useBrain)}
+                title={useBrain ? 'Vault Brain active — click to disable' : 'Vault Brain disabled — click to enable'}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
+                  useBrain
+                    ? 'bg-accent/10 border-accent/30 text-accent'
+                    : 'bg-elevated border-border/50 text-txt-muted hover:text-txt'
+                }`}
+              >
+                🧠 Brain
+              </button>
+            )}
             <button
               onClick={handleNewChat}
               disabled={loading}

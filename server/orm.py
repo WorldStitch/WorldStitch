@@ -94,6 +94,9 @@ class VaultRecord(Base):
     # AI key columns — managed separately from the JSON blob to keep keys encrypted at rest
     ai_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ai_key_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa.false())
+    # Vault Brain — per-vault persistent AI context document
+    brain_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    brain_edit_role: Mapped[str] = mapped_column(String(20), nullable=False, default="admin", server_default="admin")
 
 
 class VaultMemberRecord(Base):

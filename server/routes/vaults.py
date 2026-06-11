@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from pydantic import BaseModel, Field
 
 from server.context import AppContext
-from server.deps import PLATFORM_ADMIN, VAULT_ROLES, get_ctx, get_current_user
+from server.deps import PLATFORM_ADMIN, VAULT_ADMIN_AND_ABOVE, VAULT_ROLES, get_ctx, get_current_user
 from server.storage import Actor
 from server.vault_access import list_accessible_vaults, resolve_vault
 from WorldStitch.models.user import User
@@ -381,3 +381,77 @@ async def remove_vault_member(
         raise HTTPException(status_code=403, detail="Vault admin required to manage members.")
     await ctx.storage.remove_vault_member(vault_id, member_user_id)
     return {"removed": True, "vault_id": vault_id, "user_id": member_user_id}
+
+
+# ── Vault Brain ───────────────────────────────────────────────────────────────
+
+_BRAIN_EDIT_ROLES = ["owner", "admin", "editor"]
+
+
+class VaultBrainUpdateRequest(BaseModel):
+    brain_content: Optional[str] = None
+
+
+class VaultBrainSettingsRequest(BaseModel):
+    brain_edit_role: str = Field(..., description="owner / admin / editor")
+
+
+def _vault_role_rank(role: Optional[str]) -> int:
+    """Lower index = higher privilege. Unknown roles rank last (no access)."""
+    try:
+        return VAULT_ROLES.index(role)
+    except (ValueError, TypeError):
+        return len(VAULT_ROLES)
+
+
+@router.get("/{vault_id}/brain")
+async def get_vault_brain(
+    vault_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Return the vault's brain document. Any vault member can read."""
+    await resolve_vault(ctx, user, vault_id)
+    return await ctx.storage.get_vault_brain(vault_id)
+
+
+@router.put("/{vault_id}/brain", status_code=204)
+async def update_vault_brain(
+    vault_id: str,
+    body: VaultBrainUpdateRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Update brain_content. Caller must meet or exceed the vault's brain_edit_role."""
+    await resolve_vault(ctx, user, vault_id)
+    brain = await ctx.storage.get_vault_brain(vault_id)
+    edit_role = brain.get("brain_edit_role", "admin")
+
+    user_vault_role = await ctx.storage.get_vault_member_role(vault_id, user.id)
+    if user.system_role not in PLATFORM_ADMIN:
+        if _vault_role_rank(user_vault_role) > _vault_role_rank(edit_role):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Brain editing requires vault role '{edit_role}' or higher.",
+            )
+    await ctx.storage.update_vault_brain_content(vault_id, body.brain_content)
+
+
+@router.patch("/{vault_id}/brain/settings", status_code=204)
+async def update_vault_brain_settings(
+    vault_id: str,
+    body: VaultBrainSettingsRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Update brain_edit_role. Only vault owner or admin may change this."""
+    if body.brain_edit_role not in _BRAIN_EDIT_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"brain_edit_role must be one of: {', '.join(_BRAIN_EDIT_ROLES)}",
+        )
+    await resolve_vault(ctx, user, vault_id)
+    user_vault_role = await ctx.storage.get_vault_member_role(vault_id, user.id)
+    if user.system_role not in PLATFORM_ADMIN and user_vault_role not in VAULT_ADMIN_AND_ABOVE:
+        raise HTTPException(status_code=403, detail="Only vault owner or admin can change brain settings.")
+    await ctx.storage.update_vault_brain_edit_role(vault_id, body.brain_edit_role)
