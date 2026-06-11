@@ -139,6 +139,7 @@ export default function Settings({ user }) {
               vaultPath={vaultPath} setVaultPath={setVaultPath}
               campaignApiKey={campaignApiKey} setCampaignApiKey={setCampaignApiKey}
               onSave={handleSaveCampaign}
+              user={user}
             />
           )}
           {activeTab === 'privacy' && <PrivacySettings />}
