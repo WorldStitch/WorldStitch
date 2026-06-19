@@ -179,7 +179,7 @@ async def create_character(
         await ctx.storage.save_character(char)
         asyncio.create_task(analytics_track("character.created", user_id=user.id, char_type=req.char_type))
         # Fire-and-forget embedding
-        _embed_key = get_api_key_for_vault(effective_id, user, ctx)
+        _embed_key = await get_api_key_for_vault(effective_id, user, ctx)
         _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(
@@ -234,7 +234,7 @@ async def update_character(
         await ctx.storage.save_character(char)
         # Fire-and-forget re-embedding
         _vault_id = getattr(char, "vault_id", None) or getattr(char, "campaign_id", None) or ""
-        _embed_key = get_api_key_for_vault(_vault_id, user, ctx)
+        _embed_key = await get_api_key_for_vault(_vault_id, user, ctx)
         _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(

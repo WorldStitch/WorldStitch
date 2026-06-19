@@ -7,6 +7,7 @@ pgvector columns so the RAG layer can do semantic similarity queries.
 Key hierarchy (same as ai.py): user key → vault shared key → platform key.
 """
 
+import hashlib
 import logging
 import os
 from typing import Optional
@@ -54,6 +55,11 @@ async def get_api_key_for_vault(vault_id: Optional[str], user, ctx) -> Optional[
     return None
 
 
+def _compute_content_hash(text_value: str) -> str:
+    """Return the SHA-256 hex digest of the given text (truncated to 64 chars)."""
+    return hashlib.sha256(text_value.encode("utf-8", errors="replace")).hexdigest()
+
+
 async def embed_text(text_value: str, api_key: str) -> Optional[list[float]]:
     """
     Embed a text string using text-embedding-3-small.
@@ -75,13 +81,35 @@ async def embed_text(text_value: str, api_key: str) -> Optional[list[float]]:
         return None
 
 
-async def _write_embedding(table: str, entity_id: str, embedding: list[float], engine: AsyncEngine) -> None:
-    """Write an embedding vector to the specified table row."""
+async def _get_stored_hash(table: str, entity_id: str, engine: AsyncEngine) -> Optional[str]:
+    """Return the embedding_hash stored for this entity, or None if absent."""
+    try:
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(f"SELECT embedding_hash FROM {table} WHERE id = :id"),
+                    {"id": entity_id},
+                )
+            ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        # Column may not exist yet on older DB instances — treat as no hash
+        return None
+
+
+async def _write_embedding(
+    table: str,
+    entity_id: str,
+    embedding: list[float],
+    content_hash: str,
+    engine: AsyncEngine,
+) -> None:
+    """Write an embedding vector and its content hash to the specified table row."""
     vector_literal = "[" + ",".join(str(x) for x in embedding) + "]"
     async with engine.begin() as conn:
         await conn.execute(
-            text(f"UPDATE {table} SET embedding = :vec::vector WHERE id = :id"),
-            {"vec": vector_literal, "id": entity_id},
+            text(f"UPDATE {table} SET embedding = :vec::vector, embedding_hash = :hash WHERE id = :id"),
+            {"vec": vector_literal, "hash": content_hash, "id": entity_id},
         )
 
 
@@ -96,6 +124,7 @@ async def embed_entity(
     Compute and store an embedding for a vault entity.
 
     entity_type must be one of: "notes", "characters", "maps"
+    Skips the OpenAI API call when the content hash matches the stored hash.
     Designed to run as a fire-and-forget asyncio.create_task().
     Never raises — logs errors and returns silently.
     """
@@ -105,10 +134,16 @@ async def embed_entity(
         return
 
     try:
+        content_hash = _compute_content_hash(text_content)
+        stored_hash = await _get_stored_hash(entity_type, entity_id, engine)
+        if stored_hash == content_hash:
+            logger.debug("embed_entity: skipping %s id=%s — content unchanged", entity_type, entity_id)
+            return
+
         vector = await embed_text(text_content, api_key)
         if vector is None:
             return
-        await _write_embedding(entity_type, entity_id, vector, engine)
+        await _write_embedding(entity_type, entity_id, vector, content_hash, engine)
         logger.debug("Embedded %s id=%s", entity_type, entity_id)
     except Exception:
         logger.debug("embed_entity failed for %s id=%s", entity_type, entity_id, exc_info=True)

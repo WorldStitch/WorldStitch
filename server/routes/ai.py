@@ -1724,7 +1724,7 @@ async def ask(
         rag_context: Optional[dict] = None
         if req.vault_id:
             try:
-                embedding_key = get_api_key_for_vault(req.vault_id, user, ctx)
+                embedding_key = await get_api_key_for_vault(req.vault_id, user, ctx)
                 engine = getattr(ctx.storage, "_engine", None)
                 if engine is not None:
                     rag_context = await build_context(
@@ -1853,7 +1853,7 @@ async def stream_ask(
     rag_context: Optional[dict] = None
     if req.vault_id:
         try:
-            embedding_key = get_api_key_for_vault(req.vault_id, user, ctx)
+            embedding_key = await get_api_key_for_vault(req.vault_id, user, ctx)
             engine = getattr(ctx.storage, "_engine", None)
             if engine is not None:
                 rag_context = await build_context(
@@ -1881,6 +1881,12 @@ async def stream_ask(
             user_prompt = _inject_entity_context(req.prompt, req.current_entity)
             vault_prompt = await _build_vault_context(ctx, user, req.vault_id, user_prompt)
             tools = _get_tools_for_mode(effective_mode, req.vault_id)
+
+            # Emit the retrieval trace immediately so the frontend can show "Context used"
+            # before the first token arrives.  The Explore page reads parsed.retrieval_trace.
+            _trace = (rag_context or {}).get("retrieval_trace", [])
+            if _trace:
+                yield f"data: {json.dumps({'retrieval_trace': _trace})}\n\n"
 
             # ── Tool-calling path ──────────────────────────────────────────────
             # Uses ask_with_tools() which handles the full multi-round loop.
