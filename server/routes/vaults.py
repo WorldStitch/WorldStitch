@@ -484,6 +484,9 @@ async def update_vault_brain_settings(
 
 # ── Graph endpoints ───────────────────────────────────────────────────────────
 
+# Maximum number of relationships fetched per node in the local subgraph endpoint.
+_LOCAL_GRAPH_MAX_RELS = 50
+
 
 def _build_graph_nodes_and_edges(notes, characters, maps, rels) -> Dict[str, Any]:
     """Assemble graph nodes + edges from all entity types and relationships."""
@@ -578,13 +581,11 @@ async def get_vault_graph_node(
     user: User = Depends(get_current_user),
 ):
     """Return the local subgraph for a single node: itself + direct neighbors + edges between them."""
-    _MAX_NEIGHBORS = 50
-
     vault = await resolve_vault(ctx, user, vault_id)
     actor = Actor.from_user(user)
 
     # Limit is pushed to the DB query so we never fetch more rows than needed.
-    rels = await ctx.storage.list_relationships_for_entity(node_id, vault.id, limit=_MAX_NEIGHBORS)
+    rels = await ctx.storage.list_relationships_for_entity(node_id, vault.id, limit=_LOCAL_GRAPH_MAX_RELS)
 
     neighbor_ids: set = {node_id}
     for rel in rels:

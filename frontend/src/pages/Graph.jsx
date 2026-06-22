@@ -217,7 +217,6 @@ export default function Graph() {
     if (isLocalMode) {
       setLocalNodeId(node.id);
     } else {
-      document.body.style.cursor = 'default';
       navigate(entityPath(node));
     }
   }, [isLocalMode, navigate]);
