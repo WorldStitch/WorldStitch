@@ -82,6 +82,7 @@ export default function Graph() {
   const [isLocalMode, setIsLocalMode] = useState(false);
   const [localNodeId, setLocalNodeId] = useState(null);
   const [hoveredNode, setHoveredNode] = useState(null);
+  const hoveredNodeRef = useRef(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const [selectedNodeId, setSelectedNodeId] = useState(null);
 
@@ -222,13 +223,14 @@ export default function Graph() {
   }, [isLocalMode, navigate]);
 
   const handleNodeHover = useCallback((node) => {
+    hoveredNodeRef.current = node || null;
     setHoveredNode(node || null);
     document.body.style.cursor = node ? 'pointer' : 'default';
   }, []);
 
   const handleMouseMove = useCallback((e) => {
-    if (hoveredNode) setHoverPos({ x: e.clientX, y: e.clientY });
-  }, [hoveredNode]);
+    if (hoveredNodeRef.current) setHoverPos({ x: e.clientX, y: e.clientY });
+  }, []);
 
   const handleZoomFit = useCallback(() => {
     graphRef.current?.zoomToFit(400, 40);
