@@ -583,9 +583,8 @@ async def get_vault_graph_node(
     vault = await resolve_vault(ctx, user, vault_id)
     actor = Actor.from_user(user)
 
-    # Cap the relationship list itself so we never build more than _MAX_NEIGHBORS fetches,
-    # even if the node has thousands of relationships in the DB.
-    rels = (await ctx.storage.list_relationships_for_entity(node_id, vault.id))[:_MAX_NEIGHBORS]
+    # Limit is pushed to the DB query so we never fetch more rows than needed.
+    rels = await ctx.storage.list_relationships_for_entity(node_id, vault.id, limit=_MAX_NEIGHBORS)
 
     neighbor_ids: set = {node_id}
     for rel in rels:
