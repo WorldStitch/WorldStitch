@@ -43,14 +43,14 @@ os.environ.setdefault("LOG_FILE", os.path.join(_LIFESPAN_TMP, "test.log"))
 
 import pytest
 from fastapi.testclient import TestClient
+from WorldStitch.context.app_context import AppContext
+from WorldStitch.storage.hybrid_storage import HybridStorage
 
 from server.app import app
 from server.auth_utils import create_jwt
 from server.deps import get_ctx
 from WorldStitch.config.config import Config
-from WorldStitch.context.app_context import AppContext
 from WorldStitch.models.vault import Vault
-from WorldStitch.storage.hybrid_storage import HybridStorage
 
 # ---------------------------------------------------------------------------
 # TestHybridStorage — two fixes on top of HybridStorage

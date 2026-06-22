@@ -1,4 +1,4 @@
-﻿"""
+"""
 Disaster recovery tests — Section 8.
 
 Tests that the app can:

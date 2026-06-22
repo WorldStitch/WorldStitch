@@ -1,4 +1,4 @@
-﻿"""JWT utilities for the WorldStitch API server."""
+"""JWT utilities for the WorldStitch API server."""
 
 import datetime
 import os

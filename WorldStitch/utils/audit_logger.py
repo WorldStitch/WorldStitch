@@ -1,4 +1,4 @@
-﻿"""
+"""
 AuditLogger — records every create/update/delete operation to audit.log.
 
 Designed for the multiuser future: every log line includes the actor

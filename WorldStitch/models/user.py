@@ -1,4 +1,4 @@
-﻿"""
+"""
 User model — an account in the WorldStitch system.
 
 Users own vaults, notes, and all other resources. Authentication is

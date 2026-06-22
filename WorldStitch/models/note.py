@@ -1,4 +1,4 @@
-﻿"""
+"""
 Note model — the primary content unit in WorldStitch.
 
 Notes hold lore, session logs, NPC descriptions, item cards, location

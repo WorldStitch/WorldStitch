@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sync Conflict Resolution Strategy for WorldStitch.
 
 When the same note is edited in two places (e.g. local edits made offline,
@@ -73,9 +73,7 @@ class ConflictNeedsReviewError(Exception):
 
     def __init__(self, record: ConflictRecord) -> None:
         self.record = record
-        super().__init__(
-            f"Conflict on '{record.note_path}' requires manual review."
-        )
+        super().__init__(f"Conflict on '{record.note_path}' requires manual review.")
 
 
 # ---------------------------------------------------------------------------
@@ -115,11 +113,7 @@ class ConflictResolver:
             return record.local_version
 
         if strategy == ConflictStrategy.MERGE_APPEND:
-            return (
-                record.local_version
-                + "\n\n--- Remote version ---\n\n"
-                + record.remote_version
-            )
+            return record.local_version + "\n\n--- Remote version ---\n\n" + record.remote_version
 
         if strategy == ConflictStrategy.FLAG_FOR_REVIEW:
             raise ConflictNeedsReviewError(record)

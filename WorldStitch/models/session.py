@@ -1,4 +1,4 @@
-﻿"""
+"""
 Session model — tracks an authenticated user session.
 
 Sessions are created on login and expire after a configurable duration.

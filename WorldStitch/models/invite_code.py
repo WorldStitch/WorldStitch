@@ -1,4 +1,4 @@
-﻿# WorldStitch/models/invite_code.py
+# WorldStitch/models/invite_code.py
 """
 InviteCode model — a single-use token that allows a new user to self-register.
 
