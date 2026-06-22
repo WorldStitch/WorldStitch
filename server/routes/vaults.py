@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
@@ -13,6 +14,30 @@ from server.storage import Actor
 from server.vault_access import list_accessible_vaults, resolve_vault
 from WorldStitch.models.user import User
 from WorldStitch.models.vault import Vault
+
+# ── Graph response models ─────────────────────────────────────────────────────
+
+
+class GraphNode(BaseModel):
+    id: str
+    title: str
+    type: str
+    content_preview: str = ""
+    connection_count: int = 0
+
+
+class GraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    label: str
+    type: str
+
+
+class GraphResponse(BaseModel):
+    nodes: List[GraphNode]
+    edges: List[GraphEdge]
+
 
 logger = logging.getLogger(__name__)
 
@@ -455,3 +480,146 @@ async def update_vault_brain_settings(
     if user.system_role not in PLATFORM_ADMIN and user_vault_role not in VAULT_ADMIN_AND_ABOVE:
         raise HTTPException(status_code=403, detail="Only vault owner or admin can change brain settings.")
     await ctx.storage.update_vault_brain_edit_role(vault_id, body.brain_edit_role)
+
+
+# ── Graph endpoints ───────────────────────────────────────────────────────────
+
+
+def _build_graph_nodes_and_edges(notes, characters, maps, rels) -> Dict[str, Any]:
+    """Assemble graph nodes + edges from all entity types and relationships."""
+    conn_count: Dict[str, int] = {}
+    for rel in rels:
+        conn_count[rel.source_id] = conn_count.get(rel.source_id, 0) + 1
+        conn_count[rel.target_id] = conn_count.get(rel.target_id, 0) + 1
+
+    entity_ids: set = set()
+    nodes: List[Dict[str, Any]] = []
+
+    for note in notes:
+        entity_ids.add(note.id)
+        content = getattr(note, "content", "") or ""
+        nodes.append(
+            {
+                "id": note.id,
+                "title": note.title,
+                "type": "note",
+                "content_preview": content[:150],
+                "connection_count": conn_count.get(note.id, 0),
+            }
+        )
+
+    for char in characters:
+        entity_ids.add(char.id)
+        preview = getattr(char, "description", "") or getattr(char, "ai_memory", "") or ""
+        nodes.append(
+            {
+                "id": char.id,
+                "title": char.name,
+                "type": "character",
+                "content_preview": preview[:150],
+                "connection_count": conn_count.get(char.id, 0),
+            }
+        )
+
+    for map_obj in maps:
+        entity_ids.add(map_obj.id)
+        preview = getattr(map_obj, "description", "") or ""
+        nodes.append(
+            {
+                "id": map_obj.id,
+                "title": map_obj.name,
+                "type": "location",
+                "content_preview": preview[:150],
+                "connection_count": conn_count.get(map_obj.id, 0),
+            }
+        )
+
+    edges: List[Dict[str, Any]] = []
+    for rel in rels:
+        if rel.source_id in entity_ids and rel.target_id in entity_ids:
+            edges.append(
+                {
+                    "id": rel.id,
+                    "source": rel.source_id,
+                    "target": rel.target_id,
+                    "label": rel.label or rel.relationship_type,
+                    "type": rel.relationship_type,
+                }
+            )
+
+    return {"nodes": nodes, "edges": edges}
+
+
+@router.get("/{vault_id}/graph", response_model=GraphResponse)
+async def get_vault_graph(
+    vault_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Return the full knowledge graph for a vault: all nodes and edges."""
+    vault = await resolve_vault(ctx, user, vault_id)
+    actor = Actor.from_user(user)
+
+    notes, characters, maps, rels = await asyncio.gather(
+        ctx.storage.list_all_notes(actor, vault_id=vault.id),
+        ctx.storage.list_characters(vault_id=vault.id),
+        ctx.storage.list_maps(vault_id=vault.id),
+        ctx.storage.list_relationships(vault.id),
+    )
+
+    return _build_graph_nodes_and_edges(notes, characters, maps, rels)
+
+
+@router.get("/{vault_id}/graph/node/{node_id}", response_model=GraphResponse)
+async def get_vault_graph_node(
+    vault_id: str,
+    node_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Return the local subgraph for a single node: itself + direct neighbors + edges between them."""
+    vault = await resolve_vault(ctx, user, vault_id)
+    actor = Actor.from_user(user)
+
+    rels = await ctx.storage.list_relationships_for_entity(node_id, vault.id)
+
+    neighbor_ids: set = {node_id}
+    for rel in rels:
+        neighbor_ids.add(rel.source_id)
+        neighbor_ids.add(rel.target_id)
+
+    # Fetch entity details for each neighbor
+    note_tasks = [ctx.storage.get_note_by_id(actor, nid) for nid in neighbor_ids]
+    char_tasks = [ctx.storage.get_character_by_id(nid) for nid in neighbor_ids]
+    map_tasks = [ctx.storage.get_map_by_id(nid) for nid in neighbor_ids]
+
+    note_results, char_results, map_results = await asyncio.gather(
+        asyncio.gather(*note_tasks),
+        asyncio.gather(*char_tasks),
+        asyncio.gather(*map_tasks),
+    )
+
+    notes = [n for n in note_results if n and not getattr(n, "is_deleted", False)]
+    characters = [c for c in char_results if c and not getattr(c, "is_deleted", False)]
+    maps = [m for m in map_results if m and not getattr(m, "is_deleted", False)]
+
+    # Deduplicate: each entity_id should appear only once (pick first non-None)
+    seen_ids: set = set()
+    unique_notes, unique_chars, unique_maps = [], [], []
+    for n in notes:
+        if n.id not in seen_ids:
+            seen_ids.add(n.id)
+            unique_notes.append(n)
+    for c in characters:
+        if c.id not in seen_ids:
+            seen_ids.add(c.id)
+            unique_chars.append(c)
+    for m in maps:
+        if m.id not in seen_ids:
+            seen_ids.add(m.id)
+            unique_maps.append(m)
+
+    # Only include edges that are fully within the subgraph
+    sub_rels = [r for r in rels if r.source_id in seen_ids and r.target_id in seen_ids]
+
+    return _build_graph_nodes_and_edges(unique_notes, unique_chars, unique_maps, sub_rels)

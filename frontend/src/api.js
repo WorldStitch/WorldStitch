@@ -455,6 +455,13 @@ export const relationships = {
   delete: (id) => request("DELETE", `/relationships/${encodeURIComponent(id)}`),
 };
 
+// ── Graph ─────────────────────────────────────────────────────────────────────
+export const graph = {
+  full: (vaultId) => request("GET", `/vaults/${encodeURIComponent(vaultId)}/graph`),
+  node: (vaultId, nodeId) =>
+    request("GET", `/vaults/${encodeURIComponent(vaultId)}/graph/node/${encodeURIComponent(nodeId)}`),
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 export function isRateLimitError(err) {
   return err?.message === "__RATE_LIMIT__";

@@ -1,31 +1,83 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import * as d3 from 'd3';
+import { useState, useRef, useCallback, useMemo } from 'react';
+import ForceGraph2D from 'react-force-graph-2d';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { notes as notesApi, relationships as relationshipsApi } from '../api';
+import { ChevronLeft, ChevronRight, Crosshair, Globe, Search, Target } from 'lucide-react';
 import { useVault } from '../context/VaultContext';
+import { graph as graphApi } from '../api';
+
+// ── Visual constants ──────────────────────────────────────────────────────────
+
+const NODE_CONFIG = {
+  character: { color: '#a78bfa', label: 'Characters' },
+  location:  { color: '#34d399', label: 'Locations'  },
+  note:      { color: '#60a5fa', label: 'Notes'      },
+  faction:   { color: '#f97316', label: 'Factions'   },
+};
+const ALL_NODE_TYPES = Object.keys(NODE_CONFIG);
+
+const EDGE_PALETTE = [
+  '#a78bfa', '#f472b6', '#ef4444', '#f59e0b',
+  '#10b981', '#60a5fa', '#34d399', '#fb923c',
+  '#e879f9', '#facc15', '#818cf8', '#94a3b8',
+];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const PALETTE = ['#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#60a5fa', '#a78bfa', '#34d399', '#fb923c'];
-
-function hashColor(key) {
+function hashIdx(str, len) {
   let h = 0;
-  for (let i = 0; i < key.length; i++) h = key.charCodeAt(i) + ((h << 5) - h);
-  return PALETTE[Math.abs(h) % PALETTE.length];
+  for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+  return Math.abs(h) % len;
 }
 
-function nodeColor(note) {
-  return hashColor(note.tags?.[0] || note.title || note.id);
+function edgeColor(type) {
+  return EDGE_PALETTE[hashIdx(type || '', EDGE_PALETTE.length)];
 }
 
-function calcRadius(connCount) {
-  return Math.max(10, Math.min(38, 10 + connCount * 5));
+function nodeRadius(connectionCount) {
+  return Math.sqrt(connectionCount || 0) * 4 + 6;
 }
 
-function truncate(str, maxLen) {
-  if (!str) return '';
-  return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
+function entityPath(node) {
+  if (node.type === 'character') return '/characters';
+  if (node.type === 'location') return '/maps';
+  return `/browse?note=${node.id}`;
+}
+
+// ── Canvas draw helpers ───────────────────────────────────────────────────────
+
+function drawHexagon(ctx, cx, cy, r) {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i - Math.PI / 6;
+    const x = cx + r * Math.cos(a);
+    const y = cy + r * Math.sin(a);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function drawDiamond(ctx, cx, cy, r) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r, cy);
+  ctx.lineTo(cx, cy + r);
+  ctx.lineTo(cx - r, cy);
+  ctx.closePath();
+}
+
+function drawRoundedRect(ctx, x, y, w, h, rad) {
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.lineTo(x + w - rad, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+  ctx.lineTo(x + w, y + h - rad);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+  ctx.lineTo(x + rad, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+  ctx.lineTo(x, y + rad);
+  ctx.quadraticCurveTo(x, y, x + rad, y);
+  ctx.closePath();
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -33,241 +85,204 @@ function truncate(str, maxLen) {
 export default function Graph() {
   const { activeVaultId } = useVault();
   const navigate = useNavigate();
+  const graphRef = useRef(null);
 
-  const svgRef = useRef(null);
-  const containerRef = useRef(null);
-  const simulationRef = useRef(null);
-  const zoomBehaviorRef = useRef(null);
-  const svgSelRef = useRef(null);
-
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [tooltip, setTooltip] = useState(null);
+  const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set());
+  const [hiddenRelTypes, setHiddenRelTypes] = useState(new Set());
+  const [isLocalMode, setIsLocalMode] = useState(false);
+  const [localNodeId, setLocalNodeId] = useState(null);
+  const [hoveredNode, setHoveredNode] = useState(null);
+  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
 
-  const { data: allNotes = [], isLoading: notesLoading } = useQuery({
-    queryKey: ['notes', activeVaultId],
-    queryFn: () => notesApi.list('', '', activeVaultId),
+  // ── Data ────────────────────────────────────────────────────────────────────
+
+  const { data: fullData, isLoading: fullLoading } = useQuery({
+    queryKey: ['vault-graph', activeVaultId],
+    queryFn: () => graphApi.full(activeVaultId),
     enabled: !!activeVaultId,
+    staleTime: 30_000,
   });
 
-  const { data: allRelationships = [], isLoading: relsLoading } = useQuery({
-    queryKey: ['relationships', activeVaultId],
-    queryFn: () => relationshipsApi.list(activeVaultId),
-    enabled: !!activeVaultId,
+  const { data: localData, isLoading: localLoading } = useQuery({
+    queryKey: ['vault-graph-node', activeVaultId, localNodeId],
+    queryFn: () => graphApi.node(activeVaultId, localNodeId),
+    enabled: !!activeVaultId && !!localNodeId && isLocalMode,
+    staleTime: 30_000,
   });
 
-  const isLoading = notesLoading || relsLoading;
-  const hasRelationships = allRelationships.length > 0;
-  const categories = [...new Set(allRelationships.map(r => r.relationship_type).filter(Boolean))];
+  const rawData = isLocalMode && localData ? localData : fullData;
+  const isLoading = fullLoading || (isLocalMode && localLoading);
 
-  // For stats display only (stable UI value, not used as effect dep)
-  const filteredCount = categoryFilter
-    ? allRelationships.filter(r => r.relationship_type === categoryFilter).length
-    : allRelationships.length;
+  const allRelTypes = useMemo(() => {
+    if (!rawData?.edges) return [];
+    return [...new Set(rawData.edges.map(e => e.type).filter(Boolean))].sort();
+  }, [rawData]);
 
-  // ── D3 graph setup ──────────────────────────────────────────────────────────
+  // ── Filtered data passed to graph ────────────────────────────────────────────
 
-  useEffect(() => {
-    if (isLoading || !svgRef.current || !containerRef.current || !hasRelationships) return;
+  const graphData = useMemo(() => {
+    if (!rawData) return { nodes: [], links: [] };
+    const lowerSearch = search.toLowerCase();
 
-    if (simulationRef.current) simulationRef.current.stop();
+    const nodes = rawData.nodes
+      .filter(n => !hiddenNodeTypes.has(n.type))
+      .map(n => ({
+        ...n,
+        __dimmed: lowerSearch ? !n.title.toLowerCase().includes(lowerSearch) : false,
+        __selected: n.id === selectedNodeId,
+      }));
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
+    const nodeIds = new Set(nodes.map(n => n.id));
 
-    const rect = containerRef.current.getBoundingClientRect();
-    const width = rect.width || window.innerWidth - 250;
-    const height = rect.height || window.innerHeight;
-
-    // Compute filtered rels inside effect so deps stay stable
-    const filteredRels = categoryFilter
-      ? allRelationships.filter(r => r.relationship_type === categoryFilter)
-      : allRelationships;
-
-    // Copy node data so D3 can mutate without touching React Query cache
-    const nodeData = allNotes.map(n => ({ ...n }));
-    const nodeById = new Map(nodeData.map(n => [n.id, n]));
-
-    // Connection counts for node sizing
-    const connCount = new Map();
-    filteredRels.forEach(r => {
-      connCount.set(r.source_note_id, (connCount.get(r.source_note_id) || 0) + 1);
-      connCount.set(r.target_note_id, (connCount.get(r.target_note_id) || 0) + 1);
-    });
-
-    const linkData = filteredRels
-      .filter(r => nodeById.has(r.source_note_id) && nodeById.has(r.target_note_id))
-      .map(r => ({ ...r, source: r.source_note_id, target: r.target_note_id }));
-
-    // Arrowhead marker
-    const defs = svg.append('defs');
-    defs.append('marker')
-      .attr('id', 'ws-arrow')
-      .attr('viewBox', '0 -5 10 10')
-      .attr('refX', 24)
-      .attr('refY', 0)
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .attr('orient', 'auto')
-      .append('path')
-        .attr('d', 'M0,-5L10,0L0,5')
-        .attr('fill', '#7c5cfc')
-        .attr('opacity', 0.7);
-
-    const g = svg.append('g');
-
-    // Zoom + pan
-    const zoom = d3.zoom()
-      .scaleExtent([0.05, 8])
-      .on('zoom', event => g.attr('transform', event.transform));
-
-    svg.call(zoom);
-    zoomBehaviorRef.current = zoom;
-    svgSelRef.current = svg;
-
-    // Force simulation
-    const simulation = d3.forceSimulation(nodeData)
-      .force('link',
-        d3.forceLink(linkData)
-          .id(d => d.id)
-          .distance(130)
-          .strength(0.55)
+    const links = rawData.edges
+      .filter(e =>
+        nodeIds.has(e.source) &&
+        nodeIds.has(e.target) &&
+        !hiddenRelTypes.has(e.type)
       )
-      .force('charge', d3.forceManyBody().strength(-320))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collide', d3.forceCollide().radius(d => calcRadius(connCount.get(d.id) || 0) + 10));
+      .map(e => ({ ...e }));
 
-    simulationRef.current = simulation;
+    return { nodes, links };
+  }, [rawData, hiddenNodeTypes, hiddenRelTypes, search, selectedNodeId]);
 
-    // ── Edges ──────────────────────────────────────────────────────────────────
+  // ── Canvas renderers ─────────────────────────────────────────────────────────
 
-    const linkSel = g.append('g')
-      .selectAll('line')
-      .data(linkData)
-      .join('line')
-        .attr('stroke', '#7c5cfc')
-        .attr('stroke-opacity', 0.35)
-        .attr('stroke-width', 1.5)
-        .attr('marker-end', null)
-        .style('cursor', 'default')
-        .on('mouseenter', (event, d) => {
-          setTooltip({
-            x: event.clientX,
-            y: event.clientY,
-            text: d.label || d.relationship_type || 'related',
-          });
-        })
-        .on('mouseleave', () => setTooltip(null));
+  const nodeCanvasObject = useCallback((node, ctx, globalScale) => {
+    const r = nodeRadius(node.connection_count);
+    const cfg = NODE_CONFIG[node.type] || NODE_CONFIG.note;
 
-    // Edge type labels
-    const linkLabelSel = g.append('g')
-      .selectAll('text')
-      .data(linkData)
-      .join('text')
-        .attr('text-anchor', 'middle')
-        .attr('font-size', 9)
-        .attr('fill', 'rgba(160,164,184,0.7)')
-        .attr('pointer-events', 'none')
-        .text(d => d.relationship_type || '');
+    ctx.globalAlpha = node.__dimmed ? 0.12 : 0.92;
 
-    // ── Nodes ──────────────────────────────────────────────────────────────────
+    if (node.type === 'character') {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+    } else if (node.type === 'location') {
+      drawDiamond(ctx, node.x, node.y, r * 1.15);
+    } else if (node.type === 'faction') {
+      drawHexagon(ctx, node.x, node.y, r);
+    } else {
+      drawRoundedRect(ctx, node.x - r, node.y - r * 0.72, r * 2, r * 1.44, 3);
+    }
 
-    const nodeSel = g.append('g')
-      .selectAll('g')
-      .data(nodeData)
-      .join('g')
-        .attr('class', 'node')
-        .style('cursor', 'pointer')
-        .call(
-          d3.drag()
-            .on('start', (event, d) => {
-              if (!event.active) simulation.alphaTarget(0.3).restart();
-              d.fx = d.x;
-              d.fy = d.y;
-            })
-            .on('drag', (event, d) => {
-              d.fx = event.x;
-              d.fy = event.y;
-            })
-            .on('end', (event, d) => {
-              if (!event.active) simulation.alphaTarget(0);
-              d.fx = null;
-              d.fy = null;
-            })
-        )
-        .on('click', (event, d) => {
-          event.stopPropagation();
-          navigate(`/browse?note=${d.id}`);
-        })
-        .on('mouseenter', (event, d) => {
-          setTooltip({ x: event.clientX, y: event.clientY, note: d });
-          d3.select(event.currentTarget).select('circle')
-            .attr('stroke', '#fff')
-            .attr('stroke-width', 3)
-            .attr('fill-opacity', 1);
-        })
-        .on('mouseleave', (event, d) => {
-          setTooltip(null);
-          d3.select(event.currentTarget).select('circle')
-            .attr('stroke', 'rgba(255,255,255,0.15)')
-            .attr('stroke-width', 2)
-            .attr('fill-opacity', 0.85);
-        });
+    ctx.fillStyle = cfg.color;
+    ctx.fill();
 
-    nodeSel.append('circle')
-      .attr('r', d => calcRadius(connCount.get(d.id) || 0))
-      .attr('fill', d => nodeColor(d))
-      .attr('fill-opacity', 0.85)
-      .attr('stroke', 'rgba(255,255,255,0.15)')
-      .attr('stroke-width', 2);
+    if (node.__selected) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5 / globalScale;
+      ctx.stroke();
+    }
 
-    nodeSel.append('text')
-      .attr('text-anchor', 'middle')
-      .attr('dominant-baseline', 'central')
-      .attr('font-size', d => Math.max(7, Math.min(11, calcRadius(connCount.get(d.id) || 0) * 0.55)))
-      .attr('fill', 'rgba(255,255,255,0.92)')
-      .attr('pointer-events', 'none')
-      .text(d => truncate(d.title, 14));
+    const fontSize = Math.max(4, Math.min(9, r * 0.65)) / globalScale;
+    if (fontSize * globalScale >= 4.5) {
+      ctx.font = `${fontSize}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,255,255,0.93)';
+      const maxChars = Math.max(6, Math.floor(r * 1.6));
+      const lbl = node.title.length > maxChars ? node.title.slice(0, maxChars) + '…' : node.title;
+      ctx.fillText(lbl, node.x, node.y);
+    }
 
-    // Tick handler
-    simulation.on('tick', () => {
-      linkSel
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
-
-      linkLabelSel
-        .attr('x', d => (d.source.x + d.target.x) / 2)
-        .attr('y', d => (d.source.y + d.target.y) / 2 - 4);
-
-      nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
-    });
-
-    return () => simulation.stop();
-  }, [allNotes, allRelationships, categoryFilter, isLoading, hasRelationships, navigate]);
-
-  // ── Search highlighting ─────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!svgRef.current) return;
-    d3.select(svgRef.current).selectAll('.node').attr('opacity', d => {
-      if (!search) return 1;
-      return d?.title?.toLowerCase().includes(search.toLowerCase()) ? 1 : 0.1;
-    });
-  }, [search]);
-
-  // ── Controls ────────────────────────────────────────────────────────────────
-
-  const resetZoom = useCallback(() => {
-    if (!zoomBehaviorRef.current || !svgSelRef.current) return;
-    svgSelRef.current
-      .transition()
-      .duration(400)
-      .call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
+    ctx.globalAlpha = 1;
   }, []);
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  const nodePointerAreaPaint = useCallback((node, color, ctx) => {
+    ctx.fillStyle = color;
+    const r = nodeRadius(node.connection_count) + 4;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+    ctx.fill();
+  }, []);
+
+  const linkCanvasObject = useCallback((link, ctx, globalScale) => {
+    if (globalScale < 1.5) return;
+    const start = link.source;
+    const end = link.target;
+    if (!start || !end || typeof start !== 'object') return;
+    const label = link.label || link.type;
+    if (!label) return;
+
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    const fontSize = 7 / globalScale;
+    ctx.globalAlpha = 0.72;
+    ctx.font = `${fontSize}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = edgeColor(link.type);
+    ctx.fillText(label, midX, midY - 2 / globalScale);
+    ctx.globalAlpha = 1;
+  }, []);
+
+  // ── Event handlers ───────────────────────────────────────────────────────────
+
+  const handleNodeClick = useCallback((node) => {
+    setSelectedNodeId(node.id);
+    if (isLocalMode) {
+      setLocalNodeId(node.id);
+    } else {
+      navigate(entityPath(node));
+    }
+  }, [isLocalMode, navigate]);
+
+  const handleNodeHover = useCallback((node) => {
+    setHoveredNode(node || null);
+    document.body.style.cursor = node ? 'pointer' : 'default';
+  }, []);
+
+  const handleMouseMove = useCallback((e) => {
+    setHoverPos({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const handleZoomFit = useCallback(() => {
+    graphRef.current?.zoomToFit(400, 40);
+  }, []);
+
+  const handleSearchEnter = useCallback((e) => {
+    if (e.key !== 'Enter' || !search) return;
+    const match = graphData.nodes.find(n =>
+      n.title.toLowerCase().includes(search.toLowerCase())
+    );
+    if (match && graphRef.current) {
+      graphRef.current.centerAt(match.x, match.y, 600);
+      graphRef.current.zoom(2.5, 600);
+      setSelectedNodeId(match.id);
+    }
+  }, [search, graphData.nodes]);
+
+  const toggleNodeType = useCallback((type) => {
+    setHiddenNodeTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  }, []);
+
+  const toggleRelType = useCallback((type) => {
+    setHiddenRelTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  }, []);
+
+  const enterLocalMode = useCallback((nodeId) => {
+    setIsLocalMode(true);
+    setLocalNodeId(nodeId);
+    setSelectedNodeId(nodeId);
+  }, []);
+
+  const exitLocalMode = useCallback(() => {
+    setIsLocalMode(false);
+    setLocalNodeId(null);
+    setSelectedNodeId(null);
+  }, []);
+
+  // ── Early returns ────────────────────────────────────────────────────────────
 
   if (!activeVaultId) {
     return (
@@ -283,25 +298,22 @@ export default function Graph() {
         <div className="text-center space-y-3">
           <div
             className="w-8 h-8 rounded-full animate-spin mx-auto"
-            style={{
-              border: '2px solid rgba(124,92,252,0.2)',
-              borderTopColor: 'rgb(124,92,252)',
-            }}
+            style={{ border: '2px solid rgba(124,92,252,0.2)', borderTopColor: '#7c5cfc' }}
           />
-          <p className="text-txt-muted text-sm">Loading graph…</p>
+          <p className="text-txt-muted text-sm">Weaving the world graph…</p>
         </div>
       </div>
     );
   }
 
-  if (!hasRelationships) {
+  if (!rawData || rawData.nodes.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center space-y-4 max-w-sm px-4">
-          <div className="text-6xl">🕸️</div>
-          <h2 className="text-xl font-bold text-txt">No relationships yet</h2>
+          <div className="text-5xl">🕸️</div>
+          <h2 className="text-xl font-bold text-txt">No entities yet</h2>
           <p className="text-txt-muted text-sm">
-            Add relationships between notes in Browse — they'll show up here as a visual graph.
+            Add notes, characters, or maps to your vault — they&apos;ll appear here as a knowledge graph.
           </p>
           <button
             onClick={() => navigate('/browse')}
@@ -314,64 +326,243 @@ export default function Graph() {
     );
   }
 
+  // ── Render ───────────────────────────────────────────────────────────────────
+
   return (
-    <div className="relative w-full h-full overflow-hidden bg-base">
-      {/* Controls panel */}
-      <div className="absolute top-4 left-4 z-10 w-52 bg-surface border border-border-subtle rounded-xl p-3 shadow-card flex flex-col gap-2">
-        <p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold">Graph Controls</p>
+    <div className="relative w-full h-full overflow-hidden bg-base" onMouseMove={handleMouseMove}>
 
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search nodes…"
-          className="w-full bg-elevated border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-txt placeholder:text-txt-muted focus:border-accent focus:outline-none"
-        />
-
-        <select
-          value={categoryFilter}
-          onChange={e => setCategoryFilter(e.target.value)}
-          className="w-full bg-elevated border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-txt focus:border-accent focus:outline-none"
+      {/* ── Left filter sidebar ──────────────────────────────────────────────── */}
+      <div
+        className="absolute top-0 left-0 h-full z-10 flex"
+        style={{ transition: 'width 200ms ease' }}
+      >
+        <div
+          className="h-full bg-surface border-r border-border-subtle flex flex-col overflow-hidden"
+          style={{ width: sidebarOpen ? 272 : 0, transition: 'width 200ms ease', overflow: 'hidden' }}
         >
-          <option value="">All types</option>
-          {categories.map(c => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
+          {sidebarOpen && (
+            <div className="flex flex-col gap-4 p-4 overflow-y-auto flex-1 min-h-0">
+              {/* Search */}
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-2">Search</p>
+                <div className="relative">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-txt-muted" />
+                  <input
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    onKeyDown={handleSearchEnter}
+                    placeholder="Find node… (Enter to center)"
+                    className="w-full bg-elevated border border-border-subtle rounded-lg pl-8 pr-3 py-1.5 text-sm text-txt placeholder:text-txt-muted focus:border-accent focus:outline-none"
+                  />
+                  {search && (
+                    <button
+                      onClick={() => setSearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-txt-muted hover:text-txt"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              </div>
 
+              {/* Entity types */}
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold mb-2">Entity Types</p>
+                <div className="flex flex-col gap-1.5">
+                  {ALL_NODE_TYPES.map(type => {
+                    const cfg = NODE_CONFIG[type];
+                    const isHidden = hiddenNodeTypes.has(type);
+                    const count = rawData?.nodes?.filter(n => n.type === type).length || 0;
+                    return (
+                      <label key={type} className="flex items-center gap-2.5 cursor-pointer group">
+                        <div
+                          className="w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition-all"
+                          style={{
+                            borderColor: cfg.color,
+                            backgroundColor: isHidden ? 'transparent' : cfg.color,
+                          }}
+                          onClick={() => toggleNodeType(type)}
+                        >
+                          {!isHidden && (
+                            <svg viewBox="0 0 10 8" width="8" height="8" fill="white">
+                              <polyline points="1,4 4,7 9,1" strokeWidth="1.5" stroke="white" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </div>
+                        <span
+                          className="text-sm flex-1 transition-colors"
+                          style={{ color: isHidden ? 'var(--txt-muted)' : 'var(--txt)' }}
+                          onClick={() => toggleNodeType(type)}
+                        >
+                          {cfg.label}
+                        </span>
+                        <span className="text-xs text-txt-muted">{count}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Relationship types */}
+              {allRelTypes.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] uppercase tracking-widest text-txt-muted font-bold">Relationships</p>
+                    {hiddenRelTypes.size > 0 && (
+                      <button
+                        onClick={() => setHiddenRelTypes(new Set())}
+                        className="text-[10px] text-accent hover:underline"
+                      >
+                        Show all
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {allRelTypes.map(type => {
+                      const isHidden = hiddenRelTypes.has(type);
+                      const color = edgeColor(type);
+                      const count = rawData?.edges?.filter(e => e.type === type).length || 0;
+                      return (
+                        <label key={type} className="flex items-center gap-2 cursor-pointer" onClick={() => toggleRelType(type)}>
+                          <span
+                            className="inline-block w-3 h-0.5 flex-shrink-0 rounded transition-opacity"
+                            style={{ backgroundColor: color, opacity: isHidden ? 0.2 : 1 }}
+                          />
+                          <span
+                            className="text-xs flex-1 truncate transition-colors"
+                            style={{ color: isHidden ? 'var(--txt-muted)' : 'var(--txt)' }}
+                          >
+                            {type}
+                          </span>
+                          <span className="text-[10px] text-txt-muted">{count}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Stats */}
+              <div className="mt-auto pt-3 border-t border-border-subtle text-xs text-txt-muted space-y-0.5">
+                <p>{graphData.nodes.length} nodes · {graphData.links.length} edges</p>
+                {isLocalMode && (
+                  <p className="text-accent text-[11px]">Local view active</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Sidebar toggle button */}
         <button
-          onClick={resetZoom}
-          className="bg-elevated border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-txt-dim hover:text-txt hover:bg-hover transition text-left"
+          onClick={() => setSidebarOpen(o => !o)}
+          className="absolute top-1/2 -translate-y-1/2 -right-3.5 w-7 h-7 bg-surface border border-border-subtle rounded-full flex items-center justify-center shadow-sm hover:bg-hover transition z-20"
+          title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
         >
-          Reset zoom
+          {sidebarOpen ? <ChevronLeft size={13} /> : <ChevronRight size={13} />}
+        </button>
+      </div>
+
+      {/* ── Top-right controls ───────────────────────────────────────────────── */}
+      <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+        {/* Local mode toggle */}
+        <button
+          onClick={isLocalMode ? exitLocalMode : () => {
+            if (selectedNodeId) enterLocalMode(selectedNodeId);
+          }}
+          disabled={!isLocalMode && !selectedNodeId}
+          className={[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition',
+            isLocalMode
+              ? 'bg-accent text-white border-accent'
+              : 'bg-surface border-border-subtle text-txt-dim hover:text-txt hover:bg-hover disabled:opacity-40 disabled:cursor-not-allowed',
+          ].join(' ')}
+          title={isLocalMode ? 'Back to full graph' : 'View local neighborhood of selected node'}
+        >
+          {isLocalMode ? <Globe size={13} /> : <Target size={13} />}
+          {isLocalMode ? 'Full graph' : 'Local view'}
         </button>
 
-        <div className="pt-1 border-t border-border-subtle text-xs text-txt-muted">
-          {allNotes.length} notes · {filteredCount} connections
-        </div>
-      </div>
-
-      {/* Graph canvas */}
-      <div ref={containerRef} className="w-full h-full">
-        <svg ref={svgRef} className="w-full h-full" />
-      </div>
-
-      {/* Hover tooltip */}
-      {tooltip && (
-        <div
-          className="fixed z-20 pointer-events-none bg-card border border-border-subtle rounded-lg px-3 py-2 text-sm shadow-lg max-w-[200px]"
-          style={{ left: tooltip.x + 14, top: tooltip.y - 12 }}
+        {/* 3D toggle — coming soon */}
+        <button
+          disabled
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border-subtle bg-surface text-txt-muted opacity-50 cursor-not-allowed"
+          title="3D mode — coming soon"
         >
-          {tooltip.note ? (
-            <>
-              <p className="font-semibold text-txt truncate">{tooltip.note.title}</p>
-              {tooltip.note.tags?.length > 0 && (
-                <p className="text-txt-muted text-xs mt-0.5 truncate">{tooltip.note.tags.join(', ')}</p>
-              )}
-              <p className="text-txt-muted text-xs mt-1 opacity-60">Click to open</p>
-            </>
-          ) : (
-            <p className="text-txt">{tooltip.text}</p>
+          3D
+        </button>
+
+        {/* Zoom to fit */}
+        <button
+          onClick={handleZoomFit}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border-subtle bg-surface text-txt-dim hover:text-txt hover:bg-hover transition"
+          title="Zoom to fit"
+        >
+          <Crosshair size={13} />
+          Fit
+        </button>
+      </div>
+
+      {/* ── Local mode banner ────────────────────────────────────────────────── */}
+      {isLocalMode && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-accent/90 text-white text-xs px-4 py-1.5 rounded-full font-medium shadow-lg">
+          Local view — click a node to explore its neighborhood
+        </div>
+      )}
+
+      {/* ── Graph canvas ─────────────────────────────────────────────────────── */}
+      <div className="w-full h-full">
+        <ForceGraph2D
+          ref={graphRef}
+          graphData={graphData}
+          nodeId="id"
+          nodeCanvasObject={nodeCanvasObject}
+          nodeCanvasObjectMode="replace"
+          nodePointerAreaPaint={nodePointerAreaPaint}
+          linkColor={link => edgeColor(link.type)}
+          linkOpacity={0.45}
+          linkWidth={1.2}
+          linkDirectionalArrowLength={4}
+          linkDirectionalArrowRelPos={0.85}
+          linkDirectionalArrowColor={link => edgeColor(link.type)}
+          linkCanvasObject={linkCanvasObject}
+          linkCanvasObjectMode={() => 'after'}
+          onNodeClick={handleNodeClick}
+          onNodeHover={handleNodeHover}
+          onBackgroundClick={() => setSelectedNodeId(null)}
+          cooldownTicks={120}
+          d3AlphaDecay={0.02}
+          d3VelocityDecay={0.25}
+          enableNodeDrag
+          enableZoomInteraction
+          backgroundColor="transparent"
+        />
+      </div>
+
+      {/* ── Hover card ───────────────────────────────────────────────────────── */}
+      {hoveredNode && (
+        <div
+          className="fixed z-30 pointer-events-none max-w-[220px] bg-card border border-border-subtle rounded-xl px-3.5 py-2.5 shadow-xl"
+          style={{ left: hoverPos.x + 16, top: hoverPos.y - 12 }}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <span
+              className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+              style={{ backgroundColor: (NODE_CONFIG[hoveredNode.type] || NODE_CONFIG.note).color }}
+            />
+            <span className="text-[10px] uppercase tracking-wider text-txt-muted font-semibold">
+              {hoveredNode.type}
+            </span>
+          </div>
+          <p className="text-sm font-semibold text-txt leading-tight mb-1">{hoveredNode.title}</p>
+          {hoveredNode.content_preview && (
+            <p className="text-xs text-txt-muted leading-relaxed line-clamp-3">
+              {hoveredNode.content_preview}
+            </p>
           )}
+          <p className="text-[10px] text-txt-muted mt-1.5 opacity-60">
+            {hoveredNode.connection_count} connection{hoveredNode.connection_count !== 1 ? 's' : ''} · click to open
+          </p>
         </div>
       )}
     </div>
