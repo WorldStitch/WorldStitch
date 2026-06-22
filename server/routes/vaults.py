@@ -605,16 +605,17 @@ async def get_vault_graph_node(
 
     # Filter to entities that belong to this vault (prevents cross-vault data leakage)
     notes = [
-        n for n in note_results
+        n
+        for n in note_results
         if n and not getattr(n, "is_deleted", False) and getattr(n, "vault_id", None) == vault.id
     ]
     characters = [
-        c for c in char_results
+        c
+        for c in char_results
         if c and not getattr(c, "is_deleted", False) and getattr(c, "vault_id", None) == vault.id
     ]
     maps = [
-        m for m in map_results
-        if m and not getattr(m, "is_deleted", False) and getattr(m, "vault_id", None) == vault.id
+        m for m in map_results if m and not getattr(m, "is_deleted", False) and getattr(m, "vault_id", None) == vault.id
     ]
 
     # Deduplicate: each entity_id should appear only once (pick first non-None)
