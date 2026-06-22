@@ -175,8 +175,7 @@ class ContextAssembler:
                 else:
                     inv = get_inverse_label(rel.relationship_type)
                     statements.append(
-                        f"{src_label} {rel_type} {tgt_label}"
-                        f" (unidirectional → {tgt_label} {inv} {src_label})"
+                        f"{src_label} {rel_type} {tgt_label} (unidirectional → {tgt_label} {inv} {src_label})"
                     )
 
         if not statements:

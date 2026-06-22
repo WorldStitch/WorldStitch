@@ -146,10 +146,7 @@ class UserApiKeyStore:
                     session.commit()
                     raise HTTPException(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail=(
-                            "Monthly AI request limit reached. "
-                            "Add your own OpenAI key in Settings to continue."
-                        ),
+                        detail=("Monthly AI request limit reached. Add your own OpenAI key in Settings to continue."),
                     )
 
                 rec.requests_this_month += 1

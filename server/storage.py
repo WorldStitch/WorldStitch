@@ -1977,18 +1977,19 @@ class AsyncStorage:
                 return Relationship.model_validate_json(record.data)
         return None
 
-    async def list_relationships_for_entity(self, entity_id: str, vault_id: str) -> List[Relationship]:
+    async def list_relationships_for_entity(
+        self, entity_id: str, vault_id: str, limit: Optional[int] = None
+    ) -> List[Relationship]:
         results: List[Relationship] = []
         async with self._sf() as session:
-            records = (
-                await session.scalars(
-                    select(EdgeRecord).where(
-                        or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
-                        EdgeRecord.vault_id == vault_id,
-                        EdgeRecord.is_active == True,  # noqa: E712
-                    )
-                )
-            ).all()
+            stmt = select(EdgeRecord).where(
+                or_(EdgeRecord.source_id == entity_id, EdgeRecord.target_id == entity_id),
+                EdgeRecord.vault_id == vault_id,
+                EdgeRecord.is_active == True,  # noqa: E712
+            )
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            records = (await session.scalars(stmt)).all()
             for rec in records:
                 try:
                     results.append(Relationship.model_validate_json(rec.data))

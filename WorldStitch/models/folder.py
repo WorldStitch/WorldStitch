@@ -1,4 +1,4 @@
-﻿"""
+"""
 Folder model — organizes notes within a Vault.
 
 Folders form a tree via parent_id. All folders belong to exactly one

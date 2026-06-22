@@ -1,4 +1,4 @@
-﻿"""
+"""
 WorldStitch utilities package.
 
 GUI utilities (MarkdownHighlighter, TracebackHighlighter, etc.) require PyQt6
@@ -35,5 +35,6 @@ def __getattr__(name):
             read_note_metadata,
             write_note_metadata,
         )
+
         return locals()[name]
     raise AttributeError(f"module 'WorldStitch.utils' has no attribute {name!r}")

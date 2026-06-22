@@ -1,4 +1,4 @@
-﻿"""
+"""
 Image model — any image asset in the system (AI-generated art, portraits, handouts).
 
 Unlike maps, images are not necessarily geographic. They cover character

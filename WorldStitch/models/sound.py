@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sound model — audio assets for ambient music, effects, and atmosphere.
 
 Sounds can be linked to notes or scenes and played during sessions.

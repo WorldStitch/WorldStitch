@@ -484,6 +484,9 @@ async def update_vault_brain_settings(
 
 # ── Graph endpoints ───────────────────────────────────────────────────────────
 
+# Maximum number of relationships fetched per node in the local subgraph endpoint.
+_LOCAL_GRAPH_MAX_RELS = 50
+
 
 def _build_graph_nodes_and_edges(notes, characters, maps, rels) -> Dict[str, Any]:
     """Assemble graph nodes + edges from all entity types and relationships."""
@@ -581,7 +584,8 @@ async def get_vault_graph_node(
     vault = await resolve_vault(ctx, user, vault_id)
     actor = Actor.from_user(user)
 
-    rels = await ctx.storage.list_relationships_for_entity(node_id, vault.id)
+    # Limit is pushed to the DB query so we never fetch more rows than needed.
+    rels = await ctx.storage.list_relationships_for_entity(node_id, vault.id, limit=_LOCAL_GRAPH_MAX_RELS)
 
     neighbor_ids: set = {node_id}
     for rel in rels:
@@ -599,9 +603,20 @@ async def get_vault_graph_node(
         asyncio.gather(*map_tasks),
     )
 
-    notes = [n for n in note_results if n and not getattr(n, "is_deleted", False)]
-    characters = [c for c in char_results if c and not getattr(c, "is_deleted", False)]
-    maps = [m for m in map_results if m and not getattr(m, "is_deleted", False)]
+    # Filter to entities that belong to this vault (prevents cross-vault data leakage)
+    notes = [
+        n
+        for n in note_results
+        if n and not getattr(n, "is_deleted", False) and getattr(n, "vault_id", None) == vault.id
+    ]
+    characters = [
+        c
+        for c in char_results
+        if c and not getattr(c, "is_deleted", False) and getattr(c, "vault_id", None) == vault.id
+    ]
+    maps = [
+        m for m in map_results if m and not getattr(m, "is_deleted", False) and getattr(m, "vault_id", None) == vault.id
+    ]
 
     # Deduplicate: each entity_id should appear only once (pick first non-None)
     seen_ids: set = set()

@@ -1,1 +1,1 @@
-﻿"""WorldStitch FastAPI server."""
+"""WorldStitch FastAPI server."""

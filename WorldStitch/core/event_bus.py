@@ -44,12 +44,12 @@ class AppEventBus:
     """Central signal bus — one instance shared across the whole application."""
 
     def __init__(self):
-        self.note_saved = Signal()       # vault-relative path
-        self.note_deleted = Signal()     # vault-relative path
-        self.note_moved = Signal()       # (src_path, dest_path)
-        self.user_logged_in = Signal()   # user_id
+        self.note_saved = Signal()  # vault-relative path
+        self.note_deleted = Signal()  # vault-relative path
+        self.note_moved = Signal()  # (src_path, dest_path)
+        self.user_logged_in = Signal()  # user_id
         self.user_logged_out = Signal()
-        self.vault_changed = Signal()    # vault_id
+        self.vault_changed = Signal()  # vault_id
 
 
 _instance: AppEventBus | None = None

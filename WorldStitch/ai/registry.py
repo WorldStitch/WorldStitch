@@ -1,4 +1,4 @@
-﻿# WorldStitch/ai/registry.py
+# WorldStitch/ai/registry.py
 
 from typing import Dict, Type
 

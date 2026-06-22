@@ -1,4 +1,4 @@
-﻿"""
+"""
 Shared pytest fixtures for WorldStitch tests.
 
 Fixtures are designed to work without a real vault, GUI, or API key.
@@ -48,19 +48,6 @@ def config(tmp_path_factory):
 
     cfg.logger = logging.getLogger("test")
     return cfg
-
-
-# ---------------------------------------------------------------------------
-# Storage fixture — real HybridStorage in a temp directory
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def storage(tmp_path_factory):
-    from WorldStitch.storage.hybrid_storage import HybridStorage
-
-    tmp = tmp_path_factory.mktemp("storage")
-    return HybridStorage(str(tmp))
 
 
 # ---------------------------------------------------------------------------
