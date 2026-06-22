@@ -12,6 +12,7 @@ import {
   LogOut,
   ShieldCheck,
   Compass,
+  Share2,
 } from 'lucide-react';
 import { useRealtime } from '@/context/RealtimeContext';
 
@@ -34,6 +35,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Map, label: 'Maps', path: '/maps' },
     { icon: Globe, label: 'Universe', path: '/universe' },
+    { icon: Share2, label: 'Graph', path: '/graph' },
   ];
 
   const workspaceItems = [
