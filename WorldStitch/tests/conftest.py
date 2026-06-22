@@ -51,19 +51,6 @@ def config(tmp_path_factory):
 
 
 # ---------------------------------------------------------------------------
-# Storage fixture — real HybridStorage in a temp directory
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def storage(tmp_path_factory):
-    from WorldStitch.storage.hybrid_storage import HybridStorage
-
-    tmp = tmp_path_factory.mktemp("storage")
-    return HybridStorage(str(tmp))
-
-
-# ---------------------------------------------------------------------------
 # AI fixture — mock AI engine that returns predictable responses
 # ---------------------------------------------------------------------------
 
