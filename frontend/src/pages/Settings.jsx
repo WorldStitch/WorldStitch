@@ -26,10 +26,6 @@ export default function Settings({ user }) {
   const [streamingEnabled, setStreamingEnabled] = useState(true);
   const [aiHistoryLimit, setAiHistoryLimit] = useState(10);
 
-  // Campaign
-  const [vaultPath, setVaultPath] = useState('/vault');
-  const [campaignApiKey, setCampaignApiKey] = useState('');
-
   // Admin tools live in /admin — Settings is personal only
 
   // Load settings via React Query
@@ -42,13 +38,11 @@ export default function Settings({ user }) {
     if (!settingsData) return;
     if (settingsData.font_size) setFontSize(settingsData.font_size.toLowerCase());
     if (settingsData.autosave !== undefined) setAutosave(settingsData.autosave);
-    if (settingsData.vault_path) setVaultPath(settingsData.vault_path);
     if (settingsData.preferred_model) setPreferredModel(settingsData.preferred_model);
     if (settingsData.completion_model && !settingsData.preferred_model) {
       setPreferredModel(settingsData.completion_model);
     }
     if (settingsData.max_tokens) setMaxTokens(String(settingsData.max_tokens));
-    if (settingsData.campaign_api_key) setCampaignApiKey(settingsData.campaign_api_key);
     if (settingsData.streaming_enabled !== undefined) setStreamingEnabled(Boolean(settingsData.streaming_enabled));
     if (settingsData.ai_history_limit !== undefined) setAiHistoryLimit(Number(settingsData.ai_history_limit));
   }, [settingsData]);
@@ -74,15 +68,6 @@ export default function Settings({ user }) {
       toast.success('AI settings saved');
     } catch {
       toast.error('Failed to save AI settings');
-    }
-  };
-
-  const handleSaveCampaign = async () => {
-    try {
-      await settings.update({ vault_path: vaultPath, campaign_api_key: campaignApiKey || undefined });
-      toast.success('Campaign settings saved');
-    } catch {
-      toast.error('Failed to save campaign settings');
     }
   };
 
@@ -134,14 +119,7 @@ export default function Settings({ user }) {
               onSave={handleSaveAI}
             />
           )}
-          {activeTab === 'campaign' && (
-            <CampaignSettings
-              vaultPath={vaultPath} setVaultPath={setVaultPath}
-              campaignApiKey={campaignApiKey} setCampaignApiKey={setCampaignApiKey}
-              onSave={handleSaveCampaign}
-              user={user}
-            />
-          )}
+          {activeTab === 'campaign' && <CampaignSettings user={user} />}
           {activeTab === 'privacy' && <PrivacySettings />}
           {activeTab === 'help' && <HelpSettings />}
         </Card>

@@ -234,8 +234,8 @@ def _folder_to_response(folder, ctx, user) -> FolderResponse:
     )
 
 
-def _resolve_vault_id(ctx: AppContext, user: User, requested_vault_id: Optional[str] = None) -> str:
-    return resolve_vault(ctx, user, requested_vault_id).id
+async def _resolve_vault_id(ctx: AppContext, user: User, requested_vault_id: Optional[str] = None) -> str:
+    return (await resolve_vault(ctx, user, requested_vault_id)).id
 
 
 async def _get_note_or_404(ctx: AppContext, actor: Actor, note_id: str):
@@ -296,7 +296,7 @@ async def search_notes(
     """
     try:
         actor = Actor.from_user(user)
-        vault_id = _resolve_vault_id(ctx, user, vault_id)
+        vault_id = await _resolve_vault_id(ctx, user, vault_id)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
         # ── FTS mode ─────────────────────────────────────────────────────────
@@ -448,7 +448,7 @@ async def list_folders(
     """List all folders."""
     try:
         actor = Actor.from_user(user)
-        vault_id = _resolve_vault_id(ctx, user, vault_id)
+        vault_id = await _resolve_vault_id(ctx, user, vault_id)
         results = []
 
         db_folders = await ctx.storage.list_all_folders(actor, vault_id=vault_id)
@@ -476,7 +476,7 @@ async def list_notes(
     """List notes, optionally filtered by folder and/or tag. Returns paginated response."""
     try:
         actor = Actor.from_user(user)
-        vault_id = _resolve_vault_id(ctx, user, vault_id)
+        vault_id = await _resolve_vault_id(ctx, user, vault_id)
 
         all_notes = await ctx.storage.list_all_notes(actor, folder=folder, tag=tag, vault_id=vault_id)
         all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
@@ -529,7 +529,7 @@ async def create_note(
 ):
     """Create a new note."""
     try:
-        vault_id = _resolve_vault_id(ctx, user, req.vault_id)
+        vault_id = await _resolve_vault_id(ctx, user, req.vault_id)
         note = await ctx.storage.create_note(
             vault_id=vault_id,
             owner_id=user.id,
@@ -893,7 +893,7 @@ async def create_folder(
 ):
     """Create a new folder."""
     try:
-        vault_id = _resolve_vault_id(ctx, user, req.vault_id)
+        vault_id = await _resolve_vault_id(ctx, user, req.vault_id)
         folder = await ctx.storage.create_folder(
             vault_id=vault_id,
             name=req.name,

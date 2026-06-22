@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { useRealtime } from '@/context/RealtimeContext';
 
-const ADMIN_ROLES = ['owner', 'admin', 'moderator'];
+const ADMIN_ROLES = ['owner', 'admin', 'mod'];
 
 const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeVaultId, onVaultChange }) => {
   const { onlineUsers, isConnected } = useRealtime();

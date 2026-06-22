@@ -55,9 +55,12 @@ DEVELOPER_ROLES = {"owner", "admin", "mod", "support", "tester", "system"}
 
 
 def _resolve_effective_mode(requested_mode: Optional[str], user_role: str) -> str:
-    """Gate developer mode to privileged roles; everyone else falls back to lore."""
+    """Gate developer mode to privileged roles; block unbuilt modes; everyone else falls back to lore."""
     mode = (requested_mode or "lore").lower()
     if mode == "developer" and user_role not in DEVELOPER_ROLES:
+        return "lore"
+    # GM mode is not yet built — redirect to lore
+    if mode == "gm":
         return "lore"
     return mode
 

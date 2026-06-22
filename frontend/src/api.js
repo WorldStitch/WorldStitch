@@ -397,6 +397,17 @@ export const sessions = {
   generateRecap: (id) => request("POST", `/sessions/${encodeURIComponent(id)}/recap`),
 };
 
+// ── Campaigns ────────────────────────────────────────────────────────────────
+export const campaigns = {
+  list: (groupId) => request("GET", `/campaigns/?group_id=${encodeURIComponent(groupId)}`),
+  get: (id) => request("GET", `/campaigns/${encodeURIComponent(id)}`),
+  create: (data) => request("POST", "/campaigns/", data),
+  delete: (id) => request("DELETE", `/campaigns/${encodeURIComponent(id)}`),
+  listMembers: (id) => request("GET", `/campaigns/${encodeURIComponent(id)}/members`),
+  addMember: (id, user_id, role = "member") =>
+    request("POST", `/campaigns/${encodeURIComponent(id)}/members`, { user_id, role }),
+};
+
 // ── Characters ────────────────────────────────────────────────────────────────
 export const characters = {
   list: (vaultId = "default", type = null) => {

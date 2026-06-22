@@ -6,7 +6,7 @@ import os
 from fastapi import HTTPException
 from jose import JWTError, jwt
 
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-in-production")
+JWT_SECRET = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET", "dev-secret-change-in-production")
 JWT_ALGORITHM = "HS256"
 
 
