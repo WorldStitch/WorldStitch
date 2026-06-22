@@ -70,16 +70,14 @@ export default function Dashboard({ user }) {
       />
 
       {/* Stats Row */}
-      <div className="grid grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {statsLoading ? (
-          Array.from({ length: 6 }).map((_, i) => <SkeletonStatCard key={i} />)
+          Array.from({ length: 4 }).map((_, i) => <SkeletonStatCard key={i} />)
         ) : (
           <>
             <StatCard icon="📝" label={terms.notes} value={stats?.notes || 0} color="#8b5cf6" />
             <StatCard icon="📁" label={terms.folders} value={stats?.folders || 0} color="#10b981" />
             <StatCard icon="👤" label={terms.characters} value={stats?.characters || 0} color="#f59e0b" />
-            <StatCard icon="⚔️" label="Quests" value={stats?.quests || 0} color="#ef4444" />
-            <StatCard icon="🌌" label="Timeline" value={stats?.timeline_events || 0} color="#60a5fa" />
             <StatCard icon="🎲" label={terms.sessions} value={stats?.sessions || 0} color="#a78bfa" />
           </>
         )}

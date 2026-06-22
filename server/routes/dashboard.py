@@ -65,8 +65,6 @@ async def stats(
         "notes": notes_count,
         "folders": folder_count,
         "characters": char_count,
-        "quests": 0,
-        "timeline_events": 0,
         "sessions": sessions_total,
     }
 

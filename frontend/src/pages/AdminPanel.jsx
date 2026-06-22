@@ -12,7 +12,7 @@ import { analytics, settings } from '@/api';
 
 const OWNER_ONLY   = ['owner'];
 const ADMIN_ABOVE  = ['owner', 'admin'];
-const MOD_ABOVE    = ['owner', 'admin', 'moderator'];
+const MOD_ABOVE    = ['owner', 'admin', 'mod'];
 
 export default function AdminPanel({ user }) {
   const role = user?.system_role ?? '';

@@ -107,7 +107,7 @@ async def _get_character_or_404(ctx: AppContext, user: User, char_id: str) -> Ch
     char = await ctx.storage.get_character_by_id(char_id)
     if not char or getattr(char, "is_deleted", False):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
-    resolve_vault(ctx, user, getattr(char, "vault_id", None))
+    await resolve_vault(ctx, user, getattr(char, "vault_id", None))
     return char
 
 
@@ -130,7 +130,7 @@ async def list_characters(
     """
     try:
         # If no campaign_id, fall back to vault resolution for backward compat
-        effective_id = campaign_id or (resolve_vault(ctx, user, vault_id).id if vault_id else None)
+        effective_id = campaign_id or ((await resolve_vault(ctx, user, vault_id)).id if vault_id else None)
         all_chars = await ctx.storage.list_characters(campaign_id=effective_id, char_type=type)
         total = len(all_chars)
         page = all_chars[skip : skip + limit]
@@ -162,7 +162,9 @@ async def create_character(
     """
     try:
         # campaign_id takes precedence; vault_id is a deprecated alias
-        effective_id = req.campaign_id or (resolve_vault(ctx, user, req.vault_id).id if req.vault_id else "default")
+        effective_id = req.campaign_id or (
+            (await resolve_vault(ctx, user, req.vault_id)).id if req.vault_id else "default"
+        )
         char = Character(
             id=str(uuid.uuid4()),
             vault_id=effective_id,  # kept for backward compat on the model

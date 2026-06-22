@@ -121,7 +121,7 @@ export default function App() {
     navigate("/login");
   };
 
-  const ADMIN_ROLES = ['owner', 'admin', 'moderator'];
+  const ADMIN_ROLES = ['owner', 'admin', 'mod'];
   const isAdmin = ADMIN_ROLES.includes(user?.system_role);
   const { data: vaultList = [] } = useQuery({
     queryKey: ["vaults", user?.id],
