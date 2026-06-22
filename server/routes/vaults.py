@@ -578,6 +578,8 @@ async def get_vault_graph_node(
     user: User = Depends(get_current_user),
 ):
     """Return the local subgraph for a single node: itself + direct neighbors + edges between them."""
+    _MAX_NEIGHBORS = 50
+
     vault = await resolve_vault(ctx, user, vault_id)
     actor = Actor.from_user(user)
 
@@ -587,6 +589,8 @@ async def get_vault_graph_node(
     for rel in rels:
         neighbor_ids.add(rel.source_id)
         neighbor_ids.add(rel.target_id)
+        if len(neighbor_ids) >= _MAX_NEIGHBORS:
+            break
 
     # Fetch entity details for each neighbor
     note_tasks = [ctx.storage.get_note_by_id(actor, nid) for nid in neighbor_ids]
@@ -599,9 +603,19 @@ async def get_vault_graph_node(
         asyncio.gather(*map_tasks),
     )
 
-    notes = [n for n in note_results if n and not getattr(n, "is_deleted", False)]
-    characters = [c for c in char_results if c and not getattr(c, "is_deleted", False)]
-    maps = [m for m in map_results if m and not getattr(m, "is_deleted", False)]
+    # Filter to entities that belong to this vault (prevents cross-vault data leakage)
+    notes = [
+        n for n in note_results
+        if n and not getattr(n, "is_deleted", False) and getattr(n, "vault_id", None) == vault.id
+    ]
+    characters = [
+        c for c in char_results
+        if c and not getattr(c, "is_deleted", False) and getattr(c, "vault_id", None) == vault.id
+    ]
+    maps = [
+        m for m in map_results
+        if m and not getattr(m, "is_deleted", False) and getattr(m, "vault_id", None) == vault.id
+    ]
 
     # Deduplicate: each entity_id should appear only once (pick first non-None)
     seen_ids: set = set()

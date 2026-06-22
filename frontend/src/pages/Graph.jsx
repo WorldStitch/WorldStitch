@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
@@ -12,7 +12,6 @@ const NODE_CONFIG = {
   character: { color: '#a78bfa', label: 'Characters' },
   location:  { color: '#34d399', label: 'Locations'  },
   note:      { color: '#60a5fa', label: 'Notes'      },
-  faction:   { color: '#f97316', label: 'Factions'   },
 };
 const ALL_NODE_TYPES = Object.keys(NODE_CONFIG);
 
@@ -45,17 +44,6 @@ function entityPath(node) {
 }
 
 // ── Canvas draw helpers ───────────────────────────────────────────────────────
-
-function drawHexagon(ctx, cx, cy, r) {
-  ctx.beginPath();
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i - Math.PI / 6;
-    const x = cx + r * Math.cos(a);
-    const y = cy + r * Math.sin(a);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-}
 
 function drawDiamond(ctx, cx, cy, r) {
   ctx.beginPath();
@@ -96,6 +84,11 @@ export default function Graph() {
   const [hoveredNode, setHoveredNode] = useState(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+
+  // Reset cursor on unmount to prevent it getting stuck when navigating away
+  useEffect(() => {
+    return () => { document.body.style.cursor = 'default'; };
+  }, []);
 
   // ── Data ────────────────────────────────────────────────────────────────────
 
@@ -161,8 +154,6 @@ export default function Graph() {
       ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
     } else if (node.type === 'location') {
       drawDiamond(ctx, node.x, node.y, r * 1.15);
-    } else if (node.type === 'faction') {
-      drawHexagon(ctx, node.x, node.y, r);
     } else {
       drawRoundedRect(ctx, node.x - r, node.y - r * 0.72, r * 2, r * 1.44, 3);
     }
@@ -225,6 +216,7 @@ export default function Graph() {
     if (isLocalMode) {
       setLocalNodeId(node.id);
     } else {
+      document.body.style.cursor = 'default';
       navigate(entityPath(node));
     }
   }, [isLocalMode, navigate]);
@@ -235,8 +227,8 @@ export default function Graph() {
   }, []);
 
   const handleMouseMove = useCallback((e) => {
-    setHoverPos({ x: e.clientX, y: e.clientY });
-  }, []);
+    if (hoveredNode) setHoverPos({ x: e.clientX, y: e.clientY });
+  }, [hoveredNode]);
 
   const handleZoomFit = useCallback(() => {
     graphRef.current?.zoomToFit(400, 40);
