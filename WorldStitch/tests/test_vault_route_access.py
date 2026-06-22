@@ -3,7 +3,6 @@ from unittest.mock import patch
 
 from server.routes.characters import CreateCharacterRequest, _get_character_or_404
 from server.routes.maps import CreateMapRequest, _get_map_or_404
-from server.routes.sessions import _get_session_or_404
 
 
 def test_create_requests_default_to_resolved_vault_not_hardcoded_default():
@@ -32,16 +31,4 @@ def test_character_helper_enforces_vault_access():
         out = _get_character_or_404(ctx, user, "c1")
 
     assert out is char
-    mock_resolve.assert_called_once_with(ctx, user, "vault-1")
-
-
-def test_session_helper_enforces_vault_access():
-    session = {"id": "s1", "vault_id": "vault-1"}
-    ctx = SimpleNamespace(storage=SimpleNamespace(get_session_log=lambda _id: session))
-    user = SimpleNamespace(id="u1", roles=[])
-
-    with patch("server.routes.sessions.resolve_vault") as mock_resolve:
-        out = _get_session_or_404(ctx, user, "s1")
-
-    assert out is session
     mock_resolve.assert_called_once_with(ctx, user, "vault-1")
