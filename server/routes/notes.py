@@ -543,7 +543,7 @@ async def create_note(
         await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.created", user_id=user.id, vault_id=vault_id))
         # Fire-and-forget embedding — does not block the response
-        _embed_key = get_api_key_for_vault(vault_id, user, ctx)
+        _embed_key = await get_api_key_for_vault(vault_id, user, ctx)
         _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(
@@ -610,7 +610,7 @@ async def update_note(
         await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))
         asyncio.create_task(analytics_track("note.updated", user_id=user.id, vault_id=note.vault_id))
         # Fire-and-forget re-embedding
-        _embed_key = get_api_key_for_vault(note.vault_id, user, ctx)
+        _embed_key = await get_api_key_for_vault(note.vault_id, user, ctx)
         _embed_engine = getattr(ctx.storage, "_engine", None)
         if _embed_key and _embed_engine:
             asyncio.create_task(
