@@ -1,4 +1,4 @@
-﻿"""
+"""
 WorldStitch — Core base model.
 
 All data models inherit from CoreModel to guarantee a consistent

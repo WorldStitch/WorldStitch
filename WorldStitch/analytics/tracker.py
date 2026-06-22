@@ -1,4 +1,4 @@
-﻿"""
+"""
 AnalyticsTracker — consent-gated event recording for WorldStitch.
 
 All tracking is silently skipped unless the user has explicitly opted in.

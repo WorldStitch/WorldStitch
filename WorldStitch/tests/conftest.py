@@ -1,4 +1,4 @@
-﻿"""
+"""
 Shared pytest fixtures for WorldStitch tests.
 
 Fixtures are designed to work without a real vault, GUI, or API key.

@@ -1,4 +1,4 @@
-﻿"""Search query and result types for WorldStitch storage backends."""
+"""Search query and result types for WorldStitch storage backends."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ class SearchQuery:
     """Parameters for a note search operation."""
 
     query_str: str
-    search_type: str = "keyword"   # "keyword" | "title" | "tag"
+    search_type: str = "keyword"  # "keyword" | "title" | "tag"
     vault_id: str = ""
     top_k: int = 100
 
@@ -21,7 +21,7 @@ class SearchQuery:
 class SearchResult:
     """A single note matched by a search query."""
 
-    note_path: str                  # vault-relative path (e.g. "folder/note.md")
+    note_path: str  # vault-relative path (e.g. "folder/note.md")
     title: str = ""
-    snippet: str = ""               # short content preview
+    snippet: str = ""  # short content preview
     score: float = 1.0

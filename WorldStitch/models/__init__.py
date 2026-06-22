@@ -1,4 +1,4 @@
-﻿"""WorldStitch models — import all entities from here."""
+"""WorldStitch models — import all entities from here."""
 
 from WorldStitch.models.base import CoreModel
 from WorldStitch.models.character import Character

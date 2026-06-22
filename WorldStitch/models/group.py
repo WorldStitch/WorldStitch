@@ -1,4 +1,4 @@
-﻿"""
+"""
 Group model — a party, campaign group, or collaboration team.
 
 Groups tie multiple users together with shared access to vaults and

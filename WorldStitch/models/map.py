@@ -1,4 +1,4 @@
-﻿"""
+"""
 Map model — a map asset (image, grid, handout) for a campaign.
 
 Maps live inside a Vault and can be linked to notes for lore context.
@@ -27,7 +27,9 @@ class Map(CoreModel):
     description: Optional[str] = Field(default=None, description="Map summary or context.")
     map_type: str = Field(default="region", description="Map category: region, dungeon, city, or world.")
     file_path: str = Field(default="", description="Relative or absolute path to the map image asset.")
-    markers: List[Dict[str, Any]] = Field(default_factory=list, description="Map markers: [{id, x, y, label, note_id}].")
+    markers: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Map markers: [{id, x, y, label, note_id}]."
+    )
     permissions: Dict[str, str] = Field(
         default_factory=dict,
         description="Per-user/group permission overrides (read/write/admin).",
